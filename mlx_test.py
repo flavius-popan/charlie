@@ -145,24 +145,26 @@ class MLXEmbedder(EmbedderClient):
 
 def build_entity_extraction_prompt(text: str) -> str:
     """Build prompt for entity extraction (adapted from graphiti)."""
-    return f"""You are an AI assistant that extracts entities from text.
+    return f"""Extract entities from the text below. Find ALL people and organizations mentioned.
 
-<TEXT>
-{text}
-</TEXT>
+TEXT: {text}
 
-Extract all significant entities explicitly or implicitly mentioned in the TEXT above.
+Instructions:
+- Extract EVERY person's name (PERSON)
+- Extract EVERY organization/company name (ORGANIZATION)
+- Extract EVERY location (LOCATION)
+- Use the exact names from the text
+- Start IDs at 0
+- Return JSON array
 
-Guidelines:
-1. Extract people, organizations, places, concepts, and other significant entities
-2. Be explicit and unambiguous in entity names (use full names, avoid abbreviations)
-3. Assign each entity a sequential ID starting from 0
-4. Optionally classify entities by type (PERSON, ORGANIZATION, LOCATION, CONCEPT, etc.)
-5. Do NOT extract relationships or actions - only entities
-6. Do NOT extract temporal information like dates or times
-7. Do NOT extract pronouns (he/she/they/it)
+Examples:
+Text: "Alice works at Google"
+Output: {{"entities": [{{"id": 0, "name": "Alice", "entity_type": "PERSON"}}, {{"id": 1, "name": "Google", "entity_type": "ORGANIZATION"}}]}}
 
-Extract entities as a JSON array."""
+Text: "Bob founded TechCo"
+Output: {{"entities": [{{"id": 0, "name": "Bob", "entity_type": "PERSON"}}, {{"id": 1, "name": "TechCo", "entity_type": "ORGANIZATION"}}]}}
+
+Now extract from the TEXT above. Return only JSON."""
 
 
 def build_relationship_extraction_prompt(
@@ -176,7 +178,7 @@ def build_relationship_extraction_prompt(
         for e in entities
     ])
 
-    return f"""You are an expert fact extractor that extracts relationship triples from text.
+    return f"""You are an expert fact extractor. Extract ONLY relationships explicitly stated in the TEXT.
 
 <TEXT>
 {text}
@@ -190,16 +192,48 @@ def build_relationship_extraction_prompt(
 {reference_time}
 </REFERENCE_TIME>
 
-Extract all factual relationships between the given ENTITIES based on the TEXT.
+Critical Rules:
+1. ONLY use entity IDs from the ENTITIES list above (IDs 0 to {len(entities)-1})
+2. ONLY extract relationships explicitly stated in the TEXT - do NOT invent facts
+3. ONLY create relationships between two different entities (source_entity_id ≠ target_entity_id)
+4. Use SCREAMING_SNAKE_CASE for relation_type (WORKS_AT, FOUNDED, JOINED, etc.)
+5. Write fact as a direct paraphrase of what the TEXT states
+6. If TEXT mentions time periods, use ISO 8601 format with Z suffix for valid_at/invalid_at
+7. If no time mentioned, leave temporal fields null
+8. If no relationships exist between the entities, return empty array
 
-Extraction Rules:
-1. Use entity IDs (source_entity_id, target_entity_id) from the ENTITIES list
-2. Use SCREAMING_SNAKE_CASE for relation_type (e.g., WORKS_AT, FOUNDED)
-3. Write fact as a natural language paraphrase
-4. Include temporal bounds when mentioned (ISO 8601 format with Z suffix)
-5. Leave temporal fields null if no time information is stated
+Do NOT:
+- Invent relationships not in the TEXT
+- Reference entity IDs that don't exist
+- Create self-referential relationships
+- Add personal opinions or general knowledge
 
-Extract relationships as a JSON array."""
+Return valid JSON only."""
+
+
+# ============================================================================
+# Validation Functions
+# ============================================================================
+
+def validate_json_complete(json_str: str) -> bool:
+    """Check if JSON string appears to be complete (not truncated)."""
+    if not json_str:
+        return False
+
+    # Basic checks for truncation
+    json_str = json_str.strip()
+
+    # Should end with closing brace/bracket
+    if not json_str.endswith('}') and not json_str.endswith(']'):
+        return False
+
+    # Count opening and closing braces/brackets
+    open_braces = json_str.count('{')
+    close_braces = json_str.count('}')
+    open_brackets = json_str.count('[')
+    close_brackets = json_str.count(']')
+
+    return open_braces == close_braces and open_brackets == close_brackets
 
 
 # ============================================================================
@@ -325,6 +359,11 @@ async def extract_and_save_to_graphiti(
 
     try:
         extracted_entities_json = model(entity_prompt, output_type=ExtractedEntities)
+
+        # Validate JSON is complete
+        if not validate_json_complete(extracted_entities_json):
+            raise ValueError(f"Generated JSON appears truncated: {extracted_entities_json[:200]}...")
+
         extracted_entities = ExtractedEntities.model_validate_json(extracted_entities_json)
     except Exception as e:
         print(f"\nERROR: Entity extraction failed - {e}")
@@ -346,41 +385,71 @@ async def extract_and_save_to_graphiti(
     # Convert to EntityNodes
     entity_nodes = to_graphiti_nodes(extracted_entities.entities, group_id, now)
 
-    # Extract relationships
-    print("\n" + "=" * 80)
-    print("RELATIONSHIP EXTRACTION")
-    print("=" * 80)
-    relationship_prompt = build_relationship_extraction_prompt(
-        text,
-        extracted_entities.entities,
-        reference_time.isoformat()
-    )
-
-    try:
-        extracted_relationships_json = model(
-            relationship_prompt,
-            output_type=ExtractedRelationships
+    # Extract relationships (need at least 2 entities)
+    if len(extracted_entities.entities) >= 2:
+        print("\n" + "=" * 80)
+        print("RELATIONSHIP EXTRACTION")
+        print("=" * 80)
+        relationship_prompt = build_relationship_extraction_prompt(
+            text,
+            extracted_entities.entities,
+            reference_time.isoformat()
         )
-        extracted_relationships = ExtractedRelationships.model_validate_json(
-            extracted_relationships_json
-        )
-    except Exception as e:
-        print(f"\nERROR: Relationship extraction failed - {e}")
-        raise
 
-    print(f"\nExtracted {len(extracted_relationships.relationships)} relationships:\n")
-    for r in extracted_relationships.relationships:
-        source_name = extracted_entities.entities[r.source_entity_id].name
-        target_name = extracted_entities.entities[r.target_entity_id].name
-        print(f"  {source_name}")
-        print(f"    --[{r.relation_type}]-->")
-        print(f"  {target_name}")
-        print(f"    Fact: {r.fact}")
-        if r.valid_at:
-            print(f"    Valid from: {r.valid_at}")
-        if r.invalid_at:
-            print(f"    Valid until: {r.invalid_at}")
-        print()
+        try:
+            extracted_relationships_json = model(
+                relationship_prompt,
+                output_type=ExtractedRelationships
+            )
+
+            # Validate JSON is complete
+            if not validate_json_complete(extracted_relationships_json):
+                raise ValueError(f"Generated JSON appears truncated: {extracted_relationships_json[:200]}...")
+
+            extracted_relationships = ExtractedRelationships.model_validate_json(
+                extracted_relationships_json
+            )
+        except Exception as e:
+            print(f"\nERROR: Relationship extraction failed - {e}")
+            raise
+
+        print(f"\nExtracted {len(extracted_relationships.relationships)} relationships:\n")
+        valid_relationships = []
+        for r in extracted_relationships.relationships:
+            # Validate entity IDs before accessing
+            if not (0 <= r.source_entity_id < len(extracted_entities.entities)):
+                print(f"  WARNING: Invalid source_entity_id {r.source_entity_id} (only {len(extracted_entities.entities)} entities)")
+                continue
+            if not (0 <= r.target_entity_id < len(extracted_entities.entities)):
+                print(f"  WARNING: Invalid target_entity_id {r.target_entity_id} (only {len(extracted_entities.entities)} entities)")
+                continue
+
+            # Check for self-referential relationships
+            if r.source_entity_id == r.target_entity_id:
+                print(f"  WARNING: Skipping self-referential relationship for entity {r.source_entity_id}")
+                continue
+
+            source_name = extracted_entities.entities[r.source_entity_id].name
+            target_name = extracted_entities.entities[r.target_entity_id].name
+            print(f"  {source_name}")
+            print(f"    --[{r.relation_type}]-->")
+            print(f"  {target_name}")
+            print(f"    Fact: {r.fact}")
+            if r.valid_at and r.valid_at.lower() != "null":
+                print(f"    Valid from: {r.valid_at}")
+            if r.invalid_at and r.invalid_at.lower() != "null":
+                print(f"    Valid until: {r.invalid_at}")
+            print()
+            valid_relationships.append(r)
+
+        # Update extracted_relationships to only include valid ones
+        extracted_relationships.relationships = valid_relationships
+    else:
+        print("\n" + "=" * 80)
+        print("RELATIONSHIP EXTRACTION")
+        print("=" * 80)
+        print(f"\nSkipping relationship extraction (need at least 2 entities, got {len(extracted_entities.entities)})")
+        extracted_relationships = ExtractedRelationships(relationships=[])
 
     # Convert to EntityEdges
     entity_edges = to_graphiti_edges(
