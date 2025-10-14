@@ -27,13 +27,7 @@ from graphiti_core.nodes import EpisodeType
 import graphiti_core.helpers
 from neo4j import time as neo4j_time
 
-
-#################################################
-# CONFIGURATION CONSTANTS
-#################################################
-KUZU_DB_PATH = "brain/charlie.kuzu"
-JOURNAL_FILE_PATH = "raw_data/Journal.json"
-SOURCE_DESCRIPTION = "journal entry"
+from app import settings
 
 
 #################################################
@@ -191,7 +185,7 @@ async def load_journals(
                     name=episode_name,
                     episode_body=text,
                     source=EpisodeType.text,
-                    source_description=SOURCE_DESCRIPTION,
+                    source_description=settings.SOURCE_DESCRIPTION,
                     reference_time=reference_time,
                 )
 
@@ -326,13 +320,13 @@ def main():
     )
     load_parser.add_argument(
         "--journal-file",
-        default=JOURNAL_FILE_PATH,
-        help=f"Path to journal JSON file (default: {JOURNAL_FILE_PATH})",
+        default=settings.JOURNAL_FILE_PATH,
+        help=f"Path to journal JSON file (default: {settings.JOURNAL_FILE_PATH})",
     )
     load_parser.add_argument(
         "--db-path",
-        default=KUZU_DB_PATH,
-        help=f"Path to Kuzu database (default: {KUZU_DB_PATH})",
+        default=settings.DB_PATH,
+        help=f"Path to Kuzu database (default: {settings.DB_PATH})",
     )
 
     # Build communities command
@@ -341,8 +335,8 @@ def main():
     )
     communities_parser.add_argument(
         "--db-path",
-        default=KUZU_DB_PATH,
-        help=f"Path to Kuzu database (default: {KUZU_DB_PATH})",
+        default=settings.DB_PATH,
+        help=f"Path to Kuzu database (default: {settings.DB_PATH})",
     )
 
     args = parser.parse_args()

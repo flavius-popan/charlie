@@ -14,6 +14,7 @@ from contextlib import asynccontextmanager
 import kuzu
 from graphiti_core.driver.kuzu_driver import KuzuDriver
 
+from app import settings
 from app.models.graph import (
     EpisodicNode,
     EntityNode,
@@ -38,17 +39,17 @@ class KuzuService:
     with proper connection management.
     """
 
-    def __init__(self, db_path: str = "brain/charlie.kuzu"):
+    def __init__(self, db_path: str | None = None):
         """
         Initialize KuzuService with database path.
 
         Args:
-            db_path: Path to the Kuzu database directory
+            db_path: Path to the Kuzu database directory (uses settings.DB_PATH if None)
         """
-        self.db_path = db_path
+        self.db_path = db_path if db_path is not None else settings.DB_PATH
         self._db: Optional[kuzu.Database] = None
         self._conn: Optional[kuzu.Connection] = None
-        logger.info(f"KuzuService initialized with database: {db_path}")
+        logger.info(f"KuzuService initialized with database: {self.db_path}")
 
     def connect(self) -> None:
         """Establish database connection."""

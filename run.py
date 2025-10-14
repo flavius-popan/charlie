@@ -5,6 +5,7 @@ Charlie - Interactive Graph Explorer Startup Script
 Run this script to start the FastAPI development server.
 """
 
+import argparse
 import os
 import sys
 import logging
@@ -15,9 +16,10 @@ logger = logging.getLogger(__name__)
 
 def check_database():
     """Check if the Kuzu database exists."""
-    db_path = "brain/charlie.kuzu"
-    if not os.path.exists(db_path):
-        logger.warning(f"Database not found at {db_path}")
+    from app import settings
+
+    if not os.path.exists(settings.DB_PATH):
+        logger.warning(f"Database not found at {settings.DB_PATH}")
         logger.info("You may need to load journal entries first:")
         logger.info("  python load_journals.py load --skip-verification")
         return False
@@ -26,9 +28,26 @@ def check_database():
 
 def main():
     """Main entry point for the application."""
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser(
+        description="Charlie - Interactive Graph Explorer"
+    )
+    parser.add_argument(
+        "--db",
+        default="charlie.kuzu",
+        help="Database filename in brain/ directory (default: charlie.kuzu)",
+    )
+    args = parser.parse_args()
+
+    # Configure database path
+    from app import settings
+
+    settings.DB_PATH = f"{settings.BRAIN_DIR}/{args.db}"
+
     logger.info("=" * 60)
     logger.info("Charlie - Interactive Graph Explorer")
     logger.info("=" * 60)
+    logger.info(f"Database: {settings.DB_PATH}")
 
     # Check database
     check_database()
