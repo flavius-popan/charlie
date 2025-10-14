@@ -7,13 +7,14 @@ and writing them to a Kuzu database with full graphiti compatibility.
 """
 
 import os
+
 # Fix tokenizers parallelism warning
-os.environ['TOKENIZERS_PARALLELISM'] = 'false'
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 import asyncio
 import logging
 import argparse
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import List
 from pathlib import Path
 
@@ -36,19 +37,16 @@ from graphiti_core.utils.bulk_utils import add_nodes_and_edges_bulk
 from app import settings
 
 
-# Configure logging - reduce noise from libraries
-logging.basicConfig(
-    level=logging.WARNING,
-    format='%(message)s'
-)
-# Set application logger to INFO for our own logs
+logging.basicConfig(level=logging.WARNING, format="%(message)s")
 logger = logging.getLogger(__name__)
+
 logger.setLevel(logging.INFO)
 
 
 # ============================================================================
 # Pydantic Models
 # ============================================================================
+
 
 class ExtractedEntity(BaseModel):
     id: int = Field(description="Sequential ID starting from 0")
@@ -76,6 +74,7 @@ class ExtractedRelationships(BaseModel):
 # ============================================================================
 # MLX Local Embedder
 # ============================================================================
+
 
 class MLXEmbedder(EmbedderClient):
     """
@@ -143,6 +142,7 @@ class MLXEmbedder(EmbedderClient):
 # Prompt Templates
 # ============================================================================
 
+
 def build_entity_extraction_prompt(text: str) -> str:
     """Build prompt for entity extraction (adapted from graphiti)."""
     return f"""Extract entities from the text below. Find ALL people and organizations mentioned.
@@ -168,15 +168,15 @@ Now extract from the TEXT above. Return only JSON."""
 
 
 def build_relationship_extraction_prompt(
-    text: str,
-    entities: List[ExtractedEntity],
-    reference_time: str
+    text: str, entities: List[ExtractedEntity], reference_time: str
 ) -> str:
     """Build prompt for relationship extraction (adapted from graphiti)."""
-    entities_context = "\n".join([
-        f"  {e.id}: {e.name}" + (f" ({e.entity_type})" if e.entity_type else "")
-        for e in entities
-    ])
+    entities_context = "\n".join(
+        [
+            f"  {e.id}: {e.name}" + (f" ({e.entity_type})" if e.entity_type else "")
+            for e in entities
+        ]
+    )
 
     return f"""You are an expert fact extractor. Extract ONLY relationships explicitly stated in the TEXT.
 
@@ -193,7 +193,7 @@ def build_relationship_extraction_prompt(
 </REFERENCE_TIME>
 
 Critical Rules:
-1. ONLY use entity IDs from the ENTITIES list above (IDs 0 to {len(entities)-1})
+1. ONLY use entity IDs from the ENTITIES list above (IDs 0 to {len(entities) - 1})
 2. ONLY extract relationships explicitly stated in the TEXT - do NOT invent facts
 3. ONLY create relationships between two different entities (source_entity_id ≠ target_entity_id)
 4. Use SCREAMING_SNAKE_CASE for relation_type (WORKS_AT, FOUNDED, JOINED, etc.)
@@ -215,6 +215,7 @@ Return valid JSON only."""
 # Validation Functions
 # ============================================================================
 
+
 def validate_json_complete(json_str: str) -> bool:
     """Check if JSON string appears to be complete (not truncated)."""
     if not json_str:
@@ -224,14 +225,14 @@ def validate_json_complete(json_str: str) -> bool:
     json_str = json_str.strip()
 
     # Should end with closing brace/bracket
-    if not json_str.endswith('}') and not json_str.endswith(']'):
+    if not json_str.endswith("}") and not json_str.endswith("]"):
         return False
 
     # Count opening and closing braces/brackets
-    open_braces = json_str.count('{')
-    close_braces = json_str.count('}')
-    open_brackets = json_str.count('[')
-    close_brackets = json_str.count(']')
+    open_braces = json_str.count("{")
+    close_braces = json_str.count("}")
+    open_brackets = json_str.count("[")
+    close_brackets = json_str.count("]")
 
     return open_braces == close_braces and open_brackets == close_brackets
 
@@ -240,15 +241,14 @@ def validate_json_complete(json_str: str) -> bool:
 # Conversion Functions
 # ============================================================================
 
+
 def to_graphiti_nodes(
-    extracted_entities: List[ExtractedEntity],
-    group_id: str,
-    created_at: datetime
+    extracted_entities: List[ExtractedEntity], group_id: str, created_at: datetime
 ) -> List[EntityNode]:
     """Convert extracted entities to graphiti EntityNode objects."""
     nodes = []
     for entity in extracted_entities:
-        labels = ['Entity']
+        labels = ["Entity"]
         if entity.entity_type:
             labels.append(entity.entity_type)
 
@@ -256,7 +256,7 @@ def to_graphiti_nodes(
             name=entity.name,
             group_id=group_id,
             labels=labels,
-            summary='',
+            summary="",
             created_at=created_at,
             name_embedding=None,
         )
@@ -270,7 +270,7 @@ def to_graphiti_edges(
     entity_nodes: List[EntityNode],
     episode_uuid: str,
     group_id: str,
-    created_at: datetime
+    created_at: datetime,
 ) -> List[EntityEdge]:
     """Convert extracted relationships to graphiti EntityEdge objects."""
     edges = []
@@ -293,7 +293,7 @@ def to_graphiti_edges(
         if rel.valid_at and rel.valid_at.lower() != "null":
             try:
                 valid_at_dt = ensure_utc(
-                    datetime.fromisoformat(rel.valid_at.replace('Z', '+00:00'))
+                    datetime.fromisoformat(rel.valid_at.replace("Z", "+00:00"))
                 )
             except ValueError as e:
                 logger.warning(f"Could not parse valid_at: {rel.valid_at} - {e}")
@@ -302,7 +302,7 @@ def to_graphiti_edges(
         if rel.invalid_at and rel.invalid_at.lower() != "null":
             try:
                 invalid_at_dt = ensure_utc(
-                    datetime.fromisoformat(rel.invalid_at.replace('Z', '+00:00'))
+                    datetime.fromisoformat(rel.invalid_at.replace("Z", "+00:00"))
                 )
             except ValueError as e:
                 logger.warning(f"Could not parse invalid_at: {rel.invalid_at} - {e}")
@@ -328,16 +328,17 @@ def to_graphiti_edges(
 # Main Extraction Pipeline
 # ============================================================================
 
+
 async def extract_and_save_to_graphiti(
     text: str,
     model,
     graphiti_instance: Graphiti,
-    reference_time: datetime | None = None
+    reference_time: datetime | None = None,
 ):
     """Complete extraction pipeline: MLX-LM → Graphiti → Kuzu."""
     now = utc_now()
     reference_time = reference_time or now
-    group_id = 'default'
+    group_id = "default"
 
     # Create episode
     episode = EpisodicNode(
@@ -362,20 +363,20 @@ async def extract_and_save_to_graphiti(
 
         # Validate JSON is complete
         if not validate_json_complete(extracted_entities_json):
-            raise ValueError(f"Generated JSON appears truncated: {extracted_entities_json[:200]}...")
+            raise ValueError(
+                f"Generated JSON appears truncated: {extracted_entities_json[:200]}..."
+            )
 
-        extracted_entities = ExtractedEntities.model_validate_json(extracted_entities_json)
+        extracted_entities = ExtractedEntities.model_validate_json(
+            extracted_entities_json
+        )
     except Exception as e:
         print(f"\nERROR: Entity extraction failed - {e}")
         raise
 
     if not extracted_entities.entities:
         print("\nNo entities found in text - nothing to save.")
-        return {
-            "episode": None,
-            "entities": [],
-            "relationships": []
-        }
+        return {"episode": None, "entities": [], "relationships": []}
 
     print(f"\nExtracted {len(extracted_entities.entities)} entities:\n")
     for e in extracted_entities.entities:
@@ -391,20 +392,19 @@ async def extract_and_save_to_graphiti(
         print("RELATIONSHIP EXTRACTION")
         print("=" * 80)
         relationship_prompt = build_relationship_extraction_prompt(
-            text,
-            extracted_entities.entities,
-            reference_time.isoformat()
+            text, extracted_entities.entities, reference_time.isoformat()
         )
 
         try:
             extracted_relationships_json = model(
-                relationship_prompt,
-                output_type=ExtractedRelationships
+                relationship_prompt, output_type=ExtractedRelationships
             )
 
             # Validate JSON is complete
             if not validate_json_complete(extracted_relationships_json):
-                raise ValueError(f"Generated JSON appears truncated: {extracted_relationships_json[:200]}...")
+                raise ValueError(
+                    f"Generated JSON appears truncated: {extracted_relationships_json[:200]}..."
+                )
 
             extracted_relationships = ExtractedRelationships.model_validate_json(
                 extracted_relationships_json
@@ -413,20 +413,28 @@ async def extract_and_save_to_graphiti(
             print(f"\nERROR: Relationship extraction failed - {e}")
             raise
 
-        print(f"\nExtracted {len(extracted_relationships.relationships)} relationships:\n")
+        print(
+            f"\nExtracted {len(extracted_relationships.relationships)} relationships:\n"
+        )
         valid_relationships = []
         for r in extracted_relationships.relationships:
             # Validate entity IDs before accessing
             if not (0 <= r.source_entity_id < len(extracted_entities.entities)):
-                print(f"  WARNING: Invalid source_entity_id {r.source_entity_id} (only {len(extracted_entities.entities)} entities)")
+                print(
+                    f"  WARNING: Invalid source_entity_id {r.source_entity_id} (only {len(extracted_entities.entities)} entities)"
+                )
                 continue
             if not (0 <= r.target_entity_id < len(extracted_entities.entities)):
-                print(f"  WARNING: Invalid target_entity_id {r.target_entity_id} (only {len(extracted_entities.entities)} entities)")
+                print(
+                    f"  WARNING: Invalid target_entity_id {r.target_entity_id} (only {len(extracted_entities.entities)} entities)"
+                )
                 continue
 
             # Check for self-referential relationships
             if r.source_entity_id == r.target_entity_id:
-                print(f"  WARNING: Skipping self-referential relationship for entity {r.source_entity_id}")
+                print(
+                    f"  WARNING: Skipping self-referential relationship for entity {r.source_entity_id}"
+                )
                 continue
 
             source_name = extracted_entities.entities[r.source_entity_id].name
@@ -448,16 +456,14 @@ async def extract_and_save_to_graphiti(
         print("\n" + "=" * 80)
         print("RELATIONSHIP EXTRACTION")
         print("=" * 80)
-        print(f"\nSkipping relationship extraction (need at least 2 entities, got {len(extracted_entities.entities)})")
+        print(
+            f"\nSkipping relationship extraction (need at least 2 entities, got {len(extracted_entities.entities)})"
+        )
         extracted_relationships = ExtractedRelationships(relationships=[])
 
     # Convert to EntityEdges
     entity_edges = to_graphiti_edges(
-        extracted_relationships.relationships,
-        entity_nodes,
-        episode.uuid,
-        group_id,
-        now
+        extracted_relationships.relationships, entity_nodes, episode.uuid, group_id, now
     )
 
     # Create episodic edges
@@ -476,21 +482,18 @@ async def extract_and_save_to_graphiti(
         episodic_edges,
         entity_nodes,
         entity_edges,
-        graphiti_instance.embedder
+        graphiti_instance.embedder,
     )
     print("\nSaved successfully")
     print("=" * 80)
 
-    return {
-        "episode": episode,
-        "entities": entity_nodes,
-        "relationships": entity_edges
-    }
+    return {"episode": episode, "entities": entity_nodes, "relationships": entity_edges}
 
 
 # ============================================================================
 # CLI Interface
 # ============================================================================
+
 
 async def main():
     """Interactive CLI loop."""
@@ -563,7 +566,7 @@ async def main():
         try:
             text = input("\n> ")
 
-            if text.lower() in ['exit', 'quit', 'q']:
+            if text.lower() in ["exit", "quit", "q"]:
                 print("\nExiting...")
                 break
 
@@ -572,10 +575,7 @@ async def main():
 
             # Run extraction
             result = await extract_and_save_to_graphiti(
-                text,
-                model,
-                graphiti,
-                utc_now()
+                text, model, graphiti, utc_now()
             )
 
             if result["episode"]:
