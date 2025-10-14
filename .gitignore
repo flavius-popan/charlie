@@ -13,3 +13,7 @@ wheels/
 graphiti/
 raw_data/
 brain/
+.env
+server.log
+.pytest_cache
+.envrc

@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+
+{% block title %}Journal Entries - Charlie{% endblock %}
+
+{% block content %}
+<div class="episodes-list">
+    <header class="page-header">
+        <h1>Journal Entries</h1>
+        <p class="subtitle">{{ total_episodes }} entries in your knowledge graph</p>
+    </header>
+
+    {% if episodes %}
+    <div class="episodes-grid">
+        {% for episode in episodes %}
+        <article class="episode-card">
+            <header class="episode-header">
+                <h2 class="episode-title">
+                    <a href="/episodes/{{ episode.uuid }}">{{ episode.title }}</a>
+                </h2>
+                <time class="episode-date" datetime="{{ episode.valid_at.isoformat() }}">
+                    {{ episode.display_date }}
+                </time>
+            </header>
+            <div class="episode-preview">
+                <p>{{ episode.preview }}</p>
+            </div>
+            <footer class="episode-footer">
+                <a href="/episodes/{{ episode.uuid }}" class="read-more">Read full entry →</a>
+            </footer>
+        </article>
+        {% endfor %}
+    </div>
+
+    {% if total_pages > 1 %}
+    <nav class="pagination">
+        {% if page > 1 %}
+        <a href="/?page={{ page - 1 }}" class="pagination-link">&larr; Previous</a>
+        {% endif %}
+
+        <span class="pagination-info">Page {{ page }} of {{ total_pages }}</span>
+
+        {% if page < total_pages %}
+        <a href="/?page={{ page + 1 }}" class="pagination-link">Next &rarr;</a>
+        {% endif %}
+    </nav>
+    {% endif %}
+
+    {% else %}
+    <div class="empty-state">
+        <p>No journal entries found.</p>
+        <p>Load your journal entries using:</p>
+        <pre><code>python load_journals.py load --skip-verification</code></pre>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

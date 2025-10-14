@@ -1,0 +1,17 @@
+{
+  "playwright": {
+    "enabled": true,
+    "source": "custom",
+    "command": "docker",
+    "args": [
+      "run",
+      "-i",
+      "--rm",
+      "--name",
+      "zed-playwright",
+      "--net=host",
+      "mcp/playwright"
+    ],
+    "env": {}
+  }
+}
