@@ -17,3 +17,5 @@ brain/
 server.log
 .pytest_cache
 .envrc
+.models
+.direnv/CACHEDIR.TAG
