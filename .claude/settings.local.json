@@ -3,7 +3,11 @@
     "allow": [
       "Bash(curl:*)",
       "Bash(python:*)",
-      "Bash(python3:*)"
+      "Bash(python3:*)",
+      "WebFetch(domain:dspy.ai)",
+      "WebSearch",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:www.langtrace.ai)"
     ],
     "deny": [],
     "ask": []
