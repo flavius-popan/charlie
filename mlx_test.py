@@ -528,7 +528,7 @@ async def main():
 
     # Load MLX model and tokenizer
     print("\nLoading MLX-LM model and tokenizer...")
-    mlx_model, mlx_tokenizer = mlx_lm.load("mlx-community/Llama-3.2-1B-Instruct-4bit")
+    mlx_model, mlx_tokenizer = mlx_lm.load("mlx-community/Qwen3-4B-Instruct-2507-8bit")
     print("Model loaded")
 
     # Create outlines model for structured generation
