@@ -19,3 +19,4 @@ server.log
 .envrc
 .models
 .direnv/CACHEDIR.TAG
+.claude/settings.local.json
