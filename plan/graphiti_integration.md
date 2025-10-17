@@ -22,18 +22,19 @@
 ### Three-Layer Design
 
 ```
+
 ┌─────────────────────────────────────────────┐
 │ GRAPHITI                                    │
-│ • All 9 operations (extraction, dedup, etc)│
+│ • All 9 operations (extraction, dedup, etc) │
 └────────────┬────────────────────────────────┘
-             │ _generate_response(messages, schema)
+│ _generate_response(messages, schema)
 ┌────────────▼────────────────────────────────┐
 │ BRIDGE LAYER                                │
 │ ┌─────────────────────────────────────────┐ │
 │ │ GraphitiLM(LLMClient)                   │ │
 │ │ • Format messages → prompt              │ │
 │ │ • Call Outlines with schema             │ │
-│ │ • Return validated dict                 │ │
+│ │ • Return validated Pydantic object      │ │
 │ │ • DSPy-compatible design                │ │
 │ └─────────────────────────────────────────┘ │
 │ ┌─────────────────────────────────────────┐ │
@@ -41,21 +42,22 @@
 │ │ • Wrap backend embedding APIs           │ │
 │ └─────────────────────────────────────────┘ │
 └────────────┬────────────────────────────────┘
-             │
+│
 ┌────────────▼────────────────────────────────┐
 │ OUTLINES (Unified Structured Generation)    │
-│ • Backend abstraction (mlxlm, llamacpp)    │
-│ • Pydantic → constrained generation        │
-│ • Guarantees valid JSON                    │
+│ • Backend abstraction (mlxlm, llamacpp)     │
+│ • Pydantic → constrained generation         │
+│ • Guarantees valid JSON + object            │
 └────────────┬────────────────────────────────┘
-             │
-      ┌──────┴───────┐
-      │              │
+│
+┌──────┴───────┐
+│              │
 ┌─────▼────┐  ┌──────▼──────┐
 │ MLX      │  │ llama.cpp   │
 │ (Apple   │  │ (Universal) │
 │ Silicon) │  │             │
 └──────────┘  └─────────────┘
+
 ```
 
 ---
@@ -63,15 +65,17 @@
 ## Module Structure
 
 ```
+
 app/
 ├── llm/
 │   ├── client.py              # GraphitiLM (~100 lines)
-│   ├── embedder.py            # Embedder (~50 lines)
+│   ├── embedder.py            # Embedder (~60 lines)
 │   ├── backend.py             # Backend selection (~20 lines)
 │   └── prompts.py             # Message formatting (~30 lines)
 └── prompts/
-    └── (Phase 2: DSPy modules)
-```
+└── (Phase 2: DSPy modules)
+
+````
 
 **Total MVP: ~200 lines**
 
@@ -86,8 +90,8 @@ app/
 **Responsibilities:**
 - Implement `LLMClient` interface for Graphiti
 - Convert Graphiti `Message` list → formatted prompt string
-- Call Outlines with Pydantic schema for structured generation
-- Parse/validate JSON response → dict
+- Call Outlines with a Pydantic schema for structured generation
+- Return the generated **Pydantic object instance**, not just a dict
 - Support mode toggle for future DSPy integration
 
 **Key Design Pattern:**
@@ -97,14 +101,13 @@ class GraphitiLM(LLMClient):
     Bridge: Graphiti ↔ Outlines
 
     Design:
-    1. Receives: list[Message] + Pydantic schema (from Graphiti)
+    1. Receives: list[Message] + Pydantic schema (response_model)
     2. Formats: messages → prompt string
     3. Generates: Outlines structured generation
-    4. Returns: validated dict
+    4. Returns: validated Pydantic object (instance of response_model)
     """
 
     def __init__(self, outlines_model, mode="direct"):
-        # mode: "direct" (Phase 1) or "dspy" (Phase 2)
         self.model = outlines_model
         self.mode = mode
 
@@ -112,19 +115,34 @@ class GraphitiLM(LLMClient):
         """
         Core bridge logic:
         - Format messages → prompt
-        - Generate with Outlines + schema
-        - Parse JSON → dict
+        - Generate using Outlines + schema
+        - Return Pydantic object instance (not dict)
         """
         if self.mode == "dspy":
             return await self._dspy_generate(messages, response_model)
         else:
             return await self._direct_generate(messages, response_model)
-```
 
-**DSPy Compatibility:**
-- `mode` parameter enables future DSPy routing
-- `_dspy_generate()` stub ready for Phase 2
-- No refactoring needed when adding DSPy
+    async def _direct_generate(self, messages, response_model):
+        prompt = format_messages(messages, getattr(self.model, "tokenizer", None))
+        generator = outlines.generate.json(self.model, response_model)
+        # Run blocking generation safely in async context
+        result = await asyncio.to_thread(generator, prompt)
+        return result
+````
+
+**Behavioral Clarification:**
+`_generate_response()` mirrors Graphiti’s native OpenAI and Gemini clients:
+
+* **Receives:** Graphiti `Message[]` and a `response_model` (Pydantic class)
+* **Passes:** `response_model` directly to Outlines’ generator
+* **Returns:** A validated **Pydantic object** of type `response_model`
+* This ensures downstream Graphiti code can access attributes directly (e.g. `result.entities`), not just via a dict.
+
+**Async Note:**
+Outlines’ `generate.json()` is synchronous.
+To maintain Graphiti’s async contract, `asyncio.to_thread()` is used to offload blocking generation without modifying Outlines internals.
+This ensures compatibility with Graphiti’s async pipeline while preserving simplicity.
 
 ---
 
@@ -133,18 +151,21 @@ class GraphitiLM(LLMClient):
 **File:** `app/llm/embedder.py`
 
 **Responsibilities:**
-- Implement `EmbedderClient` interface for Graphiti
-- Delegate to backend-specific embedding methods
-- Support both MLX (mean pooling) and llama.cpp (built-in)
+
+* Implement `EmbedderClient` interface for Graphiti
+* Use backend-specific embedding logic
+* Support both MLX (manual mean pooling) and llama.cpp (native embed)
+* Return consistent vector output for downstream use
 
 **Key Design Pattern:**
+
 ```python
 class Embedder(EmbedderClient):
     """
     Wraps backend embedding APIs
 
     Backends:
-    - MLX: Mean pooling over hidden states
+    - MLX: Mean pooling over last hidden states
     - llama.cpp: Built-in embed() method
     """
 
@@ -154,12 +175,30 @@ class Embedder(EmbedderClient):
 
     async def create(self, text):
         if self.backend == "mlx":
-            # MLX: tokenize + forward + mean pool
-            pass
+            # Tokenize and forward pass through model
+            tokens = self.model.tokenizer(text, return_tensors="np")
+            hidden = await asyncio.to_thread(self.model.model.forward, tokens["input_ids"])
+            # Mean pool over sequence length
+            embedding = hidden.mean(axis=1).squeeze()
         elif self.backend == "llamacpp":
-            # llama.cpp: use built-in embed()
-            pass
+            embedding = await asyncio.to_thread(self.model.embed, text)
+        return embedding.tolist()
 ```
+
+**Embedding Clarification:**
+
+* **MLX:**
+
+  * Tokenization via `mlx_lm` tokenizer
+  * Forward pass via model’s `forward()`
+  * Mean-pool across hidden states for sentence embedding
+  * Normalize vectors if required by Graphiti’s downstream usage
+* **llama.cpp:**
+
+  * Uses the built-in `embed()` API from `llama_cpp.Llama`
+  * Already returns float vectors, consistent dimensionality per model
+
+This design guarantees uniform embeddings for both backends with minimal code.
 
 ---
 
@@ -168,11 +207,13 @@ class Embedder(EmbedderClient):
 **File:** `app/llm/backend.py`
 
 **Responsibilities:**
-- Detect environment (Apple Silicon vs other)
-- Initialize appropriate Outlines model
-- Return model + backend type for embedder
+
+* Detect environment (Apple Silicon vs other)
+* Initialize appropriate Outlines model
+* Return model + backend type for embedder
 
 **Key Design Pattern:**
+
 ```python
 def create_backend(config=None):
     """
@@ -180,22 +221,21 @@ def create_backend(config=None):
 
     Returns: (outlines_model, backend_type)
     """
-    if config and config.backend:
-        backend = config.backend
-    else:
-        backend = auto_detect()  # "mlx" on Apple Silicon, else "llamacpp"
+    backend = config.backend if config and config.backend else auto_detect()
 
     if backend == "mlx":
         model = outlines.models.mlxlm(config.model_name)
     elif backend == "llamacpp":
-        model = outlines.models.llamacpp(config.model_path, n_gpu_layers=-1)
+        from llama_cpp import Llama
+        llama = Llama(model_path=config.model_path, n_gpu_layers=-1)
+        model = outlines.models.LlamaCpp(llama)
 
     return model, backend
 
 def auto_detect():
     """Detect: Apple Silicon → mlx, else → llamacpp"""
     import platform
-    if platform.processor() == 'arm' and platform.system() == 'Darwin':
+    if platform.system() == "Darwin" and "arm" in platform.machine():
         return "mlx"
     return "llamacpp"
 ```
@@ -207,25 +247,25 @@ def auto_detect():
 **File:** `app/llm/prompts.py`
 
 **Responsibilities:**
-- Convert Graphiti `Message` objects to prompt string
-- Apply chat template (try native tokenizer first, fallback to manual)
-- Keep simple and maintainable
+
+* Convert Graphiti `Message` objects to a prompt string compatible with Outlines
+* Prefer backend-native chat templates
+* Fallback gracefully when unavailable
 
 **Key Design Pattern:**
+
 ```python
 def format_messages(messages, tokenizer=None):
     """
-    Convert Graphiti messages to prompt string
+    Convert Graphiti messages to a chat prompt string.
 
     Strategy:
-    1. Try tokenizer.apply_chat_template() if available
-    2. Fallback to simple template: system + user + assistant starter
+    1. If tokenizer supports apply_chat_template() → use it.
+    2. Else → fallback to simple textual format.
     """
-    if tokenizer and hasattr(tokenizer, 'apply_chat_template'):
-        # Use native chat template
-        return tokenizer.apply_chat_template(messages, tokenize=False)
+    if tokenizer and hasattr(tokenizer, "apply_chat_template"):
+        return tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
     else:
-        # Simple fallback
         prompt = ""
         for msg in messages:
             if msg.role == "system":
@@ -235,6 +275,13 @@ def format_messages(messages, tokenizer=None):
         prompt += "Assistant:"
         return prompt
 ```
+
+**Templating Clarification:**
+
+* MLX and other chat models (e.g. Qwen, Llama) often ship native chat templates.
+  Using these via `apply_chat_template()` ensures consistent token boundaries and generation behavior.
+* For models without templates, a minimal human-readable fallback is applied (`System:` / `User:` / `Assistant:`).
+* This approach avoids tight coupling with backend-specific prompt rules, maximizing portability.
 
 ---
 
@@ -247,24 +294,20 @@ from app.llm.backend import create_backend
 from app.llm.client import GraphitiLM
 from app.llm.embedder import Embedder
 
-# Initialize backend
 model, backend = create_backend(backend="mlx", model_name="mlx-community/Qwen2.5-3B-Instruct-4bit")
 
-# Create bridge components
 llm = GraphitiLM(model, mode="direct")
 embedder = Embedder(backend, model)
 
-# Initialize Graphiti
 graphiti = Graphiti(llm_client=llm, embedder=embedder, driver=driver)
 ```
 
 ### Pattern 2: llama.cpp Backend (Universal)
 
 ```python
-# Change backend - everything else identical
 model, backend = create_backend(backend="llamacpp", model_path="models/qwen2.5-3b.gguf")
 
-llm = GraphitiLM(model, mode="direct")
+llm = GraphitiLM(model)
 embedder = Embedder(backend, model)
 
 graphiti = Graphiti(llm_client=llm, embedder=embedder, driver=driver)
@@ -273,7 +316,6 @@ graphiti = Graphiti(llm_client=llm, embedder=embedder, driver=driver)
 ### Pattern 3: Auto-Detection
 
 ```python
-# Auto-select based on environment
 model, backend = create_backend()  # Auto-detects Apple Silicon vs other
 
 llm = GraphitiLM(model)
@@ -286,138 +328,96 @@ graphiti = Graphiti(llm_client=llm, embedder=embedder, driver=driver)
 
 ## Implementation Phases
 
-### Phase 1: MVP (170 lines, 1-2 days)
+### Phase 1: MVP
 
 **Components:**
-1. `backend.py`: Environment detection + Outlines initialization (~20 lines)
-2. `prompts.py`: Message formatting with fallback (~30 lines)
-3. `client.py`: GraphitiLM bridge with DSPy stub (~100 lines)
-4. `embedder.py`: Backend-specific embedding (~50 lines)
+
+1. `backend.py`: Environment detection + Outlines initialization
+2. `prompts.py`: Message formatting with fallback
+3. `client.py`: GraphitiLM bridge with async handling + DSPy stub
+4. `embedder.py`: Backend-specific embedding logic
 
 **Testing:**
-- Run all 9 Graphiti operations
-- Verify structured outputs (entity extraction, relationships, deduplication, etc.)
-- Test backend switching (MLX ↔ llama.cpp)
-- Collect baseline quality metrics
 
-**Deliverable:** Working system with full Graphiti pipeline
+* Verify all 9 Graphiti operations work with structured outputs
+* Validate returned objects are correct Pydantic instances
+* Test both backends (MLX ↔ llama.cpp)
+* Collect baseline quality and latency metrics
+
+**Deliverable:**
+Fully functional Graphiti pipeline using local inference via Outlines.
 
 ---
 
-### Phase 2: DSPy Integration (330 lines, conditional)
+### Phase 2: DSPy Integration (conditional)
 
-*Only proceed if Phase 1 quality/performance insufficient*
+Only pursued if Phase 1 quality or latency is insufficient.
 
-**Components:**
-1. `dspy_backend.py`: Outlines-backed DSPy LM (~80 lines)
-2. `dspy_adapter.py`: Custom adapter for small models (~100 lines)
-3. `prompts/modules.py`: DSPy signatures + modules (~150 lines)
+**Additions:**
 
-**Changes to Phase 1:**
-- `GraphitiLM._dspy_generate()`: Implement DSPy routing
-- Add mode toggle: `llm.set_mode("dspy")`
-
-**Testing:**
-- A/B test: direct vs DSPy modes
-- Measure quality improvement
-- Benchmark latency overhead
-
-**Deliverable:** DSPy integration with measurable quality gains
-
----
-
-### Phase 3: DSPy Optimization (weeks, conditional)
-
-*Only proceed if Phase 2 shows value*
-
-**Activities:**
-1. Collect training examples (100+ labeled extractions)
-2. Run DSPy optimizers (BootstrapFewShot, MIPRO)
-3. Measure improvement vs baseline
-4. Deploy optimized modules
+* `dspy_backend.py` and `dspy_adapter.py` for DSPy model routing
+* Implement `_dspy_generate()` in `GraphitiLM`
+* Extend test suite for A/B comparisons (direct vs DSPy)
 
 ---
 
 ## Design Decisions
 
-### 1. Outlines as Single Abstraction Layer
+1. **Outlines as Unified Abstraction Layer**
 
-**Decision:** Use Outlines for both MLX and llama.cpp (no custom backend abstraction)
+   * Handles both MLX and llama.cpp via a consistent API
+   * Enables structured generation using Pydantic
+   * Eliminates redundant backend code
 
-**Rationale:**
-- Outlines already provides backend abstraction
-- Native support for both MLX and llama.cpp
-- Unified structured generation (no dual GBNF/Outlines systems)
+2. **Async Safety for Graphiti**
 
-**Benefit:** Eliminates ~250 lines of redundant abstraction code
+   * Outlines runs synchronously → wrapped in `asyncio.to_thread()`
+   * Ensures non-blocking Graphiti pipeline integration
 
----
+3. **Direct Return of Pydantic Objects**
 
-### 2. Defer DSPy to Phase 2
+   * Mirrors OpenAI/Gemini client semantics
+   * Ensures Graphiti’s operations consume typed objects seamlessly
 
-**Decision:** Build direct mode first, add DSPy only if needed
+4. **Simple, Adaptive Message Formatting**
 
-**Rationale:**
-- DSPy requires training data not yet collected
-- Unproven value for this specific use case
-- Can be added without refactoring (via mode toggle)
-- 72% code reduction in MVP
+   * Uses backend-native templates when available
+   * Provides consistent fallback for non-chat models
 
-**Benefit:** Faster to production, measure baseline before optimizing
+5. **Deferred DSPy Integration**
 
----
-
-### 3. Simple Message Formatting
-
-**Decision:** Try native chat templates, fallback to simple format
-
-**Rationale:**
-- Both MLX and llama.cpp tokenizers support `apply_chat_template()`
-- Simple fallback sufficient for most cases
-- Avoid premature abstraction
-
-**Benefit:** ~110 lines saved vs custom ModelFormatter layer
-
----
-
-### 4. DSPy-Compatible Bridge Design
-
-**Decision:** Include `mode` parameter and `_dspy_generate()` stub in Phase 1
-
-**Rationale:**
-- Zero refactoring when adding DSPy
-- A/B testing capability built-in
-- Clear separation of concerns
-
-**Benefit:** Phase 2 integration is additive, not refactor
+   * Optional, additive, and isolated
+   * No refactoring required in Phase 1
 
 ---
 
 ## Success Criteria
 
-### Phase 1 MVP
-- ✅ All 9 Graphiti features functional
-- ✅ Both backends work (MLX + llama.cpp)
-- ✅ Backend switching without code changes
-- ✅ Structured output valid 100% of time
-- ✅ Code < 200 lines
-- ✅ Baseline quality metrics collected
+**Phase 1 MVP**
 
-### Phase 2 DSPy (If Needed)
-- ✅ Measurable quality improvement (precision, recall, F1)
-- ✅ A/B testing working
-- ✅ Acceptable latency overhead (<2x direct mode)
+* ✅ All Graphiti features functional
+* ✅ Structured outputs are valid Pydantic objects
+* ✅ Async-safe integration
+* ✅ Works across MLX and llama.cpp backends
+* ✅ Code under 200 lines
+* ✅ Baseline quality metrics collected
+
+**Phase 2 DSPy**
+
+* ✅ A/B tested quality improvement
+* ✅ Acceptable latency overhead (<2×)
+* ✅ Reuses Phase 1 bridge
 
 ---
 
 ## Risk Assessment
 
-| Risk | Mitigation |
-|------|------------|
-| Native chat templates inadequate | Use simple fallback format |
-| Backend-specific quirks | Outlines handles differences |
-| DSPy needed for quality | Phase 2 design supports seamless addition |
-| Outlines limitations | Proven working in current codebase |
+| Risk                             | Mitigation                      |
+| -------------------------------- | ------------------------------- |
+| Backend-specific quirks          | Outlines abstraction            |
+| Async blocking                   | Offload to thread executor      |
+| Embedding dimension mismatch     | Normalize during Embedder stage |
+| DSPy required for higher quality | Phase 2 ready architecture      |
 
 ---
 
@@ -426,10 +426,11 @@ graphiti = Graphiti(llm_client=llm, embedder=embedder, driver=driver)
 ```toml
 [project]
 dependencies = [
-    "graphiti-core>=0.21.0",
+    "graphiti-core>=0.22.0",
     "kuzu>=0.11.2",
     "mlx-lm>=0.28.2",
     "outlines>=1.2.6",
+    "llama-cpp-python>=0.2.90",
     # "dspy>=2.6.0",  # Phase 2 only
 ]
 
@@ -443,10 +444,12 @@ override-dependencies = [
 
 ## Migration from mlx_test.py
 
-**Current prototype** (~600 lines):
-- `MLXEmbedder` → reuse as-is, wrap in new `Embedder`
-- `build_*_prompt()` → replace with Graphiti's prompts
-- Custom extraction logic → delete (use Graphiti)
-- `outlines.from_mlxlm()` → wrap in `GraphitiLM`
+**Current prototype (~600 lines):**
 
-**Net result:** 600 lines custom → 170 lines integration
+* `MLXEmbedder` → simplified into new `Embedder`
+* `build_*_prompt()` → replaced by `format_messages()`
+* Custom JSON validation → handled by Outlines
+* `outlines.from_mlxlm()` → replaced by `create_backend() + GraphitiLM`
+
+**Net result:**
+600 lines custom → ~200 lines modular integration.
