@@ -13,12 +13,13 @@ from collections import deque
 
 logger = logging.getLogger(__name__)
 
-T = TypeVar('T')
+T = TypeVar("T")
 
 
 @dataclass
 class BatchRequest:
     """Single request in a batch."""
+
     args: tuple
     kwargs: dict
     future: asyncio.Future
@@ -39,7 +40,7 @@ class RequestBatcher:
     def __init__(
         self,
         batch_fn: Callable,
-        batch_window: float = 0.01,  # 10ms collection window
+        batch_window: float = 0.05,  # 50ms collection window
         max_batch_size: int = 32,
     ):
         """

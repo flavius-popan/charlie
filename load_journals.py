@@ -64,6 +64,15 @@ graphiti_core.nodes.parse_db_date = patched_parse_db_date  # type: ignore[attr-d
 
 
 #################################################
+# SCHEMA PATCHES FOR ENTITY EXTRACTION LIMITS
+#################################################
+# Apply schema constraints to prevent runaway entity generation
+from app.llm.schema_patches import apply_all_patches
+apply_all_patches()
+logger.info("Schema patches applied: entity extraction limits enabled")
+
+
+#################################################
 # LOGGING CONFIGURATION
 #################################################
 logging.basicConfig(
