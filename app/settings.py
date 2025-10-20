@@ -15,6 +15,4 @@ SOURCE_DESCRIPTION: str = "journal entry"
 # LLM Backend Configuration (Phase 1: MLX only)
 MLX_MODEL_NAME: str = ".models/mlx-community--Qwen3-4B-Instruct-2507-8bit"
 MLX_EMBEDDING_MODEL_NAME: str = ".models/mlx-community--Qwen3-Embedding-4B-4bit-DWQ"
-MLX_EMBEDDING_DIM: int = (
-    1536  # Target dimension for embeddings (OpenAI default is 1536)
-)
+MLX_EMBEDDING_DIM: int = 1024  # Match Graphiti default (EMBEDDING_DIM env var)
