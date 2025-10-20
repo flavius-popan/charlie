@@ -2,7 +2,6 @@
 
 - Extremely detailed debugging in load_journals.py
 - Expose all prompts for customization
-- Remove janky Kuzu timezone/datetime monkey-patch
 - Move models to default location, out of project dir
 
 ## Technical

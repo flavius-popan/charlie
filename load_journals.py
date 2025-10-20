@@ -17,51 +17,11 @@ from dotenv import load_dotenv
 import kuzu
 
 from graphiti_core import Graphiti
-import graphiti_core.edges
-import graphiti_core.nodes
 from graphiti_core.driver.kuzu_driver import KuzuDriver
 from graphiti_core.nodes import EpisodeType
 
-# Monkey-patch to fix Kuzu naive datetime issue
-# See: https://github.com/getzep/graphiti/issues/893
-import graphiti_core.helpers
-from neo4j import time as neo4j_time
-
 from app import settings
 from app.llm.schema_patches import apply_all_patches
-
-
-#################################################
-# MONKEY-PATCH FOR KUZU DATETIME
-#################################################
-def patched_parse_db_date(
-    input_date: neo4j_time.DateTime | str | datetime | None,
-) -> datetime | None:
-    """
-    Patched version of parse_db_date that ensures all datetimes are timezone-aware.
-    This fixes the issue where Kuzu returns naive datetimes but graphiti expects offset-aware ones.
-    """
-    if isinstance(input_date, neo4j_time.DateTime):
-        return input_date.to_native()
-
-    if isinstance(input_date, str):
-        dt = datetime.fromisoformat(input_date)
-        if dt.tzinfo is None:
-            return dt.replace(tzinfo=timezone.utc)
-        return dt
-
-    if isinstance(input_date, datetime):
-        if input_date.tzinfo is None:
-            return input_date.replace(tzinfo=timezone.utc)
-        return input_date
-
-    return input_date
-
-
-# Apply the monkey-patch to both modules
-graphiti_core.helpers.parse_db_date = patched_parse_db_date  # type: ignore[assignment]
-graphiti_core.edges.parse_db_date = patched_parse_db_date  # type: ignore[attr-defined]
-graphiti_core.nodes.parse_db_date = patched_parse_db_date  # type: ignore[attr-defined]
 
 
 #################################################
@@ -80,35 +40,6 @@ logger = logging.getLogger(__name__)
 # Apply schema constraints to prevent runaway entity generation
 apply_all_patches()
 logging.info("Schema patches applied: entity extraction limits enabled")
-
-
-#################################################
-# FTS EXTENSION SETUP
-#################################################
-def setup_fts_extension(db_path: str) -> None:
-    """
-    Install and load the FTS (Full-Text Search) extension for Kuzu.
-    This must be done before graphiti builds indices.
-    """
-    logger.info(f"Setting up FTS extension for database: {db_path}")
-
-    db = kuzu.Database(db_path)
-    conn = kuzu.Connection(db)
-
-    try:
-        logger.info("Installing FTS extension...")
-        conn.execute("INSTALL FTS")
-        logger.info("FTS extension installed successfully")
-
-        logger.info("Loading FTS extension...")
-        conn.execute("LOAD FTS")
-        logger.info("FTS extension loaded successfully")
-    except Exception as e:
-        logger.error(f"Error setting up FTS extension: {e}")
-        raise
-    finally:
-        # Connection is automatically closed when it goes out of scope
-        pass
 
 
 #################################################
@@ -411,9 +342,6 @@ def main():
                 f"Verification mode: {'DISABLED' if args.skip_verification else 'ENABLED'}"
             )
             print("=" * 60 + "\n")
-
-            # Setup FTS extension
-            setup_fts_extension(args.db_path)
 
             # Load journals
             asyncio.run(
