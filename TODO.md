@@ -1,4 +1,15 @@
-# Technical
+# NEXT STEPS
+
+- Extremely detailed debugging in load_journals.py
+- Expose all prompts for customization
+- Remove janky Kuzu timezone/datetime monkey-patch
+- Move models to default location, out of project dir
+- Is batch generation actually being done right?
+See https://github.com/ml-explore/mlx-lm/blob/367d6d76860499767f62b0bc34408b51c9ed916b/mlx_lm/examples/batch_generate_response.py
+- Enable prompt caching? 
+- Check if Qwen models need `eos_token` application and trust_remote_code
+
+## Technical
 
 - Full graph traversal support first
 - Full summarization viewer next, all summary levels need to be clear
@@ -11,10 +22,6 @@
 - Check if viewing old posts filters everything by time of post.
 - Figure out how to do time-series rollups
 
-## Questions
-
-- Git-submodule graphiti or use as lib?? How much control does the lib give you?
-
 ## Non-Technical
 
 - LICENSE??
@@ -23,13 +30,8 @@
 
 ## Local Model Support
 
-- CRITICAL: Need to add `outlines` support for JSON constraints
-  - Need to add `LM Studio` support to `outlines` first, or go with MLX-LM directly
-    <https://aistudio.google.com/app/prompts?state=%7B%22ids%22:%5B%221-2HFnIWuyIw7fUZOrF6JJCeF9gm_V0_E%22%5D,%22action%22:%22open%22,%22userId%22:%22116565776749566603200%22,%22resourceKeys%22:%7B%7D%7D&usp=sharing>
 - CRITICAL: DSPy
 - Constrain extraction prompts significantly, focus only on people first.
-- Go straight to MLX-LM and configure everything in code early?
-- Need to fix janky Kuzu timezone/datetime support, or keep using monkey-patches
 
 ## Nice-to-haves
 
