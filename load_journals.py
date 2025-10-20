@@ -28,6 +28,7 @@ import graphiti_core.helpers
 from neo4j import time as neo4j_time
 
 from app import settings
+from app.llm.schema_patches import apply_all_patches
 
 
 #################################################
@@ -67,9 +68,8 @@ graphiti_core.nodes.parse_db_date = patched_parse_db_date  # type: ignore[attr-d
 # SCHEMA PATCHES FOR ENTITY EXTRACTION LIMITS
 #################################################
 # Apply schema constraints to prevent runaway entity generation
-from app.llm.schema_patches import apply_all_patches
 apply_all_patches()
-logger.info("Schema patches applied: entity extraction limits enabled")
+logging.info("Schema patches applied: entity extraction limits enabled")
 
 
 #################################################
@@ -151,12 +151,14 @@ async def load_journals(
     # Initialize MLX model and tokenizer
     logger.info("Loading MLX model and tokenizer...")
     import mlx_lm
+
     mlx_model, mlx_tokenizer = mlx_lm.load(settings.MLX_MODEL_NAME)
     logger.info("MLX model loaded successfully")
 
     # Create Outlines model wrapper
     logger.info("Initializing Outlines structured generation...")
     import outlines
+
     outlines_model = outlines.from_mlxlm(mlx_model, mlx_tokenizer)
     logger.info("Outlines model ready")
 
@@ -171,9 +173,7 @@ async def load_journals(
     # Initialize Graphiti with local MLX backend
     kuzu_driver = KuzuDriver(db=db_path)
     graphiti = Graphiti(
-        graph_driver=kuzu_driver,
-        llm_client=llm_client,
-        embedder=embedder
+        graph_driver=kuzu_driver, llm_client=llm_client, embedder=embedder
     )
 
     try:
