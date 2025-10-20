@@ -148,6 +148,10 @@ async def load_journals(
     logger.info(f"Initializing Graphiti with database: {db_path}")
 
     # Initialize MLX LLM model and tokenizer
+    # Note: Tested explicit Qwen config (eos_token, trust_remote_code) vs defaults.
+    # Result: Model defaults are correct - uses <|im_end|> as EOS (ID: 151645)
+    # which matches the chat template. No explicit config needed.
+    # See: test_qwen_config.py for full comparison
     logger.info("Loading MLX LLM model and tokenizer...")
     import mlx_lm
 

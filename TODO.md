@@ -4,10 +4,6 @@
 - Expose all prompts for customization
 - Remove janky Kuzu timezone/datetime monkey-patch
 - Move models to default location, out of project dir
-- Is batch generation actually being done right?
-See https://github.com/ml-explore/mlx-lm/blob/367d6d76860499767f62b0bc34408b51c9ed916b/mlx_lm/examples/batch_generate_response.py
-- Enable prompt caching? 
-- Check if Qwen models need `eos_token` application and trust_remote_code
 
 ## Technical
 
