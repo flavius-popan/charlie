@@ -136,10 +136,36 @@ async def load_journals(
     total_entries = len(entries)
     logger.info(f"Found {total_entries} journal entries")
 
-    # Initialize Graphiti
+    # Initialize Graphiti with MLX backend
     logger.info(f"Initializing Graphiti with database: {db_path}")
+
+    # Initialize MLX model and tokenizer
+    logger.info("Loading MLX model and tokenizer...")
+    import mlx_lm
+    mlx_model, mlx_tokenizer = mlx_lm.load(settings.MLX_MODEL_NAME)
+    logger.info("MLX model loaded successfully")
+
+    # Create Outlines model wrapper
+    logger.info("Initializing Outlines structured generation...")
+    import outlines
+    outlines_model = outlines.from_mlxlm(mlx_model, mlx_tokenizer)
+    logger.info("Outlines model ready")
+
+    # Initialize bridge components
+    from app.llm.client import GraphitiLM
+    from app.llm.embedder import MLXEmbedder
+
+    llm_client = GraphitiLM(outlines_model, mlx_tokenizer)
+    embedder = MLXEmbedder(mlx_model, mlx_tokenizer)
+    logger.info("LLM client and embedder initialized")
+
+    # Initialize Graphiti with local MLX backend
     kuzu_driver = KuzuDriver(db=db_path)
-    graphiti = Graphiti(graph_driver=kuzu_driver)
+    graphiti = Graphiti(
+        graph_driver=kuzu_driver,
+        llm_client=llm_client,
+        embedder=embedder
+    )
 
     try:
         # Build indices and constraints
