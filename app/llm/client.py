@@ -11,6 +11,7 @@ from graphiti_core.llm_client.config import DEFAULT_MAX_TOKENS, LLMConfig, Model
 from graphiti_core.prompts.models import Message
 
 from .prompts import format_messages
+from .batcher import RequestBatcher
 
 
 logger = logging.getLogger(__name__)
@@ -40,7 +41,8 @@ class GraphitiLM(LLMClient):
         outlines_model,
         tokenizer,
         config: LLMConfig | None = None,
-        mode: str = "direct"
+        mode: str = "direct",
+        enable_batching: bool = True
     ):
         """
         Initialize GraphitiLM bridge.
@@ -50,11 +52,23 @@ class GraphitiLM(LLMClient):
             tokenizer: MLX tokenizer (for chat template formatting)
             config: Optional LLM configuration
             mode: "direct" (current) or "dspy" (Phase 2)
+            enable_batching: Enable request batching for better throughput
         """
         super().__init__(config, cache=False)
         self.outlines_model = outlines_model
         self.tokenizer = tokenizer
         self.mode = mode
+        self.enable_batching = enable_batching
+
+        # Initialize batcher if enabled
+        if enable_batching:
+            self.batcher = RequestBatcher(
+                batch_fn=self._generate_batch,
+                batch_window=0.01,  # 10ms collection window
+                max_batch_size=32,
+            )
+        else:
+            self.batcher = None
 
     async def _generate_response(
         self,
@@ -103,26 +117,51 @@ class GraphitiLM(LLMClient):
         3. Generate in thread (Outlines is synchronous)
         4. Parse and return result as dict
         """
-        # Format prompt
-        prompt = format_messages(messages, self.tokenizer)
-
         # Validate response model
         if response_model is None:
             raise ValueError("response_model is required for structured generation")
 
-        # Call model directly (Outlines model is callable)
+        # Use batcher if enabled
+        if self.batcher:
+            return await self.batcher.submit(messages, response_model, max_tokens)
+        else:
+            # Fallback to serial processing
+            return await self._generate_single(messages, response_model, max_tokens)
+
+    async def _generate_single(
+        self,
+        messages: list[Message],
+        response_model: type[BaseModel],
+        max_tokens: int
+    ) -> dict[str, Any]:
+        """
+        Generate single response (no batching).
+        """
+        async with MLX_LOCK:
+            return await self._generate_single_unlocked(messages, response_model, max_tokens)
+
+    async def _generate_single_unlocked(
+        self,
+        messages: list[Message],
+        response_model: type[BaseModel],
+        max_tokens: int
+    ) -> dict[str, Any]:
+        """
+        Generate single response without acquiring lock (used internally).
+        """
+        # Format prompt
+        prompt = format_messages(messages, self.tokenizer)
+
         logger.info(f"[GraphitiLM] Starting generation: prompt_length={len(prompt)}, max_tokens={max_tokens}, schema={response_model.__name__}")
         logger.debug(f"[GraphitiLM] Full prompt:\n{prompt[:500]}...")
 
         try:
-            # Acquire lock to serialize MLX operations (thread safety)
-            async with MLX_LOCK:
-                result_json = await asyncio.to_thread(
-                    self.outlines_model,
-                    prompt,
-                    output_type=response_model,
-                    max_tokens=max_tokens
-                )
+            result_json = await asyncio.to_thread(
+                self.outlines_model,
+                prompt,
+                output_type=response_model,
+                max_tokens=max_tokens
+            )
             logger.info(f"[GraphitiLM] Generation complete: {len(result_json)} chars")
             logger.debug(f"[GraphitiLM] Raw output:\n{result_json[:500]}...")
         except Exception as e:
@@ -138,6 +177,34 @@ class GraphitiLM(LLMClient):
             logger.error(f"[GraphitiLM] Validation failed: {e}")
             logger.error(f"[GraphitiLM] Raw JSON: {result_json}")
             raise
+
+    async def _generate_batch(
+        self, batch_args: list[tuple], batch_kwargs: list[dict]
+    ) -> list[dict[str, Any]]:
+        """
+        Batched generation processing.
+
+        Note: Outlines doesn't natively support batched structured generation yet.
+        This implementation processes requests serially but with reduced overhead
+        from collecting them together under a single lock acquisition.
+
+        Args:
+            batch_args: List of (messages, response_model, max_tokens) tuples
+            batch_kwargs: List of empty dicts (unused)
+
+        Returns:
+            List of generated responses
+        """
+        logger.info(f"[GraphitiLM] Processing batch of {len(batch_args)} generation requests")
+
+        results = []
+        async with MLX_LOCK:
+            for args in batch_args:
+                messages, response_model, max_tokens = args
+                result = await self._generate_single_unlocked(messages, response_model, max_tokens)
+                results.append(result)
+
+        return results
 
     async def _dspy_generate(
         self,
