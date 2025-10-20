@@ -147,12 +147,19 @@ async def load_journals(
     # Initialize Graphiti with MLX backend
     logger.info(f"Initializing Graphiti with database: {db_path}")
 
-    # Initialize MLX model and tokenizer
-    logger.info("Loading MLX model and tokenizer...")
+    # Initialize MLX LLM model and tokenizer
+    logger.info("Loading MLX LLM model and tokenizer...")
     import mlx_lm
 
     mlx_model, mlx_tokenizer = mlx_lm.load(settings.MLX_MODEL_NAME)
-    logger.info("MLX model loaded successfully")
+    logger.info("MLX LLM model loaded successfully")
+
+    # Initialize MLX embedding model and tokenizer
+    logger.info("Loading MLX embedding model and tokenizer...")
+    mlx_embedding_model, mlx_embedding_tokenizer = mlx_lm.load(
+        settings.MLX_EMBEDDING_MODEL_NAME
+    )
+    logger.info("MLX embedding model loaded successfully")
 
     # Create Outlines model wrapper
     logger.info("Initializing Outlines structured generation...")
@@ -166,8 +173,14 @@ async def load_journals(
     from app.llm.embedder import MLXEmbedder
 
     llm_client = GraphitiLM(outlines_model, mlx_tokenizer)
-    embedder = MLXEmbedder(mlx_model, mlx_tokenizer)
-    logger.info("LLM client and embedder initialized")
+    embedder = MLXEmbedder(
+        mlx_embedding_model,
+        mlx_embedding_tokenizer,
+        embedding_dim=settings.MLX_EMBEDDING_DIM,
+    )
+    logger.info(
+        f"LLM client and embedder initialized with embedding dimension: {settings.MLX_EMBEDDING_DIM}"
+    )
 
     # Initialize Graphiti with local MLX backend
     kuzu_driver = KuzuDriver(db=db_path)
