@@ -6,6 +6,9 @@ from typing import Iterable
 import mlx.core as mx
 from graphiti_core.embedder import EmbedderClient
 
+# Import the global MLX lock from client module
+from .client import MLX_LOCK
+
 
 class MLXEmbedder(EmbedderClient):
     """
@@ -42,8 +45,10 @@ class MLXEmbedder(EmbedderClient):
         if isinstance(input_data, list):
             input_data = input_data[0]
 
-        # Offload blocking operation to thread
-        return await asyncio.to_thread(self._embed_sync, input_data)
+        # Serialize MLX operations with lock (thread safety)
+        async with MLX_LOCK:
+            # Offload blocking operation to thread
+            return await asyncio.to_thread(self._embed_sync, input_data)
 
     def _embed_sync(self, text: str) -> list[float]:
         """

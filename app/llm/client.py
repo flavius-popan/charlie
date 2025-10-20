@@ -15,6 +15,11 @@ from .prompts import format_messages
 
 logger = logging.getLogger(__name__)
 
+# Global lock to serialize MLX operations (MLX is not thread-safe for Metal)
+# Use asyncio.Lock to avoid blocking the event loop
+# See: https://github.com/ml-explore/mlx/issues/2133
+MLX_LOCK = asyncio.Lock()
+
 
 class GraphitiLM(LLMClient):
     """
@@ -110,12 +115,14 @@ class GraphitiLM(LLMClient):
         logger.debug(f"[GraphitiLM] Full prompt:\n{prompt[:500]}...")
 
         try:
-            result_json = await asyncio.to_thread(
-                self.outlines_model,
-                prompt,
-                output_type=response_model,
-                max_tokens=max_tokens
-            )
+            # Acquire lock to serialize MLX operations (thread safety)
+            async with MLX_LOCK:
+                result_json = await asyncio.to_thread(
+                    self.outlines_model,
+                    prompt,
+                    output_type=response_model,
+                    max_tokens=max_tokens
+                )
             logger.info(f"[GraphitiLM] Generation complete: {len(result_json)} chars")
             logger.debug(f"[GraphitiLM] Raw output:\n{result_json[:500]}...")
         except Exception as e:
