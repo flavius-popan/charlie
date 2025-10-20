@@ -17,7 +17,6 @@ async def test_embedding_size():
         mlx_embedding_model,
         mlx_embedding_tokenizer,
         embedding_dim=settings.MLX_EMBEDDING_DIM,
-        enable_batching=False,
     )
 
     test_text = "This is a test sentence."
