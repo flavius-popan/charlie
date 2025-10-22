@@ -10,7 +10,6 @@ wheels/
 .venv
 
 # Charlie
-graphiti/
 raw_data/
 brain/
 .env
@@ -18,5 +17,5 @@ server.log
 .pytest_cache
 .envrc
 .models
-.direnv/CACHEDIR.TAG
-.claude/settings.local.json
+.direnv
+.claude
