@@ -16,7 +16,8 @@ dependencies = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
     "mlx-lm>=0.28.2",
-    "outlines>=1.2.6",  # outlines-core version overridden in [tool.uv] for PR #230 MLX fix
+    "outlines>=1.2.6", # outlines-core version overridden in [tool.uv] for PR #230 MLX fix
+    "dspy>=3.0.3",
 ]
 
 [tool.setuptools.packages.find]
