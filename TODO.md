@@ -11,3 +11,4 @@
 
 - Move models to default location, out of project dir
 - Upgrade to python 3.14
+- [Count input tokens properly](https://www.perplexity.ai/search/does-qwen3-use-tiktoken-for-ca-APRBFEnXRPawkHgtv5EryQ#0)
