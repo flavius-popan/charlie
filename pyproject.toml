@@ -22,7 +22,7 @@ dependencies = [
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["app*"]
+include = ["app*", "dspy_outlines*"]
 
 [tool.uv]
 # Override outlines-core version to get PR #230 MLX type-safe kernel fix
