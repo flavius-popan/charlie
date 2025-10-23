@@ -3,9 +3,11 @@ from pydantic import BaseModel, Field
 from typing import List
 import json
 
-# Configure LM Studio endpoint
-lm = dspy.LM(
-    "openai/qwen/qwen3-4b-2507",
+from dspy_outlines import PassthroughLM
+
+# Configure LM Studio endpoint via custom LM
+lm = PassthroughLM(
+    model="openai/qwen/qwen3-4b-2507",
     api_base="http://127.0.0.1:8000/v1",
     api_key="LOCALAF",
 )
