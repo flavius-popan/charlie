@@ -85,9 +85,36 @@ def extract_graph(text):
     return pool.apply_async(worker_extract, (text,)).get()
 ```
 
-## Next Steps
+## Running the Benchmark
 
-1. Implement benchmark script
-2. Run on hardware with 64GB RAM
-3. Document results
-4. If successful, add pool option to production code
+The benchmark is implemented in `benchmarks/benchmark_model_pool.py` as a standalone Python script.
+
+### Quick sanity check (3 prompts, 1 process, ~1 min)
+```bash
+python benchmarks/benchmark_model_pool.py --sanity
+```
+
+### Full benchmark (serial + 2-3 parallel processes, ~10-15 min)
+```bash
+python benchmarks/benchmark_model_pool.py
+```
+
+### Configuration
+
+Edit constants at the top of `benchmarks/benchmark_model_pool.py`:
+- `MAX_PROCESSES = 3`: Maximum number of parallel processes (adjust for available RAM)
+- `PROMPTS_PER_PROCESS = 5`: Number of prompts per process
+
+### Expected Output
+
+The benchmark will print:
+- Serial baseline: throughput (prompts/sec), avg latency
+- Parallel results for 2-N processes: throughput, speedup, efficiency
+- Estimated RAM usage per configuration
+
+### Next Steps
+
+1. ✅ Benchmark script implemented
+2. Run on hardware with 64GB RAM to measure actual speedup
+3. Document production results in this file
+4. If successful (>2x speedup), add pool option to production code
