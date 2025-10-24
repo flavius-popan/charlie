@@ -7,17 +7,20 @@ multiprocessing gives each process its own 4GB model instance.
 Run with: python benchmarks/benchmark_model_pool.py
 
 Configuration:
-- MAX_PROCESSES: Maximum number of parallel processes (default: 3)
-- PROMPTS_PER_PROCESS: Number of prompts each process handles (default: 5)
+- MAX_WORKERS: Maximum number of parallel worker processes (default: 3)
+- PROMPTS_PER_WORKER: Number of prompts each worker handles (default: 3)
 
 Expected results with 64GB RAM:
 - Serial (1 model): X prompts/sec, 4GB RAM
-- Parallel (3 models): ~3X prompts/sec, 12GB RAM
+- Parallel (3 workers): ~3X prompts/sec, 12GB RAM
+
+Note: Total process count = 1 main process + N worker processes
 """
 
 import multiprocessing as mp
 import time
 import json
+import os
 from typing import List, Tuple
 
 import dspy
@@ -25,61 +28,52 @@ from pydantic import BaseModel, Field
 
 from dspy_outlines import OutlinesLM, OutlinesAdapter
 
+# Disable tokenizers parallelism warning (we're using multiprocessing, not threading)
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
 
 # Configuration
-MAX_PROCESSES = 3  # Max parallel processes (adjust based on available RAM)
-PROMPTS_PER_PROCESS = 5  # Prompts per process
+MAX_WORKERS = 3  # Max parallel worker processes (total processes = 1 main + N workers)
+PROMPTS_PER_WORKER = 3  # Prompts per worker (reduced for faster benchmarking)
 
 
-# Test schema (same as main app)
-class Node(BaseModel):
-    id: str = Field(description="Unique identifier for the node")
-    label: str = Field(description="Name of the entity")
-    properties: dict = Field(default_factory=dict, description="Additional attributes")
+# Simple test schema - just extract a sentiment classification
+class SentimentResult(BaseModel):
+    """Simple sentiment classification."""
+    sentiment: str = Field(description="positive, negative, or neutral")
+    confidence: str = Field(description="high, medium, or low")
 
 
-class Edge(BaseModel):
-    source: str = Field(description="Source node ID")
-    target: str = Field(description="Target node ID")
-    label: str = Field(description="Type of relationship")
-    properties: dict = Field(default_factory=dict, description="Additional attributes")
+class ClassifySentiment(dspy.Signature):
+    """Classify the sentiment of a text."""
+    text: str = dspy.InputField(desc="Text to classify")
+    result: SentimentResult = dspy.OutputField(desc="Sentiment classification")
 
 
-class KnowledgeGraph(BaseModel):
-    nodes: List[Node] = Field(description="List of entities (people)")
-    edges: List[Edge] = Field(description="List of relationships between entities")
-
-
-class ExtractKnowledgeGraph(dspy.Signature):
-    """Extract a knowledge graph of people and their relationships from text."""
-    text: str = dspy.InputField(desc="Text to extract entities and relationships from")
-    graph: KnowledgeGraph = dspy.OutputField(
-        desc="Knowledge graph with people as nodes and relationships as edges"
-    )
-
-
-# Sample prompts for benchmarking
+# Sample prompts for benchmarking (simple, fast to process)
 SAMPLE_PROMPTS = [
-    "Alice works with Bob. Bob reports to Charlie. Charlie mentors Alice.",
-    "David and Eve are colleagues. Eve manages Frank. Frank collaborates with David.",
-    "Grace is friends with Henry. Henry knows Isaac. Isaac works with Grace.",
-    "Jack teaches Kate. Kate studies with Leo. Leo learns from Jack.",
-    "Maria leads Noah. Noah supports Olivia. Olivia reports to Maria.",
-    "Paul partners with Quinn. Quinn assists Ruby. Ruby collaborates with Paul.",
-    "Sam coaches Tina. Tina trains Uma. Uma works with Sam.",
-    "Victor knows Wendy. Wendy mentors Xavier. Xavier works with Victor.",
-    "Yara manages Zack. Zack supports Yara in project planning.",
-    "Anna and Ben are team members. Ben coordinates with Anna on tasks.",
+    "I love this product! It's amazing and works perfectly.",
+    "This is terrible. Worst purchase ever.",
+    "It's okay, nothing special.",
+    "Absolutely fantastic experience! Highly recommend.",
+    "Disappointed with the quality. Not worth the money.",
+    "Pretty good overall, but could be better.",
+    "Outstanding service! Will definitely come back.",
+    "Waste of time and money. Avoid at all costs.",
+    "Decent product for the price.",
+    "Exceeded all my expectations! Five stars!",
+    "Mediocre at best. Expected more.",
+    "Can't complain, does what it's supposed to do.",
 ]
 
 
 def worker_process(process_id: int, prompts: List[str], result_queue: mp.Queue):
     """Worker process that loads its own model and processes prompts.
 
-    Each process:
-    1. Loads a separate 4GB MLX model instance
-    2. Processes its assigned prompts
-    3. Returns timing and result metadata
+    Timing includes:
+    - Model loading (4GB MLX model load time)
+    - All inference time (including any gaps)
+    - Total wall-clock time from start to finish
 
     Args:
         process_id: Worker ID for logging
@@ -87,12 +81,13 @@ def worker_process(process_id: int, prompts: List[str], result_queue: mp.Queue):
         result_queue: Queue to send results back to main process
     """
     try:
+        start_time = time.time()  # Start timing BEFORE model load
+
         # Each process loads its own model (separate 4GB instance)
         lm = OutlinesLM()
         dspy.configure(lm=lm, adapter=OutlinesAdapter())
-        predictor = dspy.Predict(ExtractKnowledgeGraph)
+        predictor = dspy.Predict(ClassifySentiment)
 
-        start_time = time.time()
         results = []
 
         for i, prompt in enumerate(prompts):
@@ -103,11 +98,11 @@ def worker_process(process_id: int, prompts: List[str], result_queue: mp.Queue):
             results.append({
                 'prompt_idx': i,
                 'duration': prompt_duration,
-                'node_count': len(result.graph.nodes),
-                'edge_count': len(result.graph.edges),
+                'sentiment': result.result.sentiment,
+                'confidence': result.result.confidence,
             })
 
-        total_duration = time.time() - start_time
+        total_duration = time.time() - start_time  # Wall-clock time
 
         result_queue.put({
             'process_id': process_id,
@@ -127,17 +122,20 @@ def worker_process(process_id: int, prompts: List[str], result_queue: mp.Queue):
 def benchmark_serial(prompts: List[str]) -> dict:
     """Benchmark serial inference with a single model.
 
+    Wall-clock timing includes model loading + all inference time.
+
     Args:
         prompts: List of prompts to process
 
     Returns:
         dict: Timing and throughput metrics
     """
+    start_time = time.time()  # Start timing BEFORE model load
+
     lm = OutlinesLM()
     dspy.configure(lm=lm, adapter=OutlinesAdapter())
-    predictor = dspy.Predict(ExtractKnowledgeGraph)
+    predictor = dspy.Predict(ClassifySentiment)
 
-    start_time = time.time()
     results = []
 
     for i, prompt in enumerate(prompts):
@@ -148,11 +146,11 @@ def benchmark_serial(prompts: List[str]) -> dict:
         results.append({
             'prompt_idx': i,
             'duration': prompt_duration,
-            'node_count': len(result.graph.nodes),
-            'edge_count': len(result.graph.edges),
+            'sentiment': result.result.sentiment,
+            'confidence': result.result.confidence,
         })
 
-    total_duration = time.time() - start_time
+    total_duration = time.time() - start_time  # Wall-clock time
 
     return {
         'mode': 'serial',
@@ -248,37 +246,39 @@ def print_benchmark_results(serial_result: dict, parallel_results: List[dict]):
 
     # Parallel results
     for result in parallel_results:
-        n = result['num_processes']
+        n_workers = result['num_processes']
+        n_total = n_workers + 1  # +1 for main process
         speedup = result['throughput'] / serial_result['throughput']
-        efficiency = speedup / n * 100
+        efficiency = speedup / n_workers * 100
 
-        print(f"\nPARALLEL ({n} processes):")
+        print(f"\nPARALLEL ({n_workers} workers, {n_total} total processes):")
         print(f"  Total time: {result['total_duration']:.2f}s")
         print(f"  Prompts: {result['prompt_count']}")
         print(f"  Throughput: {result['throughput']:.2f} prompts/sec")
-        print(f"  Avg latency: {result['avg_latency']:.2f}s per process")
+        print(f"  Avg latency: {result['avg_latency']:.2f}s per worker")
         print(f"  Speedup: {speedup:.2f}x (efficiency: {efficiency:.1f}%)")
-        print(f"  Est. RAM: ~{n * 4}GB ({n} models × 4GB)")
+        print(f"  Est. RAM: ~{n_workers * 4}GB ({n_workers} models × 4GB)")
 
     print("\n" + "=" * 70 + "\n")
 
 
 def run_full_benchmark():
-    """Run full benchmark: serial vs parallel with 1-3 processes."""
-    print("\n🚀 Starting model pool benchmark...")
-    print(f"Configuration: MAX_PROCESSES={MAX_PROCESSES}, PROMPTS_PER_PROCESS={PROMPTS_PER_PROCESS}")
+    """Run full benchmark: serial vs parallel with 2-3 worker processes."""
+    print(f"\nBenchmark config: MAX_WORKERS={MAX_WORKERS}, PROMPTS_PER_WORKER={PROMPTS_PER_WORKER}")
+    print("Note: Timing includes model loading + inference (wall-clock)")
+    print("      Process count = 1 main + N workers\n")
 
-    # Serial baseline
-    print("\n📊 Running serial baseline...")
-    total_prompts = MAX_PROCESSES * PROMPTS_PER_PROCESS
+    # Serial baseline - same total workload as largest parallel test
+    print("Running serial baseline (1 model, 1 process)...")
+    total_prompts = MAX_WORKERS * PROMPTS_PER_WORKER
     serial_prompts = SAMPLE_PROMPTS[:total_prompts]
     serial_result = benchmark_serial(serial_prompts)
 
-    # Parallel benchmarks
+    # Parallel benchmarks with 2, 3 worker processes
     parallel_results = []
-    for n in range(2, MAX_PROCESSES + 1):
-        print(f"\n📊 Running parallel benchmark with {n} processes...")
-        result = benchmark_parallel(n, PROMPTS_PER_PROCESS)
+    for n in range(2, MAX_WORKERS + 1):
+        print(f"Running parallel ({n} workers, {n+1} total processes)...")
+        result = benchmark_parallel(n, PROMPTS_PER_WORKER)
         parallel_results.append(result)
 
     # Print comparison
@@ -287,7 +287,7 @@ def run_full_benchmark():
 
 def run_sanity_check():
     """Sanity check: single worker process should complete without errors."""
-    print("\n🔍 Running single worker sanity check...")
+    print("\nRunning single worker sanity check (3 prompts)...")
 
     result_queue = mp.Queue()
     prompts = SAMPLE_PROMPTS[:3]  # Just 3 prompts for quick test
@@ -298,13 +298,11 @@ def run_sanity_check():
 
     result = result_queue.get()
 
-    print(f"\nWorker result: {json.dumps(result, indent=2)}")
-
     if not result['success']:
-        print(f"❌ Worker failed: {result.get('error')}")
+        print(f"FAILED: {result.get('error')}")
         return False
 
-    print(f"✅ Sanity check passed!")
+    print(f"SUCCESS: Processed {result['prompt_count']} prompts in {result['total_duration']:.1f}s")
     return True
 
 

@@ -112,6 +112,14 @@ The benchmark will print:
 - Parallel results for 2-N processes: throughput, speedup, efficiency
 - Estimated RAM usage per configuration
 
+### Observations
+
+**Memory allocation pattern (macOS Activity Monitor)**:
+- 2 workers: Memory usage shows "stacked" pattern (bumps overlay)
+- 3 workers: Memory usage shows "spread" pattern (bumps are separate/distributed)
+
+This suggests macOS may be distributing memory pressure differently with 3+ concurrent model loads. Worth monitoring for performance implications.
+
 ### Next Steps
 
 1. ✅ Benchmark script implemented
