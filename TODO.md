@@ -1,5 +1,6 @@
 ## Technical
 
+- Rewrite README
 - Constrain extraction prompts significantly, focus only on people first.
 
 ## Non-Technical

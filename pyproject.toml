@@ -5,14 +5,7 @@ description = "Enquire Within"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "dotenv>=0.9.9",
     "graphiti-core>=0.21.0",
-    "kuzu>=0.11.2",
-    "fastapi>=0.115.0",
-    "uvicorn[standard]>=0.32.0",
-    "jinja2>=3.1.4",
-    "python-multipart>=0.0.12",
-    "markdown>=3.7",
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
     "mlx-lm>=0.28.2",
