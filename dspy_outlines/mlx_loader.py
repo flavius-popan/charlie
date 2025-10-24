@@ -6,8 +6,8 @@ import outlines
 
 logger = logging.getLogger(__name__)
 
-# Model path (matches settings.py)
-DEFAULT_MODEL_PATH = ".models/mlx-community--Qwen3-4B-Instruct-2507-8bit"
+DEFAULT_MODEL_PATH = "mlx-community/Qwen3-4B-Instruct-2507-8bit"
+
 
 def load_mlx_model(model_path: str = None):
     """
@@ -27,6 +27,7 @@ def load_mlx_model(model_path: str = None):
     logger.info("MLX model loaded successfully")
 
     return mlx_model, mlx_tokenizer
+
 
 def create_outlines_model(model_path: str = None):
     """
