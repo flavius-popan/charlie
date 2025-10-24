@@ -47,30 +47,21 @@ pytest tests/test_constrained_generation.py::test_knowledge_graph_extraction -v
 
 ### Core Integration Layer: `dspy_outlines/`
 
-The integration bridges three frameworks:
+The `dspy_outlines/` module bridges DSPy, Outlines, and MLX to enable guaranteed structured output from local models.
 
-**OutlinesLM** (`lm.py`) - Main LM implementation
-- Inherits from `dspy.BaseLM` (not `dspy.LM` - see note below)
-- Receives Pydantic schemas from OutlinesAdapter via `_outlines_schema` kwarg
-- Routes to Outlines for constrained generation
-- Wraps output with field name for DSPy adapter compatibility
-- Returns validated JSON to DSPy
+**Architecture**: `DSPy Signature → OutlinesAdapter → OutlinesLM → Outlines → MLX`
 
-**OutlinesAdapter** (`adapter.py`) - Custom DSPy adapter
-- Extends DSPy's ChatAdapter
-- Extracts Pydantic schemas from signature output fields
-- Passes schema and field name to OutlinesLM via lm_kwargs
-- Enables constrained generation by bridging DSPy's adapter system with Outlines
+**For detailed documentation**, see [`dspy_outlines/README.md`](dspy_outlines/README.md), which covers:
+- Component responsibilities and thread safety
+- MLX locking requirements (MLX is NOT thread-safe)
+- Implementation details and design decisions
+- Usage examples and troubleshooting
 
-**Schema Extraction** (`schema_extractor.py`)
-- Inspects DSPy Signature classes at runtime
-- Extracts Pydantic BaseModel from output field annotations
-- Used by OutlinesAdapter to identify schemas
-
-**MLX Model Loading** (`mlx_loader.py`)
-- Loads quantized MLX models from `.models/` directory
-- Creates Outlines wrapper via `outlines.from_mlxlm()`
-- Default model: `mlx-community--Qwen3-4B-Instruct-2507-8bit`
+**Quick overview**:
+- **OutlinesAdapter**: Extracts Pydantic schemas from DSPy signatures
+- **OutlinesLM**: Executes constrained generation (requires thread locking for MLX safety)
+- **Schema Extractor**: Runtime introspection of signature output fields
+- **MLX Loader**: Loads quantized models from `.models/` directory
 
 ### Application Entry Points
 
@@ -84,23 +75,17 @@ The integration bridges three frameworks:
 - Real-time extraction with visual + JSON output
 - Example prompts provided
 
-Both applications use the same DSPy signature pattern:
-1. Define Pydantic models (Node, Edge, KnowledgeGraph)
-2. Create DSPy Signature with Pydantic output field
-3. Configure DSPy with both LM and adapter: `dspy.configure(lm=OutlinesLM(), adapter=OutlinesAdapter())`
-4. Use `dspy.Predict(Signature)` - schema extraction and constrained generation happen automatically
+Both applications use the same pattern:
+1. Define Pydantic models for output structure
+2. Create DSPy Signature with Pydantic-typed output field
+3. Configure: `dspy.configure(lm=OutlinesLM(), adapter=OutlinesAdapter())`
+4. Use: `dspy.Predict(Signature)` - constrained generation happens automatically
 
-### Important Implementation Notes
+### Important Notes
 
-**BaseLM vs LM**: This project uses `dspy.BaseLM` instead of `dspy.LM` because:
-- BaseLM is simpler and doesn't require LiteLLM
-- Better for custom backends like Outlines+MLX
-- Requires returning SimpleNamespace objects (not dicts) from `forward()`
-- Usage tracking must be dict-convertible (use AttrDict for the usage field)
+**Outlines-core Override**: Temporarily using outlines-core 0.2.13 via git (see `pyproject.toml`) for MLX type-safety fixes. Remove when outlines updates to >= 0.2.12.
 
-**Outlines-core Override**: The project temporarily overrides `outlines-core` to version 0.2.13 via git (see `pyproject.toml` `[tool.uv]` section). This includes MLX type-safety fixes from PR #230. Remove this override when outlines updates to outlines-core >= 0.2.12.
-
-**Model Storage**: MLX models are stored in `.models/` directory (not the default location). This is noted as a future improvement in TODO.md.
+**Model Storage**: MLX models are in `.models/` directory (not default location).
 
 ## Common Workflows
 
@@ -116,20 +101,14 @@ python gradio_app.py
 
 ### Adding New Extraction Types
 
-To add new structured extraction beyond knowledge graphs:
+See [`dspy_outlines/README.md`](dspy_outlines/README.md#usage-examples) for examples.
 
-1. Define Pydantic models for your output structure
-2. Create a DSPy Signature with your models as output fields
-3. Initialize with `dspy.configure(lm=OutlinesLM(), adapter=OutlinesAdapter())`
-4. Use `dspy.Predict(YourSignature)` - the adapter and LM handle the rest
-5. No changes needed to `dspy_outlines/` layer
+Quick pattern:
+1. Define Pydantic models
+2. Create DSPy Signature with Pydantic-typed output field
+3. `dspy.configure(lm=OutlinesLM(), adapter=OutlinesAdapter())`
+4. Use `dspy.Predict(Signature)`
 
-The schema extraction and constrained generation happen automatically through the adapter.
+### Testing Changes
 
-### Testing Changes to the Integration Layer
-
-When modifying `dspy_outlines/`:
-- Run `pytest tests/test_schema_extractor.py` for schema extraction logic
-- Run `pytest tests/test_constrained_generation.py` for end-to-end integration
-- The test suite includes real model inference (not mocked)
-- `test_outlines_actually_constrains()` validates that constraints are enforced
+When modifying `dspy_outlines/`, see [`dspy_outlines/README.md`](dspy_outlines/README.md#testing) for test guidance.

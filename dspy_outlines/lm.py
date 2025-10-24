@@ -3,10 +3,15 @@
 IMPORTANT: This implementation uses dspy.BaseLM (not dspy.LM) as documented
 in research/dspy-lm-interface.md. BaseLM is simpler and doesn't require LiteLLM,
 making it ideal for custom backend implementations like Outlines+MLX.
+
+Thread Safety: MLX (via Apple Metal framework) is NOT thread-safe. Multiple threads
+cannot call the same MLX model simultaneously without causing Metal command buffer
+race conditions. This module uses MLX_LOCK to serialize access to the model.
+See dspy_outlines/README.md for detailed thread safety documentation.
 """
 
-import asyncio
 import logging
+import threading
 from typing import Any
 import json
 from types import SimpleNamespace
@@ -19,8 +24,13 @@ from .schema_extractor import extract_output_schema
 
 logger = logging.getLogger(__name__)
 
-# MLX thread safety lock (prevents segfaults in async contexts)
-MLX_LOCK = asyncio.Lock()
+# MLX thread safety lock
+# MLX/Metal is NOT thread-safe - multiple threads calling the same model instance
+# simultaneously will cause Metal framework errors:
+#   - "A command encoder is already encoding to this command buffer"
+#   - "Completed handler provided after commit call"
+# This module-level lock serializes all MLX inference calls across all OutlinesLM instances.
+MLX_LOCK = threading.Lock()
 
 class AttrDict(dict):
     """Dict that allows attribute-style access (needed for DSPy compatibility)."""
@@ -61,6 +71,10 @@ class OutlinesLM(dspy.BaseLM):
         """
         Main generation interface called by DSPy.
 
+        This method uses MLX_LOCK to ensure thread-safe access to the MLX model.
+        Only the actual model inference is locked; prompt formatting and result
+        processing happen outside the lock to minimize contention.
+
         Args:
             prompt: String prompt (if using prompt-based)
             messages: List of message dicts (if using chat format)
@@ -73,6 +87,7 @@ class OutlinesLM(dspy.BaseLM):
         schema = kwargs.pop('_outlines_schema', None)
         field_name = kwargs.pop('_outlines_field_name', None)
 
+        # Format prompt outside lock (can run concurrently)
         if messages:
             formatted_prompt = self._format_messages(messages)
         else:
@@ -80,25 +95,31 @@ class OutlinesLM(dspy.BaseLM):
 
         logger.info(f"Generating with schema: {schema.__name__ if schema else 'None'}")
 
-        if schema:
-            result_json = self.outlines_model(
-                formatted_prompt,
-                output_type=schema,
-                max_tokens=max_tokens
-            )
-            parsed = schema.model_validate_json(result_json)
+        # Lock MLX model access to prevent Metal command buffer race conditions
+        with MLX_LOCK:
+            if schema:
+                result_json = self.outlines_model(
+                    formatted_prompt,
+                    output_type=schema,
+                    max_tokens=max_tokens
+                )
+            else:
+                completion = self.outlines_model(
+                    formatted_prompt,
+                    max_tokens=max_tokens
+                )
 
+        # Process results outside lock (can run concurrently)
+        if schema:
+            parsed = schema.model_validate_json(result_json)
             if field_name:
                 completion = json.dumps({field_name: parsed.model_dump()})
             else:
                 completion = parsed.model_dump_json()
-        else:
-            completion = self.outlines_model(
-                formatted_prompt,
-                max_tokens=max_tokens
-            )
 
-        # Store in history
+        # Store in history (best-effort, not critical for correctness)
+        # Note: No lock needed - history is for debugging only, not read by application
+        # Worst case: corrupted/missing history entries under concurrent access
         self.history.append({
             "prompt": formatted_prompt[:200],
             "completion": completion[:200]
