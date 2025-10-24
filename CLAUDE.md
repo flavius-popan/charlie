@@ -35,12 +35,12 @@ pytest
 
 Run a specific test file:
 ```bash
-pytest tests/test_hybrid_lm.py
+pytest tests/test_constrained_generation.py
 ```
 
 Run a single test:
 ```bash
-pytest tests/test_hybrid_lm.py::test_hybrid_lm_knowledge_graph_extraction -v
+pytest tests/test_constrained_generation.py::test_knowledge_graph_extraction -v
 ```
 
 ## Code Architecture
@@ -49,26 +49,28 @@ pytest tests/test_hybrid_lm.py::test_hybrid_lm_knowledge_graph_extraction -v
 
 The integration bridges three frameworks:
 
-**OutlinesDSPyLM** (`hybrid_lm.py`) - Main LM implementation
+**OutlinesLM** (`lm.py`) - Main LM implementation
 - Inherits from `dspy.BaseLM` (not `dspy.LM` - see note below)
-- Intercepts DSPy signature calls via `forward()` method
-- Extracts Pydantic schemas from output fields using `schema_extractor.py`
+- Receives Pydantic schemas from OutlinesAdapter via `_outlines_schema` kwarg
 - Routes to Outlines for constrained generation
+- Wraps output with field name for DSPy adapter compatibility
 - Returns validated JSON to DSPy
+
+**OutlinesAdapter** (`adapter.py`) - Custom DSPy adapter
+- Extends DSPy's ChatAdapter
+- Extracts Pydantic schemas from signature output fields
+- Passes schema and field name to OutlinesLM via lm_kwargs
+- Enables constrained generation by bridging DSPy's adapter system with Outlines
 
 **Schema Extraction** (`schema_extractor.py`)
 - Inspects DSPy Signature classes at runtime
 - Extracts Pydantic BaseModel from output field annotations
-- Passes schema to Outlines for structural constraints
+- Used by OutlinesAdapter to identify schemas
 
 **MLX Model Loading** (`mlx_loader.py`)
 - Loads quantized MLX models from `.models/` directory
 - Creates Outlines wrapper via `outlines.from_mlxlm()`
 - Default model: `mlx-community--Qwen3-4B-Instruct-2507-8bit`
-
-**PassthroughLM** (`base_lm.py`) - Legacy/reference
-- Early proof-of-concept demonstrating LM interception
-- Not used in production code
 
 ### Application Entry Points
 
@@ -85,7 +87,8 @@ The integration bridges three frameworks:
 Both applications use the same DSPy signature pattern:
 1. Define Pydantic models (Node, Edge, KnowledgeGraph)
 2. Create DSPy Signature with Pydantic output field
-3. Use `dspy.Predict(Signature)` - schema extraction happens automatically
+3. Configure DSPy with both LM and adapter: `dspy.configure(lm=OutlinesLM(), adapter=OutlinesAdapter())`
+4. Use `dspy.Predict(Signature)` - schema extraction and constrained generation happen automatically
 
 ### Important Implementation Notes
 
@@ -117,14 +120,16 @@ To add new structured extraction beyond knowledge graphs:
 
 1. Define Pydantic models for your output structure
 2. Create a DSPy Signature with your models as output fields
-3. Use `dspy.Predict(YourSignature)` - the hybrid LM handles the rest
-4. No changes needed to `dspy_outlines/` layer
+3. Initialize with `dspy.configure(lm=OutlinesLM(), adapter=OutlinesAdapter())`
+4. Use `dspy.Predict(YourSignature)` - the adapter and LM handle the rest
+5. No changes needed to `dspy_outlines/` layer
 
-The schema extraction and constrained generation happen automatically.
+The schema extraction and constrained generation happen automatically through the adapter.
 
 ### Testing Changes to the Integration Layer
 
 When modifying `dspy_outlines/`:
 - Run `pytest tests/test_schema_extractor.py` for schema extraction logic
-- Run `pytest tests/test_hybrid_lm.py` for end-to-end integration
+- Run `pytest tests/test_constrained_generation.py` for end-to-end integration
 - The test suite includes real model inference (not mocked)
+- `test_outlines_actually_constrains()` validates that constraints are enforced

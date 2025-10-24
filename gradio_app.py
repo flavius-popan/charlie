@@ -13,11 +13,12 @@ import tempfile
 import os
 from graphviz import Digraph
 
-from dspy_outlines import OutlinesDSPyLM
+from dspy_outlines import OutlinesLM, OutlinesAdapter
 
-# Initialize LM
-lm = OutlinesDSPyLM()
-dspy.configure(lm=lm)
+# Initialize LM and adapter
+lm = OutlinesLM()
+adapter = OutlinesAdapter()
+dspy.configure(lm=lm, adapter=adapter)
 
 
 # Pydantic models

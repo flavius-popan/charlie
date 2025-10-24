@@ -3,11 +3,12 @@ from pydantic import BaseModel, Field
 from typing import List
 import json
 
-from dspy_outlines import OutlinesDSPyLM
+from dspy_outlines import OutlinesLM, OutlinesAdapter
 
-# Configure Outlines+MLX hybrid LM (no LM Studio needed!)
-lm = OutlinesDSPyLM()  # Uses default model path from mlx_loader
-dspy.configure(lm=lm)
+# Configure Outlines+MLX hybrid LM
+lm = OutlinesLM()
+adapter = OutlinesAdapter()
+dspy.configure(lm=lm, adapter=adapter)
 
 
 # Pydantic models for knowledge graph

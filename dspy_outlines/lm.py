@@ -29,13 +29,13 @@ class AttrDict(dict):
     def __setattr__(self, key, value):
         self[key] = value
 
-class OutlinesDSPyLM(dspy.BaseLM):
+class OutlinesLM(dspy.BaseLM):
     """
     Hybrid LM: DSPy ↔ Outlines ↔ MLX
 
     Architecture:
-    1. Receives DSPy signature + inputs
-    2. Extracts Pydantic schema from output field
+    1. Receives DSPy signature + inputs via OutlinesAdapter
+    2. Adapter passes Pydantic schema through _outlines_schema kwarg
     3. Formats prompt using DSPy's formatting
     4. Generates via Outlines with schema constraint
     5. Returns validated Pydantic object to DSPy
@@ -55,7 +55,7 @@ class OutlinesDSPyLM(dspy.BaseLM):
         """
         super().__init__(model="outlines-mlx")
         self.outlines_model, self.tokenizer = create_outlines_model(model_path)
-        logger.info("OutlinesDSPyLM initialized with Outlines+MLX backend")
+        logger.info("OutlinesLM initialized with Outlines+MLX backend")
 
     def forward(self, prompt=None, messages=None, **kwargs):
         """
@@ -64,23 +64,15 @@ class OutlinesDSPyLM(dspy.BaseLM):
         Args:
             prompt: String prompt (if using prompt-based)
             messages: List of message dicts (if using chat format)
-            **kwargs: Additional generation params (max_tokens, temperature, signature, etc.)
+            **kwargs: Additional generation params (max_tokens, _outlines_schema, etc.)
 
         Returns:
             OpenAI-format response dict
         """
-        # Extract generation params
         max_tokens = kwargs.get('max_tokens', 512)
+        schema = kwargs.pop('_outlines_schema', None)
+        field_name = kwargs.pop('_outlines_field_name', None)
 
-        # Get the signature from kwargs if available (DSPy passes it)
-        signature = kwargs.get('signature', None)
-
-        # Extract Pydantic schema from signature
-        schema = None
-        if signature:
-            schema = extract_output_schema(signature)
-
-        # Format the prompt
         if messages:
             formatted_prompt = self._format_messages(messages)
         else:
@@ -88,19 +80,19 @@ class OutlinesDSPyLM(dspy.BaseLM):
 
         logger.info(f"Generating with schema: {schema.__name__ if schema else 'None'}")
 
-        # Generate using Outlines
         if schema:
-            # Constrained generation with Pydantic schema
             result_json = self.outlines_model(
                 formatted_prompt,
                 output_type=schema,
                 max_tokens=max_tokens
             )
-            # Parse and re-serialize to ensure valid JSON
             parsed = schema.model_validate_json(result_json)
-            completion = parsed.model_dump_json()
+
+            if field_name:
+                completion = json.dumps({field_name: parsed.model_dump()})
+            else:
+                completion = parsed.model_dump_json()
         else:
-            # Fallback: unconstrained text generation
             completion = self.outlines_model(
                 formatted_prompt,
                 max_tokens=max_tokens

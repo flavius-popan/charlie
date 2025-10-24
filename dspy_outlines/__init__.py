@@ -1,7 +1,7 @@
 """DSPy + Outlines integration."""
 
-from .base_lm import PassthroughLM
+from .adapter import OutlinesAdapter
 from .schema_extractor import extract_output_schema
-from .hybrid_lm import OutlinesDSPyLM
+from .lm import OutlinesLM
 
-__all__ = ["PassthroughLM", "extract_output_schema", "OutlinesDSPyLM"]
+__all__ = ["OutlinesLM", "OutlinesAdapter", "extract_output_schema"]
