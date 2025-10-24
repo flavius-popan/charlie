@@ -1,7 +1,7 @@
 # DSPy + Outlines + MLX Implementation Checkpoint
 
 **Date:** 2025-10-23
-**Status:** Tasks 1-3 complete, ready for Tasks 4-6
+**Status:** Tasks 1-6 complete, ready for Tasks 7-10
 
 ---
 
@@ -9,87 +9,92 @@
 
 ### ✓ Task 1: DSPy LM Interface Research
 - **File:** `research/dspy-lm-interface.md`
-- **Key Finding:** Inherit from `dspy.BaseLM`, override `forward()` method, signature passed in kwargs
+- **Key Finding:** Use `dspy.BaseLM` (not `dspy.LM`), override `forward()` method
 
 ### ✓ Task 2: PassthroughLM (Proof of Concept)
 - **Files:** `dspy_outlines/base_lm.py`, `tests/test_base_lm.py`
 - **Status:** Test passing ✓
-- **Proves:** DSPy call interception works
 
 ### ✓ Task 3: MLX Model Loading
 - **Files:** `dspy_outlines/mlx_loader.py`, `tests/test_mlx_loader.py`
 - **Status:** 2 tests passing ✓
 - **API:** `outlines.from_mlxlm(mlx_model, mlx_tokenizer)`
 
+### ✓ Task 4: Schema Extraction
+- **Files:** `dspy_outlines/schema_extractor.py`, `tests/test_schema_extractor.py`
+- **Status:** 2 tests passing ✓
+- **Function:** `extract_output_schema(signature)` - extracts Pydantic models from DSPy signatures
+
+### ✓ Task 5: OutlinesDSPyLM Hybrid LM
+- **Files:** `dspy_outlines/hybrid_lm.py`, `tests/test_hybrid_lm.py`
+- **Status:** Test passing ✓
+- **Implementation:** Uses `dspy.BaseLM` (documented in code), `AttrDict` for usage compatibility
+- **Features:** Automatic schema extraction, constrained generation, guaranteed valid JSON
+
+### ✓ Task 6: Integration with dspy-poc.py
+- **Files:** `dspy-poc.py` (updated), `dspy-poc-lmstudio.py` (backup)
+- **Status:** Works without LM Studio ✓
+- **Verified:** Manual test shows valid knowledge graph extraction via MLX
+
 ---
 
-## Next Steps (Tasks 4-6)
+## Next Steps (Tasks 7-10)
 
 **For the next Claude agent:**
 
-1. **Task 4:** Create `dspy_outlines/schema_extractor.py`
-   - Extract Pydantic models from `signature.output_fields`
-   - See plan for TDD test cases
+1. **Task 7 (Optional):** Add async support to `OutlinesDSPyLM`
+   - Pattern in plan uses `MLX_LOCK` and `asyncio.to_thread()`
 
-2. **Task 5:** Implement `OutlinesDSPyLM` hybrid LM
-   - Combine PassthroughLM pattern + MLX loader + schema extractor
-   - Route DSPy calls through Outlines constrained generation
-   - Return OpenAI-format responses
+2. **Task 8:** Create Gradio UI (`gradio_app.py`)
+   - Interactive knowledge graph extraction
+   - Optional: Add Graphviz visualization
 
-3. **Task 6:** Update `dspy-poc.py`
-   - Replace `PassthroughLM` with `OutlinesDSPyLM`
-   - Verify guaranteed valid JSON output
-   - Should work without LM Studio running
+3. **Task 9:** Documentation
+   - Create `docs/dspy-outlines-hybrid.md`
+   - Update `README.md`
 
-**Full plan:** `plans/dspy-outlines-mlx.md`
+4. **Task 10:** Integration tests
+   - Create `tests/test_integration.py`
+   - JSON validity tests, complex nested schemas
 
----
-
-## Architecture Overview
-
-```
-DSPy Signature
-    ↓
-OutlinesDSPyLM.__call__
-    ↓
-extract_output_schema(signature)  ← Task 4
-    ↓
-outlines_model(prompt, output_type=PydanticModel)  ← Tasks 3+5
-    ↓
-Return OpenAI format response
-```
+**Full plan:** `plans/dspy-outlines-mlx.md` (Tasks 7-10 section)
 
 ---
 
-## Test Commands
+## Test Status
 
 ```bash
-# Verify current state
-pytest tests/test_base_lm.py -v           # PassthroughLM
-pytest tests/test_mlx_loader.py -v        # MLX loading (2 tests)
-
-# All tests should pass
 pytest tests/ -v
+# 6 tests PASSING:
+# - test_passthrough_lm_basic_call
+# - test_hybrid_lm_knowledge_graph_extraction
+# - test_load_mlx_model
+# - test_create_outlines_model
+# - test_extract_simple_schema
+# - test_extract_complex_schema
 ```
 
 ---
 
 ## Important Notes
 
-1. **MLX_LOCK Required:** Use `asyncio.Lock()` for async to prevent segfaults (user note)
-2. **Outlines API:** Use `outlines.from_mlxlm()` not `outlines.models.mlxlm()`
+1. **BaseLM Required:** Use `dspy.BaseLM` (not `dspy.LM`) - documented in `hybrid_lm.py`
+2. **AttrDict Pattern:** Response usage must be dict-convertible (`dict()` is called on it)
 3. **Model Path:** `.models/mlx-community--Qwen3-4B-Instruct-2507-8bit`
-4. **OpenAI Format:** Response must match OpenAI API structure (see `research/dspy-lm-interface.md`)
+4. **Git Operations:** User handles all git operations (no agent commits)
 
 ---
 
 ## Git Status
 
 **Branch:** `dspy-poc`
-**Recent Commits:**
-- `514a4e8` docs: update plan with Tasks 1-3 completion status
-- `0be7b19` feat: add MLX model loading via Outlines
-- `820da40` feat: create PassthroughLM to intercept DSPy calls
-- `7869598` docs: research DSPy LM interface for custom implementation
 
-All changes committed and ready for next phase.
+**Uncommitted Changes:**
+- `dspy_outlines/schema_extractor.py` (new)
+- `dspy_outlines/hybrid_lm.py` (new)
+- `dspy_outlines/mlx_loader.py` (modified)
+- `dspy_outlines/__init__.py` (modified)
+- `tests/test_schema_extractor.py` (new)
+- `tests/test_hybrid_lm.py` (new)
+- `dspy-poc.py` (modified)
+- `dspy-poc-lmstudio.py` (new backup)

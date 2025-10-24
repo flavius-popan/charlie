@@ -12,14 +12,17 @@
 
 ## Implementation Status
 
-**✓ COMPLETED (Tasks 1-3):**
+**✓ COMPLETED (Tasks 1-6):**
 - Task 1: DSPy LM interface researched → `research/dspy-lm-interface.md`
-- Task 2: PassthroughLM created → `dspy_outlines/base_lm.py` (proves interception works)
-- Task 3: MLX loading implemented → `dspy_outlines/mlx_loader.py` (both tests passing)
+- Task 2: PassthroughLM created → `dspy_outlines/base_lm.py`
+- Task 3: MLX loading implemented → `dspy_outlines/mlx_loader.py`
+- Task 4: Schema extraction → `dspy_outlines/schema_extractor.py` (2 tests passing)
+- Task 5: OutlinesDSPyLM hybrid LM → `dspy_outlines/hybrid_lm.py` (test passing, uses BaseLM)
+- Task 6: Integration → `dspy-poc.py` updated (works without LM Studio)
 
-**→ NEXT (Tasks 4-6):** Schema extraction, hybrid LM implementation, integration
+**→ NEXT (Tasks 7-10):** Async support (optional), Gradio UI, docs, integration tests
 
-**PENDING (Tasks 7-10):** Async support, Gradio UI, docs, integration tests
+**See CHECKPOINT.md for handoff details.**
 
 ---
 
@@ -1112,15 +1115,15 @@ git commit -m "test: add integration tests for hybrid system"
 
 ## Completion Checklist
 
-- [ ] Custom DSPy LM class implemented
-- [ ] MLX model loading via Outlines working
-- [ ] Schema extraction from DSPy signatures
-- [ ] Constrained generation with Pydantic models
-- [ ] `dspy-poc.py` updated to use hybrid LM
+- [x] Custom DSPy LM class implemented (OutlinesDSPyLM using BaseLM)
+- [x] MLX model loading via Outlines working
+- [x] Schema extraction from DSPy signatures
+- [x] Constrained generation with Pydantic models
+- [x] `dspy-poc.py` updated to use hybrid LM
+- [x] Tests passing (6/6)
+- [x] No dependency on LM Studio
 - [ ] Gradio UI for interactive extraction
 - [ ] Documentation written
-- [ ] Tests passing
-- [ ] No dependency on LM Studio
 
 ## Success Criteria
 
