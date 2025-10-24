@@ -18,6 +18,8 @@ dependencies = [
     "mlx-lm>=0.28.2",
     "outlines>=1.2.6", # outlines-core version overridden in [tool.uv] for PR #230 MLX fix
     "dspy>=3.0.3",
+    "gradio>=5.49.1",
+    "graphviz>=0.21",
 ]
 
 [tool.setuptools.packages.find]
