@@ -6,9 +6,20 @@
 
 **Architecture:** Build a custom `dspy.LM` subclass that intercepts generation calls and routes them through Outlines' constrained decoding engine. This mirrors the working Outlines+MLX bridge pattern from `app/llm/client.py` but for DSPy. The hybrid approach lets DSPy handle prompt structure/optimization while Outlines enforces Pydantic schemas at generation time.
 
-**Note:** This replaces Graphiti entirely with a custom DSPy pipeline.
-
 **Tech Stack:** DSPy 3.0.3, Outlines 1.2.7, MLX-LM 0.28.2, Pydantic
+
+---
+
+## Implementation Status
+
+**✓ COMPLETED (Tasks 1-3):**
+- Task 1: DSPy LM interface researched → `research/dspy-lm-interface.md`
+- Task 2: PassthroughLM created → `dspy_outlines/base_lm.py` (proves interception works)
+- Task 3: MLX loading implemented → `dspy_outlines/mlx_loader.py` (both tests passing)
+
+**→ NEXT (Tasks 4-6):** Schema extraction, hybrid LM implementation, integration
+
+**PENDING (Tasks 7-10):** Async support, Gradio UI, docs, integration tests
 
 ---
 
@@ -71,328 +82,50 @@ Create `OutlinesDSPyLM` that:
 
 ---
 
-## Task 1: Research DSPy LM Interface
+## ✓ Task 1: Research DSPy LM Interface (COMPLETED)
 
-**Goal:** Understand the exact methods needed to create a custom DSPy LM class.
+**Result:** Research documented in `research/dspy-lm-interface.md`
 
-**Files:**
-- Read: DSPy source code or documentation for `dspy.LM` / `dspy.BaseLM`
-- Create: `research/dspy-lm-interface.md` (document findings)
-
-**Step 1: Search for DSPy LM interface documentation**
-
-Run web searches or check installed package:
-```bash
-python -c "import dspy; import inspect; print(inspect.getfile(dspy.LM))"
-cat /path/to/dspy/lm.py  # or wherever it is
-```
-
-**Step 2: Document required methods**
-
-In `research/dspy-lm-interface.md`, document:
-- What class to inherit from (`dspy.LM` or `dspy.BaseLM`)
-- Required methods to override (`__call__`, `__init__`, etc.)
-- Method signatures (parameters, return types)
-- How DSPy passes prompts and expects responses
-- How to handle `max_tokens`, temperature, and other generation params
-
-**Step 3: Document adapter interface (if applicable)**
-
-Check if DSPy 3.0 uses adapters between signatures and LMs:
-- How adapters format prompts
-- How to extract Pydantic schemas from signatures
-- Whether we need custom adapter or can work at LM level
-
-**Step 4: Commit research**
-
-```bash
-git add research/dspy-lm-interface.md
-git commit -m "docs: research DSPy LM interface for custom implementation"
-```
+**Key Findings:**
+- Inherit from `dspy.BaseLM` (simpler than `dspy.LM`)
+- Override `forward(prompt, messages, **kwargs)` method
+- Return OpenAI-format response: `{"choices": [...], "usage": {...}, "model": "..."}`
+- Signature passed in kwargs by adapters - easy to extract Pydantic schemas
+- Adapters call `lm(...)` → `__call__()` → `forward()` - intercept at forward level
 
 ---
 
-## Task 2: Create Minimal Custom DSPy LM (Passthrough)
+## ✓ Task 2: Create Minimal Custom DSPy LM (Passthrough) (COMPLETED)
 
-**Goal:** Build simplest possible custom LM that passes through to existing LM Studio, proving we can intercept DSPy calls.
+**Result:** Created `PassthroughLM` class that proves DSPy call interception works
 
-**Files:**
-- Create: `dspy_outlines/base_lm.py`
-- Modify: `dspy-poc.py` (to use custom LM instead of dspy.LM)
+**Files Created:**
+- `dspy_outlines/base_lm.py` - PassthroughLM that inherits from `dspy.LM` and logs interceptions
+- `dspy_outlines/__init__.py` - Package exports
+- `tests/test_base_lm.py` - Test that PassthroughLM handles basic DSPy calls
 
-**Step 1: Write failing test**
+**Updated:**
+- `dspy-poc.py` - Now uses `PassthroughLM` instead of `dspy.LM`
+- `pyproject.toml` - Added `dspy_outlines*` to package includes
 
-Create: `tests/test_base_lm.py`
-
-```python
-import dspy
-from pydantic import BaseModel
-from dspy_outlines.base_lm import PassthroughLM
-
-def test_passthrough_lm_basic_call():
-    """Test that PassthroughLM can handle basic DSPy calls."""
-    lm = PassthroughLM(
-        model="openai/qwen/qwen3-4b-2507",
-        api_base="http://127.0.0.1:8000/v1",
-        api_key="LOCALAF"
-    )
-    dspy.configure(lm=lm)
-
-    class SimpleOutput(BaseModel):
-        answer: str
-
-    class SimpleSignature(dspy.Signature):
-        question: str = dspy.InputField()
-        answer: SimpleOutput = dspy.OutputField()
-
-    predictor = dspy.Predict(SimpleSignature)
-    result = predictor(question="What is 2+2?")
-
-    assert hasattr(result, 'answer')
-    assert isinstance(result.answer, SimpleOutput)
-```
-
-**Step 2: Run test to verify it fails**
-
-```bash
-pytest tests/test_base_lm.py::test_passthrough_lm_basic_call -v
-```
-
-Expected: FAIL (module 'dspy_outlines' not found)
-
-**Step 3: Create directory structure**
-
-```bash
-mkdir -p dspy_outlines
-touch dspy_outlines/__init__.py
-```
-
-**Step 4: Implement PassthroughLM**
-
-Create: `dspy_outlines/base_lm.py`
-
-```python
-"""Custom DSPy LM that demonstrates interception (passthrough for now)."""
-
-import dspy
-import logging
-
-logger = logging.getLogger(__name__)
-
-class PassthroughLM(dspy.LM):
-    """
-    Custom LM that passes through to base DSPy.LM.
-
-    This proves we can intercept calls before routing to Outlines.
-    """
-
-    def __init__(self, model: str, api_base: str, api_key: str, **kwargs):
-        """Initialize by delegating to parent DSPy LM."""
-        super().__init__(model, api_base=api_base, api_key=api_key, **kwargs)
-        logger.info(f"PassthroughLM initialized: {model}")
-
-    def __call__(self, prompt=None, messages=None, **kwargs):
-        """
-        Intercept generation call.
-
-        For now, just log and pass through to parent.
-        Future: extract schema, route to Outlines.
-        """
-        logger.info(f"PassthroughLM.__call__ intercepted")
-        logger.debug(f"  prompt: {prompt[:100] if prompt else 'None'}...")
-        logger.debug(f"  messages: {len(messages) if messages else 0}")
-
-        # Pass through to parent DSPy.LM
-        return super().__call__(prompt=prompt, messages=messages, **kwargs)
-```
-
-**Step 5: Export in __init__**
-
-Modify: `dspy_outlines/__init__.py`
-
-```python
-"""DSPy + Outlines integration."""
-
-from .base_lm import PassthroughLM
-
-__all__ = ["PassthroughLM"]
-```
-
-**Step 6: Run test**
-
-```bash
-pytest tests/test_base_lm.py::test_passthrough_lm_basic_call -v
-```
-
-Expected: PASS (or reveal what needs fixing)
-
-**Step 7: Update dspy-poc.py to use PassthroughLM**
-
-Modify: `dspy-poc.py:6-12`
-
-```python
-from dspy_outlines import PassthroughLM
-
-# Configure LM Studio endpoint via custom LM
-lm = PassthroughLM(
-    model="openai/qwen/qwen3-4b-2507",
-    api_base="http://127.0.0.1:8000/v1",
-    api_key="LOCALAF",
-)
-dspy.configure(lm=lm)
-```
-
-**Step 8: Test manually**
-
-```bash
-python dspy-poc.py
-```
-
-Paste test text, verify it still works and logs show interception.
-
-**Step 9: Commit**
-
-```bash
-git add dspy_outlines/ tests/test_base_lm.py dspy-poc.py
-git commit -m "feat: create PassthroughLM to intercept DSPy calls"
-```
+**Test Status:** ✓ PASSING
 
 ---
 
-## Task 3: Load MLX Model via Outlines
+## ✓ Task 3: Load MLX Model via Outlines (COMPLETED)
 
-**Goal:** Load the local MLX model using Outlines (not via LM Studio API).
+**Result:** Created MLX model loading utilities with Outlines wrapper
 
-**Files:**
-- Create: `dspy_outlines/mlx_loader.py`
-- Create: `tests/test_mlx_loader.py`
+**Files Created:**
+- `dspy_outlines/mlx_loader.py` - `load_mlx_model()` and `create_outlines_model()` functions
+- `tests/test_mlx_loader.py` - Tests for both MLX loading and Outlines structured generation
 
-**Step 1: Write failing test**
+**Key Implementation Detail:**
+- Correct API: `outlines.from_mlxlm(mlx_model, mlx_tokenizer)` (not `outlines.models.mlxlm()`)
+- Default model path: `.models/mlx-community--Qwen3-4B-Instruct-2507-8bit`
+- Outlines wrapper supports constrained generation with Pydantic `output_type` parameter
 
-Create: `tests/test_mlx_loader.py`
-
-```python
-from dspy_outlines.mlx_loader import load_mlx_model
-
-def test_load_mlx_model():
-    """Test loading Qwen3-4B model via MLX."""
-    model, tokenizer = load_mlx_model()
-
-    assert model is not None
-    assert tokenizer is not None
-    assert hasattr(tokenizer, 'apply_chat_template')
-```
-
-**Step 2: Run test to verify it fails**
-
-```bash
-pytest tests/test_mlx_loader.py::test_load_mlx_model -v
-```
-
-Expected: FAIL (module not found)
-
-**Step 3: Implement MLX loader**
-
-Create: `dspy_outlines/mlx_loader.py`
-
-```python
-"""MLX model loading utilities."""
-
-import logging
-import mlx_lm
-import outlines
-
-logger = logging.getLogger(__name__)
-
-# Model path (matches settings.py)
-DEFAULT_MODEL_PATH = ".models/mlx-community--Qwen3-4B-Instruct-2507-8bit"
-
-def load_mlx_model(model_path: str = DEFAULT_MODEL_PATH):
-    """
-    Load MLX model and tokenizer.
-
-    Args:
-        model_path: Path to MLX model directory
-
-    Returns:
-        tuple: (mlx_model, mlx_tokenizer)
-    """
-    logger.info(f"Loading MLX model: {model_path}")
-    mlx_model, mlx_tokenizer = mlx_lm.load(model_path)
-    logger.info("MLX model loaded successfully")
-
-    return mlx_model, mlx_tokenizer
-
-def create_outlines_model(model_path: str = DEFAULT_MODEL_PATH):
-    """
-    Create Outlines model wrapper around MLX.
-
-    Args:
-        model_path: Path to MLX model directory
-
-    Returns:
-        outlines model ready for structured generation
-    """
-    logger.info(f"Creating Outlines wrapper for: {model_path}")
-    mlx_model, mlx_tokenizer = load_mlx_model(model_path)
-
-    outlines_model = outlines.models.mlxlm(mlx_model, mlx_tokenizer)
-    logger.info("Outlines model ready")
-
-    return outlines_model, mlx_tokenizer
-```
-
-**Step 4: Run test**
-
-```bash
-pytest tests/test_mlx_loader.py::test_load_mlx_model -v
-```
-
-Expected: PASS
-
-**Step 5: Test Outlines wrapper**
-
-Add test to `tests/test_mlx_loader.py`:
-
-```python
-from pydantic import BaseModel
-
-def test_create_outlines_model():
-    """Test creating Outlines wrapper."""
-    from dspy_outlines.mlx_loader import create_outlines_model
-
-    outlines_model, tokenizer = create_outlines_model()
-
-    # Test basic structured generation
-    class TestOutput(BaseModel):
-        result: int
-
-    response = outlines_model(
-        "What is 2+2? Answer with just the number.",
-        output_type=TestOutput,
-        max_tokens=10
-    )
-
-    # Response should be JSON string
-    assert isinstance(response, str)
-    parsed = TestOutput.model_validate_json(response)
-    assert parsed.result == 4
-```
-
-**Step 6: Run full test**
-
-```bash
-pytest tests/test_mlx_loader.py -v
-```
-
-Expected: PASS
-
-**Step 7: Commit**
-
-```bash
-git add dspy_outlines/mlx_loader.py tests/test_mlx_loader.py
-git commit -m "feat: add MLX model loading via Outlines"
-```
+**Test Status:** ✓ 2 PASSING (load model + structured generation)
 
 ---
 
