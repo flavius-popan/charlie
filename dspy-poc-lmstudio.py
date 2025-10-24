@@ -3,10 +3,14 @@ from pydantic import BaseModel, Field
 from typing import List
 import json
 
-from dspy_outlines import OutlinesDSPyLM
+from dspy_outlines import PassthroughLM
 
-# Configure Outlines+MLX hybrid LM (no LM Studio needed!)
-lm = OutlinesDSPyLM()  # Uses default model path from mlx_loader
+# Configure LM Studio endpoint via custom LM
+lm = PassthroughLM(
+    model="openai/qwen/qwen3-4b-2507",
+    api_base="http://127.0.0.1:8000/v1",
+    api_key="LOCALAF",
+)
 dspy.configure(lm=lm)
 
 
