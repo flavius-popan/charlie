@@ -15,8 +15,10 @@ dependencies = [
     "graphviz>=0.21",
     "transformers>=4.57.1",
     "torch>=2.9.0",
-    "coremltools>=8.3.0",
     "numpy>=2.3.4",
+    "onnx>=1.19.1",
+    "onnxruntime>=1.23.2",
+    "onnxscript>=0.5.4",
 ]
 
 [tool.setuptools.packages.find]

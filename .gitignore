@@ -16,4 +16,4 @@ wheels/
 .models
 .direnv
 .claude
-distilbert-ner-coreml/
+ddistilbert-ner-onnx/
