@@ -16,4 +16,5 @@ wheels/
 .models
 .direnv
 .claude
-distilbert-ner-onnx/
+distilbert-ner-onnx/onnx/*.onnx
+distilbert-ner-onnx/.cache/

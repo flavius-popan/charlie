@@ -2,6 +2,7 @@
 
 - Integrate [Distilbert-NER](https://huggingface.co/dslim/distilbert-NER), combo with smaller LLM to do edges instead of nodes.
 - Watch [this video to grok Distilbert-NER](https://www.youtube.com/watch?v=Q1i4bIIFOFc)
+- Evaluate quantized ONNX models after collecting sample data - test if smaller versions (int8: 63MB, q4: 112MB) are sufficient vs full model (249MB)
 - Constrain extraction prompts significantly, focus only on people first.
 - Implement [Contextual Retreival](https://www.anthropic.com/engineering/contextual-retrieval)
 - Use [SBERT](https://sbert.net/docs/quickstart.html) with embedding & reranking/cross-encoder models

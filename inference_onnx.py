@@ -3,17 +3,26 @@
 ONNX Inference for DistilBERT-NER
 Lightweight Python inference using ONNX Runtime (no PyTorch required).
 Dependencies: onnxruntime (~10MB), transformers (tokenizer only), numpy
+
+Auto-downloads the ONNX model from HuggingFace if not present (~249MB).
+Tokenizer files are included in the repository.
 """
 
+import os
+from pathlib import Path
 import numpy as np
 import onnxruntime as ort
 from transformers import AutoTokenizer
 
 
 # Configuration
-MODEL_PATH = "distilbert-ner-onnx/model.onnx"
+MODEL_PATH = "distilbert-ner-onnx/onnx/model.onnx"
 TOKENIZER_PATH = "distilbert-ner-onnx"
 MAX_LENGTH = 128
+
+# HuggingFace model repository
+HF_MODEL_REPO = "onnx-community/distilbert-NER-ONNX"
+HF_MODEL_FILE = "onnx/model.onnx"
 
 # Label mapping from model config (https://huggingface.co/dslim/distilbert-NER)
 ID2LABEL = {
@@ -29,10 +38,53 @@ ID2LABEL = {
 }
 
 
+def ensure_model_downloaded(model_path: str = MODEL_PATH) -> None:
+    """
+    Download the ONNX model from HuggingFace if not present.
+
+    Args:
+        model_path: Path to the model file (default: MODEL_PATH)
+    """
+    model_file = Path(model_path)
+
+    if model_file.exists():
+        return
+
+    print(f"Model not found at {model_path}")
+    print(f"Downloading from HuggingFace ({HF_MODEL_REPO})...")
+    print("This will download ~249MB...")
+
+    try:
+        from huggingface_hub import hf_hub_download
+
+        # Ensure the onnx directory exists
+        model_file.parent.mkdir(parents=True, exist_ok=True)
+
+        # Download the model
+        hf_hub_download(
+            repo_id=HF_MODEL_REPO,
+            filename=HF_MODEL_FILE,
+            local_dir=TOKENIZER_PATH,
+        )
+
+        print(f"✓ Model downloaded to {model_path}")
+
+    except ImportError:
+        raise ImportError(
+            "huggingface_hub is required to download the model. "
+            "Install with: pip install huggingface_hub"
+        )
+    except Exception as e:
+        raise RuntimeError(f"Failed to download model: {e}")
+
+
 class ONNXNERInference:
     """Lightweight NER inference using ONNX Runtime"""
 
     def __init__(self, model_path: str, tokenizer_path: str):
+        # Ensure model is downloaded
+        ensure_model_downloaded(model_path)
+
         print("Loading ONNX model...")
         # Configure ONNX Runtime session
         sess_options = ort.SessionOptions()
