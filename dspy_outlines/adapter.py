@@ -164,8 +164,12 @@ class OutlinesAdapter(ChatAdapter):
         # Parse JSON response
         completions = []
         for output in outputs:
-            completion_text = output.message.content
-            parsed = self._parse_json(signature, completion_text)
+            # Standard DSPy output handling (see Adapter._call_postprocess)
+            text = output
+            if isinstance(output, dict):
+                text = output["text"]
+
+            parsed = self._parse_json(signature, text)
             completions.append(parsed)
 
         return completions
@@ -204,8 +208,12 @@ class OutlinesAdapter(ChatAdapter):
         # Parse JSON response (guaranteed valid by Outlines)
         completions = []
         for output in outputs:
-            completion_text = output.message.content
-            parsed = self._parse_json(signature, completion_text)
+            # Standard DSPy output handling (see Adapter._call_postprocess)
+            text = output
+            if isinstance(output, dict):
+                text = output["text"]
+
+            parsed = self._parse_json(signature, text)
             completions.append(parsed)
 
         return completions

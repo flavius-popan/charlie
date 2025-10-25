@@ -1,10 +1,12 @@
-"""Test that MLX_LOCK prevents race conditions in OutlinesLM.
+"""MLX integration tests: model loading, thread safety, and locking behavior.
 
-This test verifies:
-1. MLX_LOCK is properly acquired during model inference
-2. Multiple threads calling forward() are serialized when sharing a model instance
-3. No Metal framework errors occur under concurrent load
-4. Separate MLX instances can run in parallel (interesting discovery!)
+This test suite verifies:
+1. MLX model loading and Outlines wrapper creation
+2. Basic structured generation with Pydantic models
+3. MLX_LOCK properly acquired during model inference
+4. Multiple threads calling forward() are serialized when sharing a model instance
+5. No Metal framework errors occur under concurrent load
+6. Separate MLX instances share the module-level lock
 
 Memory note: Most tests use a shared LM instance to avoid loading multiple 4GB models.
 The test_multiple_instances_share_lock test intentionally loads 2 instances to verify
@@ -21,6 +23,7 @@ from pydantic import BaseModel
 
 from dspy_outlines import OutlinesLM, OutlinesAdapter
 from dspy_outlines.lm import MLX_LOCK
+from dspy_outlines.mlx_loader import load_mlx_model, create_outlines_model
 
 
 class SimpleResponse(BaseModel):
@@ -45,6 +48,39 @@ def shared_lm():
     return OutlinesLM()
 
 
+# Model Loading Tests
+
+def test_load_mlx_model():
+    """Test loading Qwen3-4B model via MLX."""
+    model, tokenizer = load_mlx_model()
+
+    assert model is not None
+    assert tokenizer is not None
+    assert hasattr(tokenizer, 'apply_chat_template')
+
+
+def test_create_outlines_model():
+    """Test creating Outlines wrapper."""
+    outlines_model, tokenizer = create_outlines_model()
+
+    # Test basic structured generation
+    class TestOutput(BaseModel):
+        result: int
+
+    response = outlines_model(
+        "What is 2+2? Answer with just the number.",
+        output_type=TestOutput,
+        max_tokens=10
+    )
+
+    # Response should be JSON string
+    assert isinstance(response, str)
+    parsed = TestOutput.model_validate_json(response)
+    assert parsed.result == 4
+
+
+# Thread Safety Tests
+
 def test_mlx_lock_exists():
     """Verify MLX_LOCK is defined and is a threading.Lock."""
     assert MLX_LOCK is not None
@@ -54,24 +90,25 @@ def test_mlx_lock_exists():
 def test_lock_acquired_during_inference(shared_lm):
     """Test that the lock is actually acquired during model inference.
 
-    We mock the outlines_model to detect if it's called while lock is held.
+    We mock the model to detect if it's called while lock is held.
     """
     lm = shared_lm
 
     lock_held_during_call = False
 
-    original_model = lm.outlines_model
+    original_model = lm.model
 
-    def mock_model_call(*args, **kwargs):
+    def mock_model_call(prompt, **kwargs):
         nonlocal lock_held_during_call
         # Check if MLX_LOCK is currently held
         # locked() returns False if lock is available (not held)
         lock_held_during_call = MLX_LOCK.locked()
 
-        # Return valid JSON
+        # Return valid JSON that matches the expected output_type
+        # The model is called with output_type=SimpleResponse for constrained generation
         return '{"answer": "test"}'
 
-    lm.outlines_model = mock_model_call
+    lm.model = mock_model_call
 
     # Configure DSPy
     dspy.configure(lm=lm, adapter=OutlinesAdapter())
@@ -82,6 +119,9 @@ def test_lock_acquired_during_inference(shared_lm):
 
     # Verify lock was held during model call
     assert lock_held_during_call, "MLX_LOCK should be held during model inference"
+
+    # Restore original model
+    lm.model = original_model
 
 
 def test_concurrent_calls_are_serialized(shared_lm):
@@ -96,7 +136,7 @@ def test_concurrent_calls_are_serialized(shared_lm):
     max_concurrent = 0
     lock = threading.Lock()
 
-    original_model = lm.outlines_model
+    original_model = lm.model
 
     def mock_model_call(*args, **kwargs):
         nonlocal concurrent_calls, max_concurrent
@@ -113,7 +153,7 @@ def test_concurrent_calls_are_serialized(shared_lm):
 
         return '{"answer": "test"}'
 
-    lm.outlines_model = mock_model_call
+    lm.model = mock_model_call
 
     results = []
     errors = []
@@ -145,17 +185,19 @@ def test_concurrent_calls_are_serialized(shared_lm):
     assert max_concurrent == 1, f"Lock failed to serialize - found {max_concurrent} concurrent calls"
 
     # Restore original model
-    lm.outlines_model = original_model
+    lm.model = original_model
 
 
 def test_lock_released_on_exception(shared_lm):
     """Test that MLX_LOCK is released even if model inference raises an exception."""
     lm = shared_lm
 
+    original_model = lm.model
+
     def failing_model(*args, **kwargs):
         raise RuntimeError("Simulated model failure")
 
-    lm.outlines_model = failing_model
+    lm.model = failing_model
 
     # Verify lock is not held before
     assert not MLX_LOCK.locked()
@@ -169,6 +211,9 @@ def test_lock_released_on_exception(shared_lm):
     # Verify lock is released after exception
     assert not MLX_LOCK.locked(), "Lock should be released after exception"
 
+    # Restore original model
+    lm.model = original_model
+
 
 def test_lock_scope_minimal(shared_lm):
     """Test that only model inference is locked, not the entire forward() method.
@@ -181,7 +226,7 @@ def test_lock_scope_minimal(shared_lm):
     inference_under_lock = None
 
     original_format = lm._format_messages
-    original_model = lm.outlines_model
+    original_model = lm.model
 
     def mock_format(messages):
         nonlocal format_under_lock
@@ -194,7 +239,7 @@ def test_lock_scope_minimal(shared_lm):
         return '{"answer": "test"}'
 
     lm._format_messages = mock_format
-    lm.outlines_model = mock_model
+    lm.model = mock_model
 
     # Call with messages to trigger formatting
     lm.forward(messages=[{"role": "user", "content": "test"}])
@@ -204,6 +249,10 @@ def test_lock_scope_minimal(shared_lm):
 
     # Verify inference happened inside lock
     assert inference_under_lock is True, "Inference should happen inside lock"
+
+    # Restore original methods
+    lm._format_messages = original_format
+    lm.model = original_model
 
 
 def test_multiple_instances_share_lock(shared_lm):
@@ -233,7 +282,7 @@ def test_multiple_instances_share_lock(shared_lm):
     lm1_sees_lock = None
     lm2_sees_lock = None
 
-    original_lm1_model = lm1.outlines_model
+    original_lm1_model = lm1.model
 
     def lm1_model(*args, **kwargs):
         nonlocal lm1_sees_lock
@@ -248,8 +297,8 @@ def test_multiple_instances_share_lock(shared_lm):
         lm2_sees_lock = MLX_LOCK.locked()
         return '{"answer": "lm2"}'
 
-    lm1.outlines_model = lm1_model
-    lm2.outlines_model = lm2_model
+    lm1.model = lm1_model
+    lm2.model = lm2_model
 
     def call_lm1():
         # Call forward() directly, bypassing DSPy
@@ -274,7 +323,52 @@ def test_multiple_instances_share_lock(shared_lm):
     assert lm2_sees_lock is True, "lm2 should see lock held (proves lock is module-level)"
 
     # Restore original model
-    lm1.outlines_model = original_lm1_model
+    lm1.model = original_lm1_model
+
+
+def test_lock_overhead_minimal(shared_lm):
+    """Test that lock acquisition doesn't add significant overhead to sequential calls.
+
+    The lock should only serialize concurrent access, not slow down sequential calls.
+    We measure the overhead by comparing timing with/without the lock mechanism.
+    """
+    lm = shared_lm
+    original_model = lm.model
+
+    # Mock model that simulates fast inference
+    call_count = 0
+
+    def mock_fast_model(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        time.sleep(0.001)  # Simulate 1ms inference
+        return '{"answer": "test"}'
+
+    lm.model = mock_fast_model
+
+    # Run sequential calls and measure time
+    num_calls = 10
+    start = time.time()
+    for i in range(num_calls):
+        lm.forward(prompt=f"test {i}", max_tokens=10)
+    duration = time.time() - start
+
+    # Verify all calls completed
+    assert call_count == num_calls
+
+    # Lock overhead should be negligible (< 1ms per call on average)
+    # Total overhead = duration - (num_calls * 0.001s per inference)
+    expected_min_duration = num_calls * 0.001  # Just the inference time
+    overhead_per_call = (duration - expected_min_duration) / num_calls
+
+    # Assert overhead is less than 1ms per call (lock acquisition is fast)
+    assert overhead_per_call < 0.001, (
+        f"Lock overhead too high: {overhead_per_call*1000:.2f}ms per call. "
+        f"Expected < 1ms per call for sequential access."
+    )
+
+    # Restore original model
+    lm.model = original_model
 
 
 if __name__ == "__main__":

@@ -2,7 +2,6 @@
 
 import pytest
 from pydantic import BaseModel
-from types import SimpleNamespace
 from typing import Any
 import dspy
 from dspy_outlines.adapter import OutlinesAdapter
@@ -21,7 +20,10 @@ class SimpleSignature(dspy.Signature):
 
 
 class MockLM(LM):
-    """Mock LM for testing adapter fallback logic."""
+    """Mock LM for testing adapter fallback logic.
+
+    Returns strings matching BaseLM._process_completion output format.
+    """
 
     def __init__(self, responses=None, exception=None):
         """
@@ -40,9 +42,9 @@ class MockLM(LM):
         if self.exception:
             raise self.exception
 
-        # Return mock response in DSPy expected format
+        # Return as list of strings (matching BaseLM._process_completion output)
         response = self.responses[0] if self.responses else '{"output": {"result": "mock"}}'
-        return [SimpleNamespace(message=SimpleNamespace(content=response))]
+        return [response]
 
 
 def test_adapter_initialization():
