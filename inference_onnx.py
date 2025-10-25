@@ -15,17 +15,17 @@ MODEL_PATH = "distilbert-ner-onnx/model.onnx"
 TOKENIZER_PATH = "distilbert-ner-onnx"
 MAX_LENGTH = 128
 
-# Label mapping from model training
+# Label mapping from model config (https://huggingface.co/dslim/distilbert-NER)
 ID2LABEL = {
     0: "O",       # Outside any entity
-    1: "B-MISC",  # Beginning of miscellaneous entity
-    2: "I-MISC",  # Inside miscellaneous entity
-    3: "B-PER",   # Beginning of person name
-    4: "I-PER",   # Inside person name
-    5: "B-ORG",   # Beginning of organization
-    6: "I-ORG",   # Inside organization
-    7: "B-LOC",   # Beginning of location
-    8: "I-LOC",   # Inside location
+    1: "B-PER",   # Beginning of person name
+    2: "I-PER",   # Inside person name
+    3: "B-ORG",   # Beginning of organization
+    4: "I-ORG",   # Inside organization
+    5: "B-LOC",   # Beginning of location
+    6: "I-LOC",   # Inside location
+    7: "B-MISC",  # Beginning of miscellaneous entity
+    8: "I-MISC",  # Inside miscellaneous entity
 }
 
 
@@ -92,6 +92,12 @@ class ONNXNERInference:
         tokens = self.tokenizer.convert_ids_to_tokens(input_ids[0])
         labels = [ID2LABEL[label_id] for label_id in label_ids]
 
+        # Debug: Print first 20 token-label pairs (uncomment to debug)
+        # print("\nToken-Label pairs (first 20):")
+        # for i, (tok, lab) in enumerate(zip(tokens[:20], labels[:20])):
+        #     if attention_mask[0][i] == 1:
+        #         print(f"  {i:3d}: {tok:15s} -> {lab}")
+
         # Extract entities from BIO tags
         entities = self._extract_entities(tokens, labels, attention_mask[0])
 
@@ -99,7 +105,11 @@ class ONNXNERInference:
 
     def _extract_entities(self, tokens: list[str], labels: list[str], attention_mask: np.ndarray) -> list[dict]:
         """
-        Extract entities from BIO-tagged tokens
+        Extract entities from BIO-tagged tokens with word-level aggregation.
+
+        Uses a 'first' aggregation strategy similar to HuggingFace transformers:
+        Groups consecutive tokens into words (using ## subword markers), then
+        merges consecutive same-type entities that are part of the same word.
 
         Args:
             tokens: List of tokenized words
@@ -109,50 +119,89 @@ class ONNXNERInference:
         Returns:
             List of entities with text, label, and token positions
         """
+        # First, group tokens into words and aggregate labels
+        words = []
+        current_word = None
+
+        for idx, (token, label, mask) in enumerate(zip(tokens, labels, attention_mask)):
+            # Skip padding and special tokens
+            if mask == 0 or token in ["[CLS]", "[SEP]", "[PAD]"]:
+                if current_word:
+                    words.append(current_word)
+                    current_word = None
+                continue
+
+            # Check if this is a subword token
+            is_subword = token.startswith("##")
+
+            if is_subword and current_word:
+                # Continue the current word
+                current_word["tokens"].append(token)
+                current_word["labels"].append(label)
+                current_word["end_token"] = idx
+            else:
+                # Start a new word
+                if current_word:
+                    words.append(current_word)
+                current_word = {
+                    "tokens": [token],
+                    "labels": [label],
+                    "start_token": idx,
+                    "end_token": idx,
+                }
+
+        # Don't forget last word
+        if current_word:
+            words.append(current_word)
+
+        # Now aggregate words into entities
+        # Use 'first' strategy: take the label of the first token in each word
         entities = []
         current_entity = None
 
-        for idx, (token, label, mask) in enumerate(zip(tokens, labels, attention_mask)):
-            # Skip padding tokens and special tokens
-            if mask == 0 or token in ["[CLS]", "[SEP]", "[PAD]"]:
+        for word in words:
+            # Get the entity label from the first token (first strategy)
+            first_label = word["labels"][0]
+
+            if first_label == "O":
+                # Not an entity - save previous entity if exists
                 if current_entity:
                     entities.append(current_entity)
                     current_entity = None
                 continue
 
-            # Handle BIO tagging
-            if label.startswith("B-"):
-                # Save previous entity if exists
+            # Extract entity type (remove B-/I- prefix)
+            entity_type = first_label[2:] if first_label.startswith(("B-", "I-")) else first_label
+
+            # Check if we should merge with previous entity
+            # Merge if: previous exists, same type, and current is continuation (I-) OR same type subword (B-)
+            should_merge = (
+                current_entity
+                and current_entity["label"] == entity_type
+                and (first_label.startswith("I-") or all(l.startswith(f"B-{entity_type}") or l.startswith(f"I-{entity_type}") for l in word["labels"]))
+            )
+
+            if should_merge:
+                # Extend current entity
+                current_entity["end_token"] = word["end_token"]
+            else:
+                # Save previous entity and start new one
                 if current_entity:
                     entities.append(current_entity)
-
-                # Start new entity
-                entity_type = label[2:]  # Remove "B-" prefix
                 current_entity = {
-                    "text": token.replace("##", ""),  # Remove subword marker
                     "label": entity_type,
-                    "start_token": idx,
-                    "end_token": idx,
+                    "start_token": word["start_token"],
+                    "end_token": word["end_token"],
                 }
-
-            elif label.startswith("I-") and current_entity:
-                # Continue current entity
-                entity_type = label[2:]
-                if entity_type == current_entity["label"]:
-                    # Append to current entity text
-                    token_text = token.replace("##", "")
-                    current_entity["text"] += token_text
-                    current_entity["end_token"] = idx
-
-            else:  # "O" label
-                # Outside any entity - save previous if exists
-                if current_entity:
-                    entities.append(current_entity)
-                    current_entity = None
 
         # Don't forget last entity
         if current_entity:
             entities.append(current_entity)
+
+        # Reconstruct entity text using tokenizer
+        for entity in entities:
+            entity_tokens = tokens[entity["start_token"]:entity["end_token"] + 1]
+            entity["text"] = self.tokenizer.convert_tokens_to_string(entity_tokens)
 
         return entities
 
