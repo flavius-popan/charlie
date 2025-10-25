@@ -9,9 +9,9 @@ DSPy Signature → OutlinesAdapter (3-tier fallback) → OutlinesLM → Outlines
 ```
 
 **Three-tier fallback strategy:**
-- **Tier 1**: ChatAdapter field-marker format (fastest, tries first)
-- **Tier 2**: JSON unconstrained generation (fast, json_repair parsing)
-- **Tier 3**: Outlines constrained generation (slow, guaranteed valid)
+- **Chat**: ChatAdapter field-marker format (fastest, tries first)
+- **JSON**: JSON unconstrained generation (fast, json_repair parsing)
+- **OutlinesJSON**: Outlines constrained generation (slow, guaranteed valid)
 
 Each tier falls back to the next on failure. Metrics track success/failure rates for experimentation.
 
@@ -20,12 +20,12 @@ Each tier falls back to the next on failure. Metrics track success/failure rates
 ### OutlinesAdapter (`adapter.py`)
 **Purpose**: Three-tier fallback with automatic constraint extraction.
 
-- Tier 1: Delegates to `ChatAdapter` (field markers like `Result: ...`)
-- Tier 2: Prompts for JSON, parses with `json_repair` (robustness)
-- Tier 3: Adds `_outlines_constraint` kwarg for constrained generation
+- Chat: Delegates to `ChatAdapter` (field markers like `Result: ...`)
+- JSON: Prompts for JSON, parses with `json_repair` (robustness)
+- OutlinesJSON: Adds `_outlines_constraint` kwarg for constrained generation
 - Extracts constraints from signature output fields (Pydantic, Literal, Regex, etc.)
-- Tracks metrics: `adapter.metrics['tier1_success']`, etc.
-- Skips Tier 3 for ToolCalls (Outlines doesn't support them)
+- Tracks metrics: `adapter.metrics['chat_success']`, etc.
+- Skips OutlinesJSON for ToolCalls (Outlines doesn't support them)
 
 **Thread Safety**: ✅ Stateless - safe for concurrent use
 
@@ -71,13 +71,13 @@ lm = OutlinesLM()
 adapter = OutlinesAdapter()
 dspy.configure(lm=lm, adapter=adapter)
 
-# Use - automatically tries Tier 1 → 2 → 3
+# Use - automatically tries Chat → JSON → OutlinesJSON
 predictor = dspy.Predict(QA)
 result = predictor(question="What is 2+2?")
 print(result.answer.response)
 
-# Check which tier succeeded
-print(adapter.metrics)  # {'tier1_success': 0, 'tier2_success': 1, ...}
+# Check which adapter succeeded
+print(adapter.metrics)  # {'chat_success': 0, 'json_success': 1, ...}
 ```
 
 ## Direct Outlines Access
@@ -115,16 +115,16 @@ dspy.configure(lm=OutlinesLM(), adapter=adapter)
 
 print(adapter.metrics)
 # {
-#     'tier1_success': 5,    # ChatAdapter worked
-#     'tier2_success': 3,    # JSON fallback worked
-#     'tier3_success': 2,    # Outlines constrained used
-#     'tier1_failures': 5,   # ChatAdapter failed
-#     'tier2_failures': 2,   # JSON parsing failed
+#     'chat_success': 5,           # ChatAdapter worked
+#     'json_success': 3,           # JSON fallback worked
+#     'outlines_json_success': 2,  # Outlines constrained used
+#     'chat_failures': 5,          # ChatAdapter failed
+#     'json_failures': 2,          # JSON parsing failed
 # }
 ```
 
-**High Tier 3 usage?** Consider larger model (better JSON formatting).
-**High Tier 2 success?** Fast path working, constrained generation rarely needed.
+**High OutlinesJSON usage?** Consider larger model (better JSON formatting).
+**High JSON success?** Fast path working, constrained generation rarely needed.
 
 ## Thread Safety
 
@@ -147,7 +147,7 @@ Lock scope: Only wraps `self.model()` call, not entire `forward()`. Prompt forma
 ## Testing
 
 ```bash
-pytest tests/test_adapter_smoke.py -v  # Adapter unit tests
-pytest tests/test_mlx_loader.py -v     # MLX model loading
-pytest tests/test_mlx_lock.py -v       # Thread safety verification
+pytest tests/test_outlines_adapter_parsing.py -v  # Adapter parsing and integration tests
+pytest tests/test_mlx_loader.py -v                # MLX model loading
+pytest tests/test_mlx_lock.py -v                  # Thread safety verification
 ```

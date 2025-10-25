@@ -21,11 +21,11 @@ dspy.Predict(Signature)
     ↓
 OutlinesAdapter.__call__()
     ↓
-Tier 1: ChatAdapter format (field markers)
+Chat: ChatAdapter format (field markers)
     ↓ [on exception]
-Tier 2: JSON format (unconstrained, fast)
+JSON: JSON format (unconstrained, fast)
     ↓ [on AdapterParseError]
-Tier 3: Outlines constrained generation (slow, guaranteed)
+OutlinesJSON: Outlines constrained generation (slow, guaranteed)
     ↓
 OutlinesLM
 ```
@@ -34,9 +34,9 @@ OutlinesLM
 
 **OutlinesAdapter** - Single adapter extending `ChatAdapter`:
 - Implements all three fallback tiers internally
-- Tier 1: Delegates to `super().__call__()` (ChatAdapter's field-marker format)
-- Tier 2: `_json_fallback()` - JSON prompting without constraints
-- Tier 3: `_constrained_fallback()` - Adds `_outlines_constraint` for guaranteed valid output
+- Chat: Delegates to `super().__call__()` (ChatAdapter's field-marker format)
+- JSON: `_json_fallback()` - JSON prompting without constraints
+- OutlinesJSON: `_constrained_fallback()` - Adds `_outlines_constraint` for guaranteed valid output
 - Tracks metrics at each tier for experimentation
 
 **OutlinesLM** - DSPy language model:
@@ -134,18 +134,18 @@ result = lm.model("Choose:", Literal["Paris", "London", "Rome"])
 
 **Rationale:**
 - Primary goal is data-driven model selection
-- High Tier 3 usage → need larger model
-- High Tier 2 success → fast path working, consider simplifying
+- High OutlinesJSON usage → need larger model
+- High JSON success → fast path working, consider simplifying
 - Informs memory/latency trade-offs for end-user deployments
 
 **Metrics structure:**
 ```python
 self.metrics = {
-    'tier1_success': 0,    # ChatAdapter format worked
-    'tier2_success': 0,    # JSON format worked
-    'tier3_success': 0,    # Outlines constrained used
-    'tier1_failures': 0,   # ChatAdapter failed
-    'tier2_failures': 0,   # JSON parsing failed
+    'chat_success': 0,           # ChatAdapter format worked
+    'json_success': 0,           # JSON format worked
+    'outlines_json_success': 0,  # Outlines constrained used
+    'chat_failures': 0,          # ChatAdapter failed
+    'json_failures': 0,          # JSON parsing failed
 }
 ```
 
@@ -184,7 +184,7 @@ self.metrics = {
 - Line 73-82: Try structured output, catch Exception, fall back to JSON mode
 - Line 80: Logs warning "Failed to use structured output format, falling back to JSON mode"
 
-**Our Tier 2 should replicate:**
+**Our JSON tier should replicate:**
 - Line 132-135: `user_message_output_requirements()` - adds JSON instruction to user message
 - Line 149-179: `parse()` - uses `json_repair.loads()` to parse, raises `AdapterParseError` on failure
 - Uses `json_repair` (imported line 5) for robustness
@@ -219,12 +219,12 @@ self.metrics = {
 - Output must be structured (not raw string)
 
 **ReAct (tool calling)**:
-- ⚠️ Skip Tier 3 - Outlines doesn't support ToolCalls
+- ⚠️ Skip OutlinesJSON - Outlines doesn't support ToolCalls
 - `.venv/.../dspy/adapters/json_adapter.py:54` - Checks for `field.annotation == ToolCalls`
 - If detected in signature, skip constrained fallback
 
 **Multiple completions (n > 1)**:
-- ⚠️ Log warning, Tier 3 returns single completion
+- ⚠️ Log warning, OutlinesJSON returns single completion
 - `.venv/.../dspy/predict/predict.py:139` - `num_generations` from config
 - Outlines constrained generation is deterministic (can't generate n different outputs)
 
@@ -235,7 +235,7 @@ self.metrics = {
 - Iterates output fields looking for `annotation == ToolCalls`
 - Returns field name if found
 
-**Pattern for Tier 3:**
+**Pattern for OutlinesJSON:**
 ```python
 def _has_tool_calls(self, signature):
     for field in signature.output_fields.values():
@@ -305,8 +305,8 @@ def _has_tool_calls(self, signature):
 - [ ] Add `_constrained_fallback()` method (sets `_outlines_constraint`)
 - [ ] Add metrics tracking (`__init__` sets up dict, incremented in each tier)
 - [ ] Add `_has_tool_calls()` helper
-- [ ] Skip Tier 3 if tool calls detected
-- [ ] Log warnings for n > 1 at Tier 3
+- [ ] Skip OutlinesJSON if tool calls detected
+- [ ] Log warnings for n > 1 at OutlinesJSON
 
 **Files to modify:**
 - `dspy_outlines/adapter.py`
@@ -323,7 +323,7 @@ def _has_tool_calls(self, signature):
 
 ### 4. Write Tests
 
-- [ ] Benchmark test: measure Tier 1, 2, 3 speeds
+- [ ] Benchmark test: measure Chat, JSON, OutlinesJSON speeds
 - [ ] Test fallback chain with failing JSON
 - [ ] Test Literal type constraint
 - [ ] Test ChainOfThought compatibility

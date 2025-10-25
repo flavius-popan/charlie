@@ -20,9 +20,9 @@ class OutlinesAdapter(ChatAdapter):
     """
     Three-tier fallback adapter for Outlines constrained generation.
 
-    Tier 1: ChatAdapter field-marker format (fastest, often works)
-    Tier 2: JSON format unconstrained (fast, fallback for JSON-capable models)
-    Tier 3: Outlines constrained generation (slow, guaranteed valid)
+    Chat: ChatAdapter field-marker format (fastest, often works)
+    JSON: JSON format unconstrained (fast, fallback for JSON-capable models)
+    OutlinesJSON: Outlines constrained generation (slow, guaranteed valid)
 
     Each tier is tried in order, falling back to the next on failure.
     Metrics track success/failure rates for experimentation.
@@ -31,11 +31,11 @@ class OutlinesAdapter(ChatAdapter):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.metrics = {
-            'tier1_success': 0,
-            'tier2_success': 0,
-            'tier3_success': 0,
-            'tier1_failures': 0,
-            'tier2_failures': 0,
+            'chat_success': 0,
+            'json_success': 0,
+            'outlines_json_success': 0,
+            'chat_failures': 0,
+            'json_failures': 0,
         }
 
     def __call__(
@@ -49,56 +49,56 @@ class OutlinesAdapter(ChatAdapter):
         """
         Three-tier fallback execution.
 
-        Tier 1: Try ChatAdapter (field markers)
-        Tier 2: Try JSON format (unconstrained)
-        Tier 3: Use Outlines constrained generation (guaranteed)
+        Chat: Try ChatAdapter (field markers)
+        JSON: Try JSON format (unconstrained)
+        OutlinesJSON: Use Outlines constrained generation (guaranteed)
         """
-        # Extract constraint for Tier 3
+        # Extract constraint for OutlinesJSON
         constraint = self._extract_constraint(signature)
 
-        # Check if we should skip Tier 3 (tool calls or multiple completions)
+        # Check if we should skip OutlinesJSON (tool calls or multiple completions)
         skip_tier3 = self._has_tool_calls(signature)
         if skip_tier3:
-            logger.warning("ToolCalls detected - skipping Tier 3 (Outlines doesn't support ToolCalls)")
+            logger.warning("ToolCalls detected - skipping OutlinesJSON (Outlines doesn't support ToolCalls)")
 
         # Check for multiple completions
         n = lm_kwargs.get('n', 1)
         if n > 1 and constraint:
-            logger.warning(f"Multiple completions (n={n}) requested - Tier 3 will return single completion only")
+            logger.warning(f"Multiple completions (n={n}) requested - OutlinesJSON will return single completion only")
 
-        # Tier 1: ChatAdapter field-marker format
+        # Chat: ChatAdapter field-marker format
         try:
-            logger.info("Attempting Tier 1: ChatAdapter field-marker format")
+            logger.info("Attempting Chat: ChatAdapter field-marker format")
             result = super().__call__(lm, lm_kwargs, signature, demos, inputs)
-            self.metrics['tier1_success'] += 1
-            logger.info("Tier 1 succeeded")
+            self.metrics['chat_success'] += 1
+            logger.info("Chat succeeded")
             return result
         except Exception as e:
-            self.metrics['tier1_failures'] += 1
-            logger.info(f"Tier 1 failed: {e}")
+            self.metrics['chat_failures'] += 1
+            logger.info(f"Chat failed: {e}")
 
             # Don't re-raise ContextWindowExceededError - no point in retrying
             if "ContextWindowExceededError" in str(type(e)):
                 raise
 
-        # Tier 2: JSON format (unconstrained, fast)
+        # JSON: Unconstrained JSON with json_repair
         try:
-            logger.info("Attempting Tier 2: JSON format (unconstrained)")
+            logger.info("Attempting JSON: Unconstrained JSON with json_repair")
             result = self._json_fallback(lm, lm_kwargs, signature, demos, inputs)
-            self.metrics['tier2_success'] += 1
-            logger.info("Tier 2 succeeded")
+            self.metrics['json_success'] += 1
+            logger.info("JSON succeeded")
             return result
         except AdapterParseError as e:
-            self.metrics['tier2_failures'] += 1
-            logger.info(f"Tier 2 failed: {e}")
+            self.metrics['json_failures'] += 1
+            logger.info(f"JSON failed: {e}")
 
-        # Tier 3: Outlines constrained generation (slow, guaranteed)
+        # OutlinesJSON: Constrained JSON via Outlines
         if skip_tier3:
             raise AdapterParseError(
                 adapter_name="OutlinesAdapter",
                 signature=signature,
                 lm_response="",
-                message="All tiers failed and Tier 3 (Outlines) is skipped for ToolCalls"
+                message="All adapters failed and OutlinesJSON is skipped for ToolCalls"
             )
 
         if not constraint:
@@ -106,13 +106,13 @@ class OutlinesAdapter(ChatAdapter):
                 adapter_name="OutlinesAdapter",
                 signature=signature,
                 lm_response="",
-                message="No constraint found for Tier 3 (Outlines constrained generation)"
+                message="No constraint found for OutlinesJSON constrained generation"
             )
 
-        logger.info("Attempting Tier 3: Outlines constrained generation")
+        logger.info("Attempting OutlinesJSON: Constrained JSON via Outlines")
         result = self._constrained_fallback(lm, lm_kwargs, signature, demos, inputs, constraint)
-        self.metrics['tier3_success'] += 1
-        logger.info("Tier 3 succeeded")
+        self.metrics['outlines_json_success'] += 1
+        logger.info("OutlinesJSON succeeded")
         return result
 
     def _extract_constraint(self, signature: type[Signature]) -> Any:
@@ -145,7 +145,7 @@ class OutlinesAdapter(ChatAdapter):
         inputs: dict[str, Any],
     ) -> list[dict[str, Any]]:
         """
-        Tier 2: JSON format (unconstrained generation, fast).
+        JSON: Unconstrained JSON format with json_repair parsing.
 
         Uses ChatAdapter's format() to create messages, adds JSON instruction,
         then parses with json_repair for robustness.
@@ -180,7 +180,7 @@ class OutlinesAdapter(ChatAdapter):
         constraint: Any,
     ) -> list[dict[str, Any]]:
         """
-        Tier 3: Outlines constrained generation (guaranteed valid).
+        OutlinesJSON: Constrained JSON generation via Outlines (guaranteed valid).
 
         Adds _outlines_constraint to lm_kwargs, which OutlinesLM uses
         to enable constrained generation.
