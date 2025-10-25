@@ -13,6 +13,10 @@ dependencies = [
     "dspy>=3.0.3",
     "gradio>=5.49.1",
     "graphviz>=0.21",
+    "transformers>=4.57.1",
+    "numpy>=2.3.4",
+    "onnxruntime>=1.23.2",
+    "huggingface-hub>=0.20.0",
 ]
 
 [tool.setuptools.packages.find]
