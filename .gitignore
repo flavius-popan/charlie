@@ -10,12 +10,9 @@ wheels/
 .venv
 
 # Charlie
-raw_data/
-brain/
 .env
-server.log
-.pytest_cache
 .envrc
+.pytest_cache
 .models
 .direnv
 .claude

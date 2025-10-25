@@ -5,23 +5,19 @@ description = "Enquire Within"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "dotenv>=0.9.9",
     "graphiti-core>=0.21.0",
-    "kuzu>=0.11.2",
-    "fastapi>=0.115.0",
-    "uvicorn[standard]>=0.32.0",
-    "jinja2>=3.1.4",
-    "python-multipart>=0.0.12",
-    "markdown>=3.7",
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
     "mlx-lm>=0.28.2",
-    "outlines>=1.2.6",  # outlines-core version overridden in [tool.uv] for PR #230 MLX fix
+    "outlines>=1.2.6", # outlines-core version overridden in [tool.uv] for PR #230 MLX fix
+    "dspy>=3.0.3",
+    "gradio>=5.49.1",
+    "graphviz>=0.21",
 ]
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["app*"]
+include = ["app*", "dspy_outlines*"]
 
 [tool.uv]
 # Override outlines-core version to get PR #230 MLX type-safe kernel fix

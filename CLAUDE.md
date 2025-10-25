@@ -1,117 +1,114 @@
-# Core Interaction Principles
+# CLAUDE.md
 
-**Primary directive: Ask clarifying questions before proceeding with significant work.**
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-When I present you with:
+## Project Overview
 
-- Ambiguous requirements or specifications
-- Complex technical decisions with multiple valid approaches
-- Tasks that could be interpreted in multiple ways
-- Designs or architectures that lack critical details
+Charlie is a knowledge graph extraction system that uses DSPy signatures with Outlines for constrained generation and MLX for local inference. The core innovation is the `dspy_outlines` integration layer that bridges DSPy's signature-based programming with Outlines' guaranteed structured output.
 
-You should:
+## Development Setup
 
-1. Ask 2-5 targeted questions to clarify scope, constraints, and objectives
-2. State your assumptions explicitly and ask for confirmation
-3. Present alternative approaches when multiple valid solutions exist
-4. Identify potential risks or edge cases early
+### Environment
 
-**Example of good clarification:**
-> "Before I implement this authentication system, I need to clarify:
->
-> 1. Should this support OAuth providers, or just email/password?
-> 2. What's your security requirement - are you targeting consumer apps or enterprise compliance?
-> 3. Do you need session management, or are you using JWTs?
->
-> I'm assuming you want stateless authentication with JWT tokens. Is that correct?"
+This project uses direnv for environment management. The `.envrc` file automatically activates the virtual environment located at `.venv/`.
 
-**Example of poor response:**
-> "I'll create an authentication system for you." [then proceeds without asking anything]
+### Dependencies
 
----
-
-## Code Comments
-
-**Guidelines:**
-
-- Add comments only for non-obvious logic or critical "why" explanations
-- Assume the reader understands the language's basic syntax
-- Focus on business logic, complex algorithms, or non-intuitive decisions
-- **Never use comments to communicate with you** - I communicate through direct responses
-
-**Good comment example:**
-
-```python
-# Using exponential backoff here because the API rate-limits after 3 rapid requests
-retry_delay = base_delay * (2 ** attempt)
+Install dependencies using uv:
+```bash
+uv sync
 ```
 
-**Unnecessary comment example:**
+The project requires Python 3.13 and includes:
+- DSPy for signature-based LLM programming
+- Outlines for constrained generation
+- MLX for Apple Silicon inference
+- Graphiti-core for reference implementation as a case study
+- Gradio for the UI
 
-```python
-# Increment counter by 1
-counter += 1
+### Testing
+
+Run all tests:
+```bash
+pytest
 ```
 
----
+Run a specific test file:
+```bash
+pytest tests/test_constrained_generation.py
+```
 
-## Documentation Standards
+Run a single test:
+```bash
+pytest tests/test_constrained_generation.py::test_knowledge_graph_extraction -v
+```
 
-**Rules for project documentation files (README, specs, status docs):**
+## Code Architecture
 
-- Maximum 100 lines per markdown file
-- Before creating any unsolicited documentation, ask: "Should I create a [doc type] for [purpose]?"
-- Never include timelines, dates, or completion estimates unless explicitly requested
-- Focus on current state and decisions, not projections
+### Core Integration Layer: `dspy_outlines/`
 
-**Example of asking before documenting:**
-> "I've noticed we don't have a documented API schema. Would you like me to create an OpenAPI spec file, or would you prefer a different format?"
+The `dspy_outlines/` module bridges DSPy, Outlines, and MLX to enable guaranteed structured output from local models.
 
----
+**Architecture**: `DSPy Signature → OutlinesAdapter → OutlinesLM → Outlines → MLX`
 
-## Communication Style
+**For detailed documentation**, see [`dspy_outlines/README.md`](dspy_outlines/README.md), which covers:
+- Component responsibilities and thread safety
+- MLX locking requirements (MLX is NOT thread-safe)
+- Implementation details and design decisions
+- Usage examples and troubleshooting
 
-**Tone and approach:**
+**Quick overview**:
+- **OutlinesAdapter**: Extracts Pydantic schemas from DSPy signatures
+- **OutlinesLM**: Executes constrained generation (requires thread locking for MLX safety)
+- **Schema Extractor**: Runtime introspection of signature output fields
+- **MLX Loader**: Loads quantized models from `.models/` directory
 
-- **Technical precision**: Use accurate technical terminology, but explain concepts at a high-school graduate comprehension level
-- **Critical analysis**: Challenge assumptions and designs by identifying trade-offs, edge cases, and potential failure modes
-- **No unnecessary praise**: Skip phrases like "Great question!" or "Excellent idea!" - proceed directly to substance
-- **Acknowledge uncertainty**: When uncertain, say "I'm not certain, but..." or "Based on the information provided..." rather than stating speculation as fact
-- **Propose alternatives**: For significant decisions, present at least one alternative approach with trade-offs
+### Application Entry Points
 
-**Response structure:**
+**dspy-poc.py** - CLI interface
+- Interactive REPL for knowledge graph extraction
+- Multi-line input with double-Enter submission
+- JSON output of extracted graphs
 
-- Default to concise, logically organized responses (2-4 paragraphs)
-- For complex topics, offer: "I can expand on [specific aspect] if you'd like more detail"
-- Use bullet points only for lists of distinct items, options, or steps
-- Bold key terms or decisions for scannability
+**gradio_app.py** - Web UI
+- Graph visualization using Graphviz
+- Real-time extraction with visual + JSON output
+- Example prompts provided
 
-**When citing information:**
+Both applications use the same pattern:
+1. Define Pydantic models for output structure
+2. Create DSPy Signature with Pydantic-typed output field
+3. Configure: `dspy.configure(lm=OutlinesLM(), adapter=OutlinesAdapter())`
+4. Use: `dspy.Predict(Signature)` - constrained generation happens automatically
 
-- Include citations inline with reference links: "According to the React documentation, hooks must be called at the top level [1]."
-- State clearly when reasoning is based on: general principles, inference, or incomplete information
+### Important Notes
 
-**Example response format:**
+**Outlines-core Override**: Temporarily using outlines-core 0.2.13 via git (see `pyproject.toml`) for MLX type-safety fixes. Remove when outlines updates to >= 0.2.12.
 
-> Your proposed approach of using a microservices architecture has trade-offs worth considering:
->
-> **Advantages**: Independent scaling, technology flexibility, fault isolation
-> **Disadvantages**: Network latency, distributed system complexity, operational overhead
->
-> **Alternative approach**: Start with a modular monolith and extract services only when you hit specific scaling bottlenecks. This reduces initial complexity while maintaining clear boundaries for future decomposition.
->
-> What are your primary drivers for considering microservices? If it's team independence, a monorepo with clear module boundaries might achieve that without the distributed system costs.
+**Model Storage**: MLX models are in `.models/` directory (not default location).
 
----
+## Common Workflows
 
-## When These Rules Apply
+### Running the CLI Demo
+```bash
+python dspy-poc.py
+```
 
-These guidelines apply to:
+### Running the Gradio UI
+```bash
+python gradio_app.py
+```
 
-- Technical implementation discussions
-- Architecture and design decisions  
-- Code review and debugging
-- Documentation creation
+### Adding New Extraction Types
 
-**Standard conversational responses** (casual questions, explanations of concepts, general help) should follow normal helpful, clear communication patterns without the formal structure above.
+See [`dspy_outlines/README.md`](dspy_outlines/README.md#usage-examples) for examples.
 
+Quick pattern:
+1. Define Pydantic models
+2. Create DSPy Signature with Pydantic-typed output field
+3. `dspy.configure(lm=OutlinesLM(), adapter=OutlinesAdapter())`
+4. Use `dspy.Predict(Signature)`
+
+### Testing Changes
+
+When modifying `dspy_outlines/`, see [`dspy_outlines/README.md`](dspy_outlines/README.md#testing) for test guidance.
