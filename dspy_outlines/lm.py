@@ -20,7 +20,6 @@ import dspy
 from pydantic import BaseModel
 
 from .mlx_loader import create_outlines_model
-from .schema_extractor import extract_output_schema
 
 logger = logging.getLogger(__name__)
 
@@ -45,10 +44,10 @@ class OutlinesLM(dspy.BaseLM):
 
     Architecture:
     1. Receives DSPy signature + inputs via OutlinesAdapter
-    2. Adapter passes Pydantic schema through _outlines_schema kwarg
+    2. Adapter passes constraint (Pydantic, Literal, Regex, etc.) through _outlines_constraint kwarg
     3. Formats prompt using DSPy's formatting
-    4. Generates via Outlines with schema constraint
-    5. Returns validated Pydantic object to DSPy
+    4. Generates via Outlines with constraint
+    5. Returns validated output to DSPy
 
     This gives us:
     - DSPy's signature-based programming + optimization
@@ -64,7 +63,7 @@ class OutlinesLM(dspy.BaseLM):
             model_path: Path to MLX model (uses default if None)
         """
         super().__init__(model="outlines-mlx")
-        self.outlines_model, self.tokenizer = create_outlines_model(model_path)
+        self.model, self.tokenizer = create_outlines_model(model_path)
         logger.info("OutlinesLM initialized with Outlines+MLX backend")
 
     def forward(self, prompt=None, messages=None, **kwargs):
@@ -78,13 +77,13 @@ class OutlinesLM(dspy.BaseLM):
         Args:
             prompt: String prompt (if using prompt-based)
             messages: List of message dicts (if using chat format)
-            **kwargs: Additional generation params (max_tokens, _outlines_schema, etc.)
+            **kwargs: Additional generation params (max_tokens, _outlines_constraint, etc.)
 
         Returns:
             OpenAI-format response dict
         """
         max_tokens = kwargs.get('max_tokens', 512)
-        schema = kwargs.pop('_outlines_schema', None)
+        constraint = kwargs.pop('_outlines_constraint', None)
         field_name = kwargs.pop('_outlines_field_name', None)
 
         # Format prompt outside lock (can run concurrently)
@@ -93,29 +92,37 @@ class OutlinesLM(dspy.BaseLM):
         else:
             formatted_prompt = prompt
 
-        logger.info(f"Generating with schema: {schema.__name__ if schema else 'None'}")
+        logger.info(f"Generating with constraint: {constraint.__name__ if constraint else 'None'}")
 
         # Lock MLX model access to prevent Metal command buffer race conditions
         with MLX_LOCK:
-            if schema:
-                result_json = self.outlines_model(
+            if constraint:
+                result_json = self.model(
                     formatted_prompt,
-                    output_type=schema,
+                    output_type=constraint,
                     max_tokens=max_tokens
                 )
             else:
-                completion = self.outlines_model(
+                completion = self.model(
                     formatted_prompt,
                     max_tokens=max_tokens
                 )
 
         # Process results outside lock (can run concurrently)
-        if schema:
-            parsed = schema.model_validate_json(result_json)
-            if field_name:
-                completion = json.dumps({field_name: parsed.model_dump()})
+        if constraint:
+            # Check if constraint is a Pydantic model (requires JSON parsing)
+            if isinstance(constraint, type) and issubclass(constraint, BaseModel):
+                parsed = constraint.model_validate_json(result_json)
+                if field_name:
+                    completion = json.dumps({field_name: parsed.model_dump()})
+                else:
+                    completion = parsed.model_dump_json()
             else:
-                completion = parsed.model_dump_json()
+                # For other constraint types (Literal, Regex, etc.), result is already a string
+                if field_name:
+                    completion = json.dumps({field_name: result_json})
+                else:
+                    completion = result_json
 
         # Store in history (best-effort, not critical for correctness)
         # Note: No lock needed - history is for debugging only, not read by application
