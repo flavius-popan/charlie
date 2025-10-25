@@ -4,8 +4,7 @@ This test file demonstrates direct Outlines model usage without DSPy overhead,
 covering all output type categories from the Outlines documentation.
 """
 
-import pytest
-from typing import Literal, Dict, List
+from typing import Literal, Dict
 from enum import Enum
 from pydantic import BaseModel
 from dspy_outlines import OutlinesLM
@@ -13,8 +12,10 @@ from dspy_outlines import OutlinesLM
 
 # Fixtures and helper classes
 
+
 class Sentiment(str, Enum):
     """Enum for multiple choice testing."""
+
     positive = "positive"
     negative = "negative"
     neutral = "neutral"
@@ -22,17 +23,19 @@ class Sentiment(str, Enum):
 
 class Person(BaseModel):
     """Pydantic model for JSON schema testing."""
+
     name: str
     age: int
 
 
 # Basic attribute tests
 
+
 def test_model_attribute_exists():
     """Test that OutlinesLM exposes .model attribute."""
     lm = OutlinesLM()
 
-    assert hasattr(lm, 'model')
+    assert hasattr(lm, "model")
     assert lm.model is not None
     assert callable(lm.model)
 
@@ -43,11 +46,12 @@ def test_model_is_outlines_mlxlm():
 
     # Check it's an Outlines model (has __call__ with output_type parameter)
     import inspect
+
     sig = inspect.signature(lm.model.__call__)
     params = list(sig.parameters.keys())
 
     # Outlines models accept: model_input, output_type, backend, **inference_kwargs
-    assert 'output_type' in params or 'kwargs' in params
+    assert "output_type" in params or "kwargs" in params
 
 
 def test_model_attribute_same_across_calls():
@@ -61,6 +65,7 @@ def test_model_attribute_same_across_calls():
 
 
 # Output Type Category 1: Basic Python Types
+
 
 def test_basic_type_int():
     """Test generation constrained to int type.
@@ -113,6 +118,7 @@ def test_basic_type_bool():
 
 # Output Type Category 2: Multiple Choices
 
+
 def test_multiple_choice_literal():
     """Test multiple choice using Literal type."""
     lm = OutlinesLM()
@@ -151,6 +157,7 @@ def test_multiple_choice_choice():
 
 # Output Type Category 3: JSON Schemas
 
+
 def test_json_schema_pydantic():
     """Test JSON schema generation using Pydantic model."""
     lm = OutlinesLM()
@@ -169,17 +176,21 @@ def test_json_schema_dict():
     """Test JSON schema using dict type (basic structure)."""
     lm = OutlinesLM()
 
-    prompt = "Create a simple key-value mapping with 'name' and 'value'. Respond in JSON:"
+    prompt = (
+        "Create a simple key-value mapping with 'name' and 'value'. Respond in JSON:"
+    )
     result = lm.model(prompt, Dict[str, str], max_tokens=50)
 
     assert isinstance(result, str)
     # Should be parseable as JSON dict
     import json
+
     parsed = json.loads(result)
     assert isinstance(parsed, dict)
 
 
 # Output Type Category 4: Regex Patterns
+
 
 def test_regex_pattern_custom():
     """Test regex pattern for structured format (e.g., phone number)."""
@@ -195,6 +206,7 @@ def test_regex_pattern_custom():
     assert isinstance(result, str)
     # Verify it matches the pattern
     import re
+
     assert re.fullmatch(pattern, result.strip())
 
 
@@ -213,35 +225,8 @@ def test_regex_pattern_builtin():
     assert result.strip()[-1] in ".!?"
 
 
-# Output Type Category 5: Context-Free Grammars (CFG)
-
-@pytest.mark.skip(reason="CFG requires llguidance package (pip install llguidance)")
-def test_cfg_simple():
-    """Test CFG for simple structured format.
-
-    Note: CFG support requires the llguidance backend, which is an optional dependency.
-    Install with: pip install llguidance
-    """
-    from outlines.types import CFG
-
-    lm = OutlinesLM()
-
-    # Simple arithmetic expression grammar
-    grammar = """
-    ?start: expr
-    expr: NUMBER "+" NUMBER
-    NUMBER: /[0-9]+/
-    """
-
-    prompt = "Generate a simple addition like '2+3':"
-    result = lm.model(prompt, CFG(grammar), max_tokens=20)
-
-    assert isinstance(result, str)
-    # Should match the pattern: number+number
-    assert "+" in result
-
-
 # Unconstrained generation (no output type)
+
 
 def test_unconstrained_generation():
     """Test direct model call without constraint (unconstrained generation)."""
@@ -255,6 +240,7 @@ def test_unconstrained_generation():
 
 
 # Integration test
+
 
 def test_direct_call_bypasses_dspy():
     """Test that direct model calls don't require DSPy configuration."""
