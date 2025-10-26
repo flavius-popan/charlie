@@ -130,7 +130,7 @@ def extract_and_display(
 ):
     """Extract knowledge graph with NER fusion and generate visualization."""
     if not text.strip():
-        return None, None
+        return None, None, gr.update()
 
     try:
         # Step 1: Prepare entity hints based on toggle settings
@@ -145,6 +145,14 @@ def extract_and_display(
         # Step 2: Extract graph with LLM (with or without hints)
         result = extractor(text=text, entity_hints=entity_hints)
         graph = result.graph
+
+        # Capture adapter information
+        adapter_name_map = {
+            "chat": "Chat (field-marker format)",
+            "json": "JSON (unconstrained with json_repair)",
+            "outlines_json": "OutlinesJSON (constrained generation)",
+        }
+        adapter_display = adapter_name_map.get(adapter.last_adapter_used, "Unknown")
 
         # Format JSON
         json_output = json.dumps(graph.model_dump(), indent=2)
@@ -167,10 +175,11 @@ def extract_and_display(
         return (
             path,
             json_output,
+            gr.update(value=adapter_display, visible=True),
         )
 
     except Exception as e:
-        return None, f"Error: {str(e)}"
+        return None, f"Error: {str(e)}", gr.update(value="Error during extraction", visible=True)
 
 
 # Create Gradio interface
@@ -205,6 +214,12 @@ with gr.Blocks(title="KG Builder Demo") as demo:
             )
 
             extract_btn = gr.Button("Extract Knowledge Graph", variant="primary")
+
+            adapter_used = gr.Textbox(
+                label="Adapter Used",
+                interactive=False,
+                visible=False,
+            )
 
         with gr.Column():
             ner_output = gr.Code(label="distilbert-NER Output", language="json")
@@ -241,7 +256,7 @@ with gr.Blocks(title="KG Builder Demo") as demo:
             include_confidence,
             ner_entities_state,
         ],
-        outputs=[graph_viz, json_output],
+        outputs=[graph_viz, json_output, adapter_used],
     )
 
     # Toggle dependent checkboxes based on use_hints and update preview

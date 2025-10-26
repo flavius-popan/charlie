@@ -30,6 +30,7 @@ class OutlinesAdapter(ChatAdapter):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+        self.last_adapter_used = None  # "chat", "json", or "outlines_json"
         self.metrics = {
             'chat_success': 0,
             'json_success': 0,
@@ -71,6 +72,7 @@ class OutlinesAdapter(ChatAdapter):
             logger.info("Attempting Chat: ChatAdapter field-marker format")
             result = super().__call__(lm, lm_kwargs, signature, demos, inputs)
             self.metrics['chat_success'] += 1
+            self.last_adapter_used = "chat"
             logger.info("Chat succeeded")
             return result
         except Exception as e:
@@ -86,6 +88,7 @@ class OutlinesAdapter(ChatAdapter):
             logger.info("Attempting JSON: Unconstrained JSON with json_repair")
             result = self._json_fallback(lm, lm_kwargs, signature, demos, inputs)
             self.metrics['json_success'] += 1
+            self.last_adapter_used = "json"
             logger.info("JSON succeeded")
             return result
         except AdapterParseError as e:
@@ -112,6 +115,7 @@ class OutlinesAdapter(ChatAdapter):
         logger.info("Attempting OutlinesJSON: Constrained JSON via Outlines")
         result = self._constrained_fallback(lm, lm_kwargs, signature, demos, inputs, constraint)
         self.metrics['outlines_json_success'] += 1
+        self.last_adapter_used = "outlines_json"
         logger.info("OutlinesJSON succeeded")
         return result
 
