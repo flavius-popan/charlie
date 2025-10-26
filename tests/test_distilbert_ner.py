@@ -251,6 +251,192 @@ class TestEntityExtractor:
         assert "confidence" in entities[0]
         assert entities[0]["confidence"] == 0.95
 
+    def test_aggregate_consecutive_same_type_b_tags(self, extractor):
+        """
+        Test that consecutive B- tags of the SAME type create separate entities.
+
+        According to BIO scheme and HuggingFace docs:
+        "B-PER: Beginning of a person's name right after another person's name"
+
+        This means B-PER → B-PER should be TWO separate people, not one merged entity.
+        Example: "John" (B-PER) → "Smith" (B-PER) = two people, not "John Smith"
+        """
+        words = [
+            {
+                "tokens": ["Berlin"],
+                "labels": ["B-LOC"],
+                "start_token": 1,
+                "end_token": 1,
+            },
+            {
+                "tokens": ["Paris"],
+                "labels": ["B-LOC"],  # New B-tag = new entity
+                "start_token": 2,
+                "end_token": 2,
+            },
+        ]
+
+        entities = extractor._aggregate_words_into_entities(words)
+
+        # Should create TWO separate location entities
+        assert len(entities) == 2
+        assert entities[0]["label"] == "LOC"
+        assert entities[0]["tokens"] == ["Berlin"]
+        assert entities[1]["label"] == "LOC"
+        assert entities[1]["tokens"] == ["Paris"]
+
+    def test_aggregate_multiple_consecutive_same_type(self, extractor):
+        """Test three consecutive entities of same type"""
+        words = [
+            {"tokens": ["John"], "labels": ["B-PER"], "start_token": 1, "end_token": 1},
+            {"tokens": ["Paul"], "labels": ["B-PER"], "start_token": 2, "end_token": 2},
+            {"tokens": ["George"], "labels": ["B-PER"], "start_token": 3, "end_token": 3},
+        ]
+
+        entities = extractor._aggregate_words_into_entities(words)
+
+        # Should create THREE separate person entities
+        assert len(entities) == 3
+        assert all(e["label"] == "PER" for e in entities)
+        assert entities[0]["tokens"] == ["John"]
+        assert entities[1]["tokens"] == ["Paul"]
+        assert entities[2]["tokens"] == ["George"]
+
+    def test_aggregate_b_tag_followed_by_i_tag(self, extractor):
+        """Test standard case: B- followed by I- should merge"""
+        words = [
+            {"tokens": ["New"], "labels": ["B-LOC"], "start_token": 1, "end_token": 1},
+            {"tokens": ["York"], "labels": ["I-LOC"], "start_token": 2, "end_token": 2},
+        ]
+
+        entities = extractor._aggregate_words_into_entities(words)
+
+        # Should create ONE entity
+        assert len(entities) == 1
+        assert entities[0]["label"] == "LOC"
+        assert entities[0]["tokens"] == ["New", "York"]
+
+    def test_aggregate_consecutive_organizations(self, extractor):
+        """Test consecutive B-ORG tags create separate organization entities"""
+        words = [
+            {"tokens": ["Microsoft"], "labels": ["B-ORG"], "start_token": 1, "end_token": 1},
+            {"tokens": ["Apple"], "labels": ["B-ORG"], "start_token": 2, "end_token": 2},
+            {"tokens": ["Google"], "labels": ["B-ORG"], "start_token": 3, "end_token": 3},
+        ]
+
+        entities = extractor._aggregate_words_into_entities(words)
+
+        # Should create THREE separate organization entities
+        assert len(entities) == 3
+        assert all(e["label"] == "ORG" for e in entities)
+        assert entities[0]["tokens"] == ["Microsoft"]
+        assert entities[1]["tokens"] == ["Apple"]
+        assert entities[2]["tokens"] == ["Google"]
+
+    def test_aggregate_consecutive_misc(self, extractor):
+        """Test consecutive B-MISC tags create separate miscellaneous entities"""
+        words = [
+            {"tokens": ["iPhone"], "labels": ["B-MISC"], "start_token": 1, "end_token": 1},
+            {"tokens": ["iPad"], "labels": ["B-MISC"], "start_token": 2, "end_token": 2},
+        ]
+
+        entities = extractor._aggregate_words_into_entities(words)
+
+        # Should create TWO separate MISC entities
+        assert len(entities) == 2
+        assert all(e["label"] == "MISC" for e in entities)
+        assert entities[0]["tokens"] == ["iPhone"]
+        assert entities[1]["tokens"] == ["iPad"]
+
+    def test_aggregate_all_entity_types(self, extractor):
+        """Test all four entity types: PER, ORG, LOC, MISC"""
+        words = [
+            {"tokens": ["John"], "labels": ["B-PER"], "start_token": 1, "end_token": 1},
+            {"tokens": ["Apple"], "labels": ["B-ORG"], "start_token": 2, "end_token": 2},
+            {"tokens": ["Paris"], "labels": ["B-LOC"], "start_token": 3, "end_token": 3},
+            {"tokens": ["iPhone"], "labels": ["B-MISC"], "start_token": 4, "end_token": 4},
+        ]
+
+        entities = extractor._aggregate_words_into_entities(words)
+
+        assert len(entities) == 4
+        assert entities[0]["label"] == "PER"
+        assert entities[1]["label"] == "ORG"
+        assert entities[2]["label"] == "LOC"
+        assert entities[3]["label"] == "MISC"
+
+    def test_aggregate_malformed_i_without_b(self, extractor):
+        """
+        Test handling of malformed BIO sequence: I- tag without preceding B- tag.
+
+        Should treat I-tag as start of new entity (graceful degradation).
+        """
+        words = [
+            {
+                "tokens": ["Smith"],
+                "labels": ["I-PER"],  # Malformed: I- without B-
+                "start_token": 1,
+                "end_token": 1,
+            },
+        ]
+
+        entities = extractor._aggregate_words_into_entities(words)
+
+        # Should still create an entity (graceful handling)
+        assert len(entities) == 1
+        assert entities[0]["label"] == "PER"
+        assert entities[0]["tokens"] == ["Smith"]
+
+    def test_aggregate_all_o_tags(self, extractor):
+        """Test sequence with no entities (all O tags)"""
+        words = [
+            {"tokens": ["the"], "labels": ["O"], "start_token": 1, "end_token": 1},
+            {"tokens": ["quick"], "labels": ["O"], "start_token": 2, "end_token": 2},
+            {"tokens": ["brown"], "labels": ["O"], "start_token": 3, "end_token": 3},
+        ]
+
+        entities = extractor._aggregate_words_into_entities(words)
+
+        # Should create NO entities
+        assert len(entities) == 0
+
+    def test_group_tokens_entity_at_start(self, extractor):
+        """Test entity at very start of sequence (after [CLS])"""
+        tokens = ["[CLS]", "Apple", "is", "great", "[SEP]"]
+        labels = ["O", "B-ORG", "O", "O", "O"]
+        attention_mask = np.array([1, 1, 1, 1, 1])
+
+        words = extractor._group_tokens_into_words(tokens, labels, attention_mask)
+
+        # Should handle entity at start correctly
+        assert len(words) == 3  # "Apple", "is", "great"
+        assert words[0]["tokens"] == ["Apple"]
+        assert words[0]["labels"] == ["B-ORG"]
+
+    def test_group_tokens_entity_at_end(self, extractor):
+        """Test entity at very end of sequence (before [SEP])"""
+        tokens = ["[CLS]", "I", "like", "Apple", "[SEP]"]
+        labels = ["O", "O", "O", "B-ORG", "O"]
+        attention_mask = np.array([1, 1, 1, 1, 1])
+
+        words = extractor._group_tokens_into_words(tokens, labels, attention_mask)
+
+        # Should handle entity at end correctly
+        assert len(words) == 3  # "I", "like", "Apple"
+        assert words[2]["tokens"] == ["Apple"]
+        assert words[2]["labels"] == ["B-ORG"]
+
+    def test_group_tokens_empty_after_special_tokens(self, extractor):
+        """Test sequence with only special tokens"""
+        tokens = ["[CLS]", "[SEP]"]
+        labels = ["O", "O"]
+        attention_mask = np.array([1, 1])
+
+        words = extractor._group_tokens_into_words(tokens, labels, attention_mask)
+
+        # Should return empty list (no real tokens)
+        assert len(words) == 0
+
 
 # ============================================================================
 # Unit Tests: _deduplicate_entities
@@ -653,6 +839,142 @@ class TestEndToEndInference:
         if apple_count_no_dedup > apple_count_with_dedup:
             # Verify at least one duplicate was removed
             assert len(formatted_with_dedup) < len(formatted_no_dedup)
+
+    def test_consecutive_locations_real_inference(self):
+        """
+        Test that consecutive locations are detected as SEPARATE entities.
+
+        According to BIO scheme: B-LOC after B-LOC = two separate locations.
+        Example: "Berlin to Paris to London" should be 3 locations, not 1.
+        """
+        text = "I traveled from Berlin to Paris to London last summer."
+
+        entities = distilbert_ner.predict_entities(text)
+        locations = [e for e in entities if e["label"] == "LOC"]
+
+        # Should detect at least 2-3 separate location entities
+        # (model might miss some, but should NOT merge them into one)
+        assert len(locations) >= 2, f"Expected multiple locations, got: {locations}"
+
+        # Verify they are separate entities with different text
+        location_texts = [e["text"].strip() for e in locations]
+        assert len(set(location_texts)) >= 2, f"Locations should be distinct: {location_texts}"
+
+        # Common case: should detect "Berlin", "Paris", "London" as separate
+        if len(locations) == 3:
+            assert "Berlin" in location_texts
+            assert "Paris" in location_texts
+            assert "London" in location_texts
+
+    def test_consecutive_people_list_real_inference(self):
+        """
+        Test that people in a list are detected as separate entities.
+
+        Example: "John, Paul, George" should be 3 people, not 1 merged entity.
+        """
+        text = "The meeting included John, Paul, and George from the team."
+
+        entities = distilbert_ner.predict_entities(text)
+        people = [e for e in entities if e["label"] == "PER"]
+
+        # Should detect multiple separate person entities
+        assert len(people) >= 2, f"Expected multiple people, got: {people}"
+
+        # Verify they are separate with different names
+        person_names = [e["text"].strip() for e in people]
+        assert len(set(person_names)) >= 2, f"People should be distinct: {person_names}"
+
+    def test_consecutive_organizations_real_inference(self):
+        """
+        Test that consecutive organizations are detected separately.
+
+        Example: "Microsoft, Apple, Google" should be 3 orgs, not 1.
+        """
+        text = "Microsoft, Apple, and Google are the top tech companies."
+
+        entities = distilbert_ner.predict_entities(text)
+        orgs = [e for e in entities if e["label"] == "ORG"]
+
+        # Should detect multiple organizations
+        assert len(orgs) >= 2, f"Expected multiple organizations, got: {orgs}"
+
+        # Verify they are distinct
+        org_names = [e["text"].strip() for e in orgs]
+        assert len(set(org_names)) >= 2, f"Organizations should be distinct: {org_names}"
+
+    def test_entity_at_sentence_start_real_inference(self):
+        """Test that entities at the start of a sentence are detected correctly"""
+        text = "Apple announced new products today."
+
+        entities = distilbert_ner.predict_entities(text)
+
+        # Should detect at least one entity (Apple)
+        assert len(entities) >= 1
+
+        # First entity should be Apple (organization)
+        first_entity = entities[0]
+        assert "Apple" in first_entity["text"]
+        assert first_entity["label"] == "ORG"
+
+    def test_entity_at_sentence_end_real_inference(self):
+        """Test that entities at the end of a sentence are detected correctly"""
+        text = "The new CEO is Tim Cook."
+
+        entities = distilbert_ner.predict_entities(text)
+        people = [e for e in entities if e["label"] == "PER"]
+
+        # Should detect Tim Cook at the end
+        assert len(people) >= 1
+        assert "Cook" in people[0]["text"] or "Tim Cook" in people[0]["text"]
+
+    def test_mixed_entity_types_consecutive_real_inference(self):
+        """
+        Test consecutive entities of DIFFERENT types.
+
+        Example: "Apple CEO Tim Cook" has ORG immediately followed by PER.
+        """
+        text = "Apple CEO Tim Cook announced the new product."
+
+        entities = distilbert_ner.predict_entities(text)
+
+        # Should detect both organization and person
+        orgs = [e for e in entities if e["label"] == "ORG"]
+        people = [e for e in entities if e["label"] == "PER"]
+
+        assert len(orgs) >= 1, "Should detect Apple (ORG)"
+        assert len(people) >= 1, "Should detect Tim Cook (PER)"
+
+        # Verify they are NOT merged together
+        org_texts = [e["text"] for e in orgs]
+        person_texts = [e["text"] for e in people]
+
+        # Apple should be in orgs, not people
+        assert any("Apple" in text for text in org_texts)
+        # Tim/Cook should be in people, not orgs
+        assert any("Tim" in text or "Cook" in text for text in person_texts)
+
+    def test_all_entity_types_in_one_sentence_real_inference(self):
+        """Test detection of all four entity types in a single sentence"""
+        text = "Tim Cook visited Paris to meet with UNESCO about the iPhone release."
+
+        entities = distilbert_ner.predict_entities(text)
+
+        # Collect entities by type
+        by_type = {}
+        for entity in entities:
+            label = entity["label"]
+            if label not in by_type:
+                by_type[label] = []
+            by_type[label].append(entity["text"])
+
+        # Should ideally detect:
+        # - PER: Tim Cook
+        # - LOC: Paris
+        # - ORG: UNESCO
+        # - MISC: iPhone (maybe)
+
+        # At minimum, should detect at least 2 different entity types
+        assert len(by_type) >= 2, f"Expected multiple entity types, got: {by_type}"
 
 
 # ============================================================================

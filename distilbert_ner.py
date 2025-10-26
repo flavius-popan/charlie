@@ -46,16 +46,17 @@ HF_MODEL_REPO = "onnx-community/distilbert-NER-ONNX"
 HF_MODEL_FILE = "onnx/model.onnx"
 
 # Label mapping from model config (https://huggingface.co/dslim/distilbert-NER)
+# According to CoNLL-2003 BIO tagging scheme used by this model
 ID2LABEL = {
-    0: "O",  # Outside any entity
-    1: "B-PER",  # Beginning of person name
-    2: "I-PER",  # Inside person name
-    3: "B-ORG",  # Beginning of organization
-    4: "I-ORG",  # Inside organization
-    5: "B-LOC",  # Beginning of location
-    6: "I-LOC",  # Inside location
-    7: "B-MISC",  # Beginning of miscellaneous entity
-    8: "I-MISC",  # Inside miscellaneous entity
+    0: "O",  # Outside of a named entity
+    1: "B-PER",  # Beginning of a person's name right after another person's name
+    2: "I-PER",  # Person's name
+    3: "B-ORG",  # Beginning of an organization right after another organization
+    4: "I-ORG",  # Organization
+    5: "B-LOC",  # Beginning of a location right after another location
+    6: "I-LOC",  # Location
+    7: "B-MISC",  # Beginning of a miscellaneous entity right after another miscellaneous entity
+    8: "I-MISC",  # Miscellaneous entity
 }
 
 # Label expansion for human-readable output
@@ -275,17 +276,13 @@ class EntityExtractor:
             )
 
             # Check if we should merge with previous entity
+            # According to BIO scheme:
+            # - B- prefix = Beginning of NEW entity (do NOT merge)
+            # - I- prefix = Inside/continuation of entity (merge with previous)
             should_merge = (
                 current_entity
                 and current_entity["label"] == entity_type
-                and (
-                    first_label.startswith("I-")
-                    or all(
-                        l.startswith(f"B-{entity_type}")
-                        or l.startswith(f"I-{entity_type}")
-                        for l in word["labels"]
-                    )
-                )
+                and first_label.startswith("I-")
             )
 
             if should_merge:
