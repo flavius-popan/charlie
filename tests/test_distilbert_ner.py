@@ -186,6 +186,78 @@ class TestEntityExtractor:
         assert entities[1]["label"] == "LOC"
         assert entities[1]["tokens"] == ["Seattle"]
 
+    def test_group_tokens_with_confidence(self, extractor):
+        """Test grouping tokens with confidence scores"""
+        tokens = ["[CLS]", "Apple", "Inc", "[SEP]"]
+        labels = ["O", "B-ORG", "I-ORG", "O"]
+        attention_mask = np.array([1, 1, 1, 1])
+        # Mock probabilities and label IDs
+        probabilities = np.array([
+            [0.9, 0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],  # [CLS]
+            [0.0, 0.99, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],  # Apple -> B-ORG
+            [0.0, 0.0, 0.98, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],  # Inc -> I-ORG
+            [0.9, 0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],  # [SEP]
+        ])
+        label_ids = np.array([0, 1, 2, 0])
+
+        words = extractor._group_tokens_into_words(
+            tokens, labels, attention_mask, probabilities, label_ids
+        )
+
+        assert len(words) == 2
+        assert words[0]["confidences"] == [0.99]
+        assert words[1]["confidences"] == [0.98]
+
+    def test_aggregate_with_confidence(self, extractor):
+        """Test that confidence is calculated as mean for multi-token entities"""
+        words = [
+            {
+                "tokens": ["Apple"],
+                "labels": ["B-ORG"],
+                "start_token": 1,
+                "end_token": 1,
+                "confidences": [0.99],
+            },
+            {
+                "tokens": ["Inc"],
+                "labels": ["I-ORG"],
+                "start_token": 2,
+                "end_token": 2,
+                "confidences": [0.97],
+            },
+        ]
+
+        entities = extractor._aggregate_words_into_entities(words)
+
+        assert len(entities) == 1
+        assert "confidence" in entities[0]
+        # Mean of [0.99, 0.97] = 0.98
+        assert abs(entities[0]["confidence"] - 0.98) < 0.001
+
+    def test_aggregate_confidence_saved_before_O_tag(self, extractor):
+        """Test that confidence is calculated when entity ends with O tag"""
+        words = [
+            {
+                "tokens": ["Apple"],
+                "labels": ["B-ORG"],
+                "start_token": 1,
+                "end_token": 1,
+                "confidences": [0.95],
+            },
+            {
+                "tokens": ["in"],
+                "labels": ["O"],
+                "start_token": 2,
+                "end_token": 2,
+            },
+        ]
+
+        entities = extractor._aggregate_words_into_entities(words)
+
+        assert len(entities) == 1
+        assert "confidence" in entities[0]
+        assert entities[0]["confidence"] == 0.95
+
 
 # ============================================================================
 # Unit Tests: format_entities
@@ -222,7 +294,7 @@ class TestFormatEntities:
             "Microsoft (Organization)",
             "Satya Nadella (Person)",
             "Seattle (Location)",
-            "AI Summit (Miscellaneous)",
+            "AI Summit",  # MISC returns plain text
         ]
 
     def test_format_empty_list(self):
@@ -244,6 +316,62 @@ class TestFormatEntities:
         result = distilbert_ner.format_entities(entities)
         assert result == ["First", "Second", "Third"]
 
+    def test_format_with_confidence(self):
+        """Test formatting entities with confidence scores"""
+        entities = [
+            {"text": "Microsoft", "label": "ORG", "confidence": 0.9876},
+            {"text": "Satya Nadella", "label": "PER", "confidence": 0.9234},
+            {"text": "Seattle", "label": "LOC", "confidence": 0.9567},
+        ]
+
+        result = distilbert_ner.format_entities(
+            entities, include_labels=True, include_confidence=True
+        )
+
+        assert result == [
+            "Microsoft (entity_type:Organization, conf:0.99)",
+            "Satya Nadella (entity_type:Person, conf:0.92)",
+            "Seattle (entity_type:Location, conf:0.96)",
+        ]
+
+    def test_format_misc_always_plain_text(self):
+        """Test that MISC entities always return plain text, even with labels/confidence"""
+        entities = [
+            {"text": "Microsoft", "label": "ORG", "confidence": 0.99},
+            {"text": "iPhone 15", "label": "MISC", "confidence": 0.85},
+            {"text": "Nobel Prize", "label": "MISC", "confidence": 0.95},
+        ]
+
+        # With labels only
+        result = distilbert_ner.format_entities(entities, include_labels=True)
+        assert result == [
+            "Microsoft (Organization)",
+            "iPhone 15",  # MISC: plain text
+            "Nobel Prize",  # MISC: plain text
+        ]
+
+        # With labels and confidence
+        result = distilbert_ner.format_entities(
+            entities, include_labels=True, include_confidence=True
+        )
+        assert result == [
+            "Microsoft (entity_type:Organization, conf:0.99)",
+            "iPhone 15",  # MISC: plain text, no metadata
+            "Nobel Prize",  # MISC: plain text, no metadata
+        ]
+
+    def test_format_confidence_requires_labels(self):
+        """Test that confidence without labels still returns plain text"""
+        entities = [
+            {"text": "Microsoft", "label": "ORG", "confidence": 0.99},
+        ]
+
+        # Confidence without labels should be ignored
+        result = distilbert_ner.format_entities(
+            entities, include_labels=False, include_confidence=True
+        )
+        assert result == ["Microsoft"]
+
 
 # ============================================================================
 # Integration Tests: End-to-End Inference
@@ -264,13 +392,17 @@ class TestEndToEndInference:
         # Verify we got entities
         assert len(entities) > 0
 
-        # Verify structure of entities
+        # Verify structure of entities (now includes confidence)
         for entity in entities:
             assert "text" in entity
             assert "label" in entity
             assert "start_token" in entity
             assert "end_token" in entity
             assert "tokens" in entity
+            assert "confidence" in entity
+            # Confidence should be a float between 0 and 1
+            assert isinstance(entity["confidence"], float)
+            assert 0.0 <= entity["confidence"] <= 1.0
 
         # Verify expected entities (may vary based on model)
         entity_texts = [e["text"] for e in entities]
@@ -285,19 +417,61 @@ class TestEndToEndInference:
         entities = distilbert_ner.predict_entities(text)
         plain_texts = distilbert_ner.format_entities(entities, include_labels=False)
         labeled_texts = distilbert_ner.format_entities(entities, include_labels=True)
+        confidence_texts = distilbert_ner.format_entities(
+            entities, include_labels=True, include_confidence=True
+        )
 
         # Verify formatting works
         assert len(plain_texts) == len(entities)
         assert len(labeled_texts) == len(entities)
+        assert len(confidence_texts) == len(entities)
 
-        # Verify labels are expanded
-        for labeled in labeled_texts:
-            assert "(" in labeled and ")" in labeled
-            # Check for expanded labels
-            assert any(
-                exp in labeled
-                for exp in ["Organization", "Person", "Location", "Miscellaneous"]
+        # Verify labels are expanded (but MISC returns plain text)
+        for entity, labeled in zip(entities, labeled_texts):
+            if entity["label"] == "MISC":
+                # MISC should be plain text
+                assert "(" not in labeled
+            else:
+                # PER/ORG/LOC should have labels
+                assert "(" in labeled and ")" in labeled
+                assert any(
+                    exp in labeled
+                    for exp in ["Organization", "Person", "Location"]
+                )
+
+        # Verify confidence formatting (but MISC returns plain text)
+        for entity, conf_text in zip(entities, confidence_texts):
+            if entity["label"] == "MISC":
+                # MISC should be plain text
+                assert "entity_type:" not in conf_text
+                assert "conf:" not in conf_text
+            else:
+                # PER/ORG/LOC should have confidence
+                assert "entity_type:" in conf_text
+                assert "conf:" in conf_text
+
+    def test_misc_entity_handling(self):
+        """Test that MISC entities are included but without metadata"""
+        text = "I bought an iPhone 15 and won the Nobel Prize."
+
+        entities = distilbert_ner.predict_entities(text)
+
+        # Check if we detected any MISC entities
+        misc_entities = [e for e in entities if e["label"] == "MISC"]
+
+        if misc_entities:
+            # Format with labels and confidence
+            formatted = distilbert_ner.format_entities(
+                entities, include_labels=True, include_confidence=True
             )
+
+            # MISC entities should appear as plain text
+            for entity, formatted_text in zip(entities, formatted):
+                if entity["label"] == "MISC":
+                    # Should be just the text, no metadata
+                    assert formatted_text == entity["text"]
+                    assert "entity_type:" not in formatted_text
+                    assert "conf:" not in formatted_text
 
 
 # ============================================================================

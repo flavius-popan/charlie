@@ -15,6 +15,9 @@ Usage:
     entities = predict_entities("Apple Inc. is in Cupertino.")
     texts = format_entities(entities)  # ["Apple Inc.", "Cupertino"]
     labeled = format_entities(entities, include_labels=True)  # ["Apple Inc. (Organization)", ...]
+    with_conf = format_entities(entities, include_labels=True, include_confidence=True)
+    # ["Apple Inc. (entity_type:Organization, conf:0.99)", ...]
+    # MISC entities return plain text without metadata: ["iPhone 15"]
 
     # As a script
     python distilbert-ner.py  # Starts interactive mode
@@ -56,6 +59,12 @@ LABEL_EXPANSION = {
     "LOC": "Location",
     "MISC": "Miscellaneous",
 }
+
+
+def softmax(logits: np.ndarray, axis: int = -1) -> np.ndarray:
+    """Compute softmax probabilities from logits"""
+    exp_logits = np.exp(logits - np.max(logits, axis=axis, keepdims=True))
+    return exp_logits / np.sum(exp_logits, axis=axis, keepdims=True)
 
 
 class ModelLoader:
@@ -152,15 +161,26 @@ class EntityExtractor:
         tokens: list[str],
         labels: list[str],
         attention_mask: np.ndarray,
+        probabilities: Optional[np.ndarray] = None,
+        label_ids: Optional[np.ndarray] = None,
     ) -> list[dict]:
         """
         Extract entities from BIO-tagged tokens with word-level aggregation.
 
         Uses 'first' aggregation strategy: groups consecutive tokens into words
         (using ## subword markers), then merges consecutive same-type entities.
+
+        Args:
+            tokens: List of token strings
+            labels: List of label strings (BIO tags)
+            attention_mask: Attention mask array
+            probabilities: Optional probability distribution over labels for each token
+            label_ids: Optional predicted label IDs for each token
         """
         # Group tokens into words and aggregate labels
-        words = self._group_tokens_into_words(tokens, labels, attention_mask)
+        words = self._group_tokens_into_words(
+            tokens, labels, attention_mask, probabilities, label_ids
+        )
 
         # Aggregate words into entities
         entities = self._aggregate_words_into_entities(words)
@@ -172,6 +192,8 @@ class EntityExtractor:
         tokens: list[str],
         labels: list[str],
         attention_mask: np.ndarray,
+        probabilities: Optional[np.ndarray] = None,
+        label_ids: Optional[np.ndarray] = None,
     ) -> list[dict]:
         """Group subword tokens into complete words"""
         words = []
@@ -193,16 +215,21 @@ class EntityExtractor:
                 current_word["tokens"].append(token)
                 current_word["labels"].append(label)
                 current_word["end_token"] = idx
+                if probabilities is not None and label_ids is not None:
+                    current_word["confidences"].append(probabilities[idx, label_ids[idx]])
             else:
                 # Start a new word
                 if current_word:
                     words.append(current_word)
-                current_word = {
+                word_data = {
                     "tokens": [token],
                     "labels": [label],
                     "start_token": idx,
                     "end_token": idx,
                 }
+                if probabilities is not None and label_ids is not None:
+                    word_data["confidences"] = [probabilities[idx, label_ids[idx]]]
+                current_word = word_data
 
         # Don't forget last word
         if current_word:
@@ -222,6 +249,12 @@ class EntityExtractor:
             if first_label == "O":
                 # Not an entity - save previous entity if exists
                 if current_entity:
+                    # Calculate mean confidence before saving
+                    if "confidences" in current_entity:
+                        current_entity["confidence"] = float(
+                            np.mean(current_entity["confidences"])
+                        )
+                        del current_entity["confidences"]
                     entities.append(current_entity)
                     current_entity = None
                 continue
@@ -248,19 +281,35 @@ class EntityExtractor:
                 # Extend current entity
                 current_entity["end_token"] = word["end_token"]
                 current_entity["tokens"].extend(word["tokens"])
+                if "confidences" in word:
+                    current_entity["confidences"].extend(word["confidences"])
             else:
                 # Save previous entity and start new one
                 if current_entity:
+                    # Calculate mean confidence before saving
+                    if "confidences" in current_entity:
+                        current_entity["confidence"] = float(
+                            np.mean(current_entity["confidences"])
+                        )
+                        del current_entity["confidences"]  # Remove intermediate list
                     entities.append(current_entity)
-                current_entity = {
+
+                entity_data = {
                     "label": entity_type,
                     "start_token": word["start_token"],
                     "end_token": word["end_token"],
                     "tokens": word["tokens"][:],
                 }
+                if "confidences" in word:
+                    entity_data["confidences"] = word["confidences"][:]
+                current_entity = entity_data
 
         # Don't forget last entity
         if current_entity:
+            # Calculate mean confidence for the final entity
+            if "confidences" in current_entity:
+                current_entity["confidence"] = float(np.mean(current_entity["confidences"]))
+                del current_entity["confidences"]  # Remove intermediate list
             entities.append(current_entity)
 
         return entities
@@ -309,7 +358,7 @@ def predict_entities(text: str) -> list[dict]:
 
     Returns:
         List of detected entities with their labels and positions.
-        Each entity is a dict with keys: 'text', 'label', 'start_token', 'end_token', 'tokens'
+        Each entity is a dict with keys: 'text', 'label', 'start_token', 'end_token', 'tokens', 'confidence'
     """
     session = _get_model_session()
     tokenizer = _get_tokenizer()
@@ -333,12 +382,17 @@ def predict_entities(text: str) -> list[dict]:
     logits = outputs[0]  # Shape: (1, MAX_LENGTH, num_labels)
     label_ids = np.argmax(logits[0], axis=-1)  # Shape: (MAX_LENGTH,)
 
+    # Convert logits to probabilities
+    probabilities = softmax(logits[0], axis=-1)  # Shape: (MAX_LENGTH, num_labels)
+
     # Decode tokens and labels
     tokens = tokenizer.convert_ids_to_tokens(input_ids[0])
     labels = [ID2LABEL[label_id] for label_id in label_ids]
 
-    # Extract entities from BIO tags
-    entities = extractor.extract(tokens, labels, attention_mask[0])
+    # Extract entities from BIO tags with confidence scores
+    entities = extractor.extract(
+        tokens, labels, attention_mask[0], probabilities, label_ids
+    )
 
     # Reconstruct entity text using tokenizer
     for entity in entities:
@@ -347,24 +401,40 @@ def predict_entities(text: str) -> list[dict]:
     return entities
 
 
-def format_entities(entities: list[dict], include_labels: bool = False) -> list[str]:
+def format_entities(
+    entities: list[dict], include_labels: bool = False, include_confidence: bool = False
+) -> list[str]:
     """
     Format entities as a list of strings.
 
     Args:
         entities: List of entity dicts from predict_entities()
         include_labels: If True, append label in parentheses like "Microsoft (Organization)"
+        include_confidence: If True, append confidence as decimal (requires include_labels=True)
 
     Returns:
-        List of entity text strings, optionally with labels
+        List of entity text strings, optionally with labels and confidence scores.
+        With confidence enabled, format is: "SpaceX (entity_type:Organization, conf:0.99)"
+        MISC entities are always returned as plain text (no metadata) to save tokens.
     """
     result = []
     for entity in entities:
         text = entity["text"]
+        label = entity["label"]
+
+        # MISC entities: always return plain text (metadata not useful)
+        if label == "MISC":
+            result.append(text)
+            continue
+
+        # PER/ORG/LOC: add metadata if requested
         if include_labels:
-            label = entity["label"]
             expanded_label = LABEL_EXPANSION.get(label, label)
-            text = f"{text} ({expanded_label})"
+            if include_confidence and "confidence" in entity:
+                confidence_val = entity["confidence"]
+                text = f"{text} (entity_type:{expanded_label}, conf:{confidence_val:.2f})"
+            else:
+                text = f"{text} ({expanded_label})"
         result.append(text)
     return result
 
@@ -380,7 +450,11 @@ def print_results(text: str, entities: list[dict]) -> None:
     else:
         for entity in entities:
             label = LABEL_EXPANSION.get(entity["label"], entity["label"])
-            print(f"  [{label}] {entity['text']}")
+            confidence_str = ""
+            if "confidence" in entity:
+                confidence_pct = entity["confidence"] * 100
+                confidence_str = f" ({confidence_pct:.1f}% confidence)"
+            print(f"  [{label}] {entity['text']}{confidence_str}")
 
     print()
 
