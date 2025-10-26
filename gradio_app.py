@@ -130,7 +130,7 @@ def extract_and_display(
 ):
     """Extract knowledge graph with NER fusion and generate visualization."""
     if not text.strip():
-        return None, None, None
+        return None, None
 
     try:
         # Step 1: Prepare entity hints based on toggle settings
@@ -167,11 +167,10 @@ def extract_and_display(
         return (
             path,
             json_output,
-            f"{json.dumps(entity_hints, indent=2) if entity_hints else 'None'}",
         )
 
     except Exception as e:
-        return None, f"Error: {str(e)}", None
+        return None, f"Error: {str(e)}"
 
 
 # Create Gradio interface
@@ -227,8 +226,13 @@ with gr.Blocks(title="KG Builder Demo") as demo:
         show_progress="hidden",
     )
 
-    # When extract button is clicked, use the cached NER entities
+    # When extract button is clicked, show hints first, then extract graph
     extract_btn.click(
+        fn=update_hints_preview,
+        inputs=[use_hints, include_labels, include_confidence, ner_entities_state],
+        outputs=[hints_sent],
+        show_progress="hidden",
+    ).then(
         fn=extract_and_display,
         inputs=[
             text_input,
@@ -237,18 +241,28 @@ with gr.Blocks(title="KG Builder Demo") as demo:
             include_confidence,
             ner_entities_state,
         ],
-        outputs=[graph_viz, json_output, hints_sent],
+        outputs=[graph_viz, json_output],
     )
 
     # Toggle dependent checkboxes based on use_hints and update preview
-    def update_checkbox_state(use_hints_value):
-        return gr.update(interactive=use_hints_value), gr.update(
-            interactive=use_hints_value
-        )
+    def update_checkbox_state(use_hints_value, labels_value, confidence_value):
+        """Disable interactivity and uncheck both dependent checkboxes when use_hints is disabled."""
+        if not use_hints_value:
+            # Disable and uncheck both
+            return (
+                gr.update(interactive=False, value=False),
+                gr.update(interactive=False, value=False),
+            )
+        else:
+            # Enable both, keep their current values
+            return (
+                gr.update(interactive=True, value=labels_value),
+                gr.update(interactive=True, value=confidence_value),
+            )
 
     use_hints.change(
         fn=update_checkbox_state,
-        inputs=[use_hints],
+        inputs=[use_hints, include_labels, include_confidence],
         outputs=[include_labels, include_confidence],
     ).then(
         fn=update_hints_preview,
@@ -257,16 +271,36 @@ with gr.Blocks(title="KG Builder Demo") as demo:
         show_progress="hidden",
     )
 
-    # Update hints preview when labels checkbox changes
+    # Auto-disable confidence when entity types is disabled, and update hints preview
+    def handle_labels_change(labels_value, confidence_value):
+        """If labels is disabled, auto-disable confidence since it depends on labels."""
+        if not labels_value and confidence_value:
+            return gr.update(value=False)  # Auto-disable confidence
+        return gr.update()  # No change
+
     include_labels.change(
+        fn=handle_labels_change,
+        inputs=[include_labels, include_confidence],
+        outputs=[include_confidence],
+    ).then(
         fn=update_hints_preview,
         inputs=[use_hints, include_labels, include_confidence, ner_entities_state],
         outputs=[hints_sent],
         show_progress="hidden",
     )
 
-    # Update hints preview when confidence checkbox changes
+    # Auto-enable entity types when confidence is enabled, and update hints preview
+    def handle_confidence_change(confidence_value, labels_value):
+        """If confidence is enabled but labels isn't, auto-enable labels."""
+        if confidence_value and not labels_value:
+            return gr.update(value=True)  # Auto-enable labels
+        return gr.update()  # No change
+
     include_confidence.change(
+        fn=handle_confidence_change,
+        inputs=[include_confidence, include_labels],
+        outputs=[include_labels],
+    ).then(
         fn=update_hints_preview,
         inputs=[use_hints, include_labels, include_confidence, ner_entities_state],
         outputs=[hints_sent],

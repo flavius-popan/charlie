@@ -410,8 +410,50 @@ def predict_entities(text: str) -> list[dict]:
     return entities
 
 
+def _deduplicate_entities(entities: list[dict]) -> list[dict]:
+    """
+    Deduplicate entities using case-insensitive matching and confidence averaging.
+
+    Args:
+        entities: List of entity dicts from predict_entities()
+
+    Returns:
+        Deduplicated list where duplicate entities (same text + label, case-insensitive)
+        have their confidence scores averaged.
+    """
+    # Group entities by (lowercase_text, label) key
+    entity_groups = {}
+
+    for entity in entities:
+        # Create case-insensitive key
+        key = (entity["text"].lower(), entity["label"])
+
+        if key not in entity_groups:
+            entity_groups[key] = []
+        entity_groups[key].append(entity)
+
+    # Merge duplicates by averaging confidence
+    deduplicated = []
+    for group in entity_groups.values():
+        # Take first occurrence for base data
+        merged = group[0].copy()
+
+        # Average confidence scores if present
+        if "confidence" in group[0]:
+            confidences = [e["confidence"] for e in group if "confidence" in e]
+            if confidences:
+                merged["confidence"] = float(np.mean(confidences))
+
+        deduplicated.append(merged)
+
+    return deduplicated
+
+
 def format_entities(
-    entities: list[dict], include_labels: bool = False, include_confidence: bool = False
+    entities: list[dict],
+    include_labels: bool = False,
+    include_confidence: bool = False,
+    deduplicate: bool = True
 ) -> list[str]:
     """
     Format entities as a list of strings.
@@ -420,12 +462,17 @@ def format_entities(
         entities: List of entity dicts from predict_entities()
         include_labels: If True, append label in parentheses like "Microsoft (Organization)"
         include_confidence: If True, append confidence as decimal (requires include_labels=True)
+        deduplicate: If True, remove duplicate entities (case-insensitive, averaging confidence)
 
     Returns:
         List of entity text strings, optionally with labels and confidence scores.
         With confidence enabled, format is: "SpaceX (entity_type:Organization, conf:0.99)"
         MISC entities are always returned as plain text (no metadata) to save tokens.
     """
+    # Deduplicate if requested
+    if deduplicate:
+        entities = _deduplicate_entities(entities)
+
     result = []
     for entity in entities:
         text = entity["text"]
