@@ -12,6 +12,8 @@ import json
 import tempfile
 import os
 from graphviz import Digraph
+import time
+import threading
 
 from dspy_outlines import OutlinesLM, OutlinesAdapter
 from distilbert_ner import predict_entities, format_entities
@@ -47,7 +49,7 @@ class ExtractKnowledgeGraph(dspy.Signature):
 
     text: str = dspy.InputField(desc="Text to extract entities and relationships from")
     entity_hints: Optional[List[str]] = dspy.InputField(
-        desc="NON-EXHAUSTIVE list of entity hints, there may be more",
+        desc="Clues for potential entities to find",
         default=None,
     )
     graph: KnowledgeGraph = dspy.OutputField(
@@ -58,11 +60,31 @@ class ExtractKnowledgeGraph(dspy.Signature):
 # Create predictor
 extractor = dspy.Predict(ExtractKnowledgeGraph)
 
+# Global debounce state
+_last_input_time = 0
+_input_lock = threading.Lock()
+
 
 def extract_ner_only(text: str):
-    """Extract NER entities and display them immediately."""
+    """Extract NER entities with 1 second debounce."""
+    global _last_input_time
+
     if not text.strip():
         return "Please enter some text.", None
+
+    # Record when this input arrived
+    with _input_lock:
+        current_time = time.time()
+        _last_input_time = current_time
+
+    # Wait for 1 second
+    time.sleep(1.0)
+
+    # Check if we're still the most recent input
+    with _input_lock:
+        if time.time() - _last_input_time < 0.95:  # Allow small timing variance
+            # Another input came in, abort this execution
+            return gr.update(), gr.update()
 
     try:
         # Extract entities using NER model
@@ -79,6 +101,24 @@ def extract_ner_only(text: str):
         return ner_output, ner_entities
     except Exception as e:
         return f"Error: {str(e)}", None
+
+
+def update_hints_preview(
+    use_hints: bool, include_labels: bool, include_confidence: bool, ner_entities
+):
+    """Update the hints preview based on current checkbox settings."""
+    if not use_hints or not ner_entities:
+        return "None"
+
+    try:
+        entity_hints = format_entities(
+            ner_entities,
+            include_labels=include_labels,
+            include_confidence=include_confidence and include_labels,
+        )
+        return f"{json.dumps(entity_hints, indent=2)}"
+    except Exception:
+        return "None"
 
 
 def extract_and_display(
@@ -127,7 +167,7 @@ def extract_and_display(
         return (
             path,
             json_output,
-            f"Hints sent to LLM: {json.dumps(entity_hints, indent=2) if entity_hints else 'None'}",
+            f"{json.dumps(entity_hints, indent=2) if entity_hints else 'None'}",
         )
 
     except Exception as e:
@@ -137,9 +177,7 @@ def extract_and_display(
 # Create Gradio interface
 with gr.Blocks(title="KG Builder Demo") as demo:
     gr.Markdown("# Charlie - Knowledge Graph Extraction")
-    gr.Markdown(
-        "**Model Fusion**: NER (DistilBERT-ONNX) + LLM (Qwen3-4B via DSPy+Outlines+MLX)"
-    )
+    gr.Markdown("**Model Fusion**: distilbert-NER x Qwen3-4B")
 
     # State to hold NER entities between steps
     ner_entities_state = gr.State(None)
@@ -154,51 +192,85 @@ with gr.Blocks(title="KG Builder Demo") as demo:
             use_hints = gr.Checkbox(
                 label="Use NER entity hints",
                 value=True,
-                info="Pass detected entities to LLM as hints",
+                info="ex: Microsoft",
             )
             include_labels = gr.Checkbox(
                 label="Include entity types in hints",
-                value=True,
-                info="e.g., 'Microsoft (Organization)' vs 'Microsoft'",
+                value=False,
+                info="ex: 'Microsoft (Organization)'",
             )
             include_confidence = gr.Checkbox(
                 label="Include confidence scores in hints",
                 value=False,
-                info="e.g., 'Microsoft (entity_type:Organization, conf:0.99)' - only works with entity types enabled",
+                info="ex: 'Microsoft (entity_type:Organization, conf:0.99)'",
             )
 
             extract_btn = gr.Button("Extract Knowledge Graph", variant="primary")
 
         with gr.Column():
-            ner_output = gr.Code(
-                label="NER Model Output (DistilBERT-ONNX)", language="json"
-            )
+            ner_output = gr.Code(label="distilbert-NER Output", language="json")
             hints_sent = gr.Code(label="Entity Hints Sent to LLM", language="json")
             graph_viz = gr.Image(label="Graph Visualization", type="filepath")
             json_output = gr.Code(label="Extracted Graph (JSON)", language="json")
 
-    # When text changes, extract NER immediately
+    # When text changes, extract NER with 1 second debounce
     text_input.change(
         fn=extract_ner_only,
         inputs=[text_input],
         outputs=[ner_output, ner_entities_state],
+        trigger_mode="always_last",
+        show_progress="hidden",
+    ).then(
+        fn=update_hints_preview,
+        inputs=[use_hints, include_labels, include_confidence, ner_entities_state],
+        outputs=[hints_sent],
+        show_progress="hidden",
     )
 
     # When extract button is clicked, use the cached NER entities
     extract_btn.click(
         fn=extract_and_display,
-        inputs=[text_input, use_hints, include_labels, include_confidence, ner_entities_state],
+        inputs=[
+            text_input,
+            use_hints,
+            include_labels,
+            include_confidence,
+            ner_entities_state,
+        ],
         outputs=[graph_viz, json_output, hints_sent],
     )
 
-    # Toggle dependent checkboxes based on use_hints
+    # Toggle dependent checkboxes based on use_hints and update preview
     def update_checkbox_state(use_hints_value):
-        return gr.update(interactive=use_hints_value), gr.update(interactive=use_hints_value)
+        return gr.update(interactive=use_hints_value), gr.update(
+            interactive=use_hints_value
+        )
 
     use_hints.change(
         fn=update_checkbox_state,
         inputs=[use_hints],
         outputs=[include_labels, include_confidence],
+    ).then(
+        fn=update_hints_preview,
+        inputs=[use_hints, include_labels, include_confidence, ner_entities_state],
+        outputs=[hints_sent],
+        show_progress="hidden",
+    )
+
+    # Update hints preview when labels checkbox changes
+    include_labels.change(
+        fn=update_hints_preview,
+        inputs=[use_hints, include_labels, include_confidence, ner_entities_state],
+        outputs=[hints_sent],
+        show_progress="hidden",
+    )
+
+    # Update hints preview when confidence checkbox changes
+    include_confidence.change(
+        fn=update_hints_preview,
+        inputs=[use_hints, include_labels, include_confidence, ner_entities_state],
+        outputs=[hints_sent],
+        show_progress="hidden",
     )
 
     # Examples
