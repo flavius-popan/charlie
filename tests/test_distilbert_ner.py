@@ -1,5 +1,5 @@
 """
-Tests for distilbert-ner module
+Tests for distilbert_ner module
 
 Structure:
 - Unit tests for EntityExtractor (mocked data)
@@ -7,22 +7,15 @@ Structure:
 - Integration test for end-to-end inference (uses actual model)
 """
 
-import numpy as np
-import pytest
-
-# Import the module
 import sys
 from pathlib import Path
 
-# Add parent directory to path to import distilbert-ner module
+# Add parent directory to path to import distilbert_ner module
 sys.path.insert(0, str(Path(__file__).parent.parent))
-import importlib.util
 
-spec = importlib.util.spec_from_file_location(
-    "distilbert_ner", Path(__file__).parent.parent / "distilbert-ner.py"
-)
-distilbert_ner = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(distilbert_ner)
+import numpy as np
+import pytest
+import distilbert_ner
 
 
 # ============================================================================
