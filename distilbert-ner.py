@@ -23,6 +23,12 @@ Usage:
     python distilbert-ner.py  # Starts interactive mode
 """
 
+import os
+
+# Suppress transformers warning about missing PyTorch/TensorFlow/Flax
+# We only use transformers for the tokenizer, inference is done with ONNX Runtime
+os.environ["TRANSFORMERS_VERBOSITY"] = "error"
+
 from pathlib import Path
 from typing import Optional
 import numpy as np
@@ -109,7 +115,9 @@ class ModelLoader:
         ModelLoader.ensure_downloaded(model_path)
 
         sess_options = ort.SessionOptions()
-        sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+        sess_options.graph_optimization_level = (
+            ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+        )
 
         session = ort.InferenceSession(
             model_path,
@@ -216,7 +224,9 @@ class EntityExtractor:
                 current_word["labels"].append(label)
                 current_word["end_token"] = idx
                 if probabilities is not None and label_ids is not None:
-                    current_word["confidences"].append(probabilities[idx, label_ids[idx]])
+                    current_word["confidences"].append(
+                        probabilities[idx, label_ids[idx]]
+                    )
             else:
                 # Start a new word
                 if current_word:
@@ -271,7 +281,8 @@ class EntityExtractor:
                 and (
                     first_label.startswith("I-")
                     or all(
-                        l.startswith(f"B-{entity_type}") or l.startswith(f"I-{entity_type}")
+                        l.startswith(f"B-{entity_type}")
+                        or l.startswith(f"I-{entity_type}")
                         for l in word["labels"]
                     )
                 )
@@ -308,7 +319,9 @@ class EntityExtractor:
         if current_entity:
             # Calculate mean confidence for the final entity
             if "confidences" in current_entity:
-                current_entity["confidence"] = float(np.mean(current_entity["confidences"]))
+                current_entity["confidence"] = float(
+                    np.mean(current_entity["confidences"])
+                )
                 del current_entity["confidences"]  # Remove intermediate list
             entities.append(current_entity)
 
@@ -325,9 +338,7 @@ def _get_model_session() -> ort.InferenceSession:
     """Get or create the ONNX model session (singleton)"""
     global _model_session
     if _model_session is None:
-        print("Loading ONNX model...")
         _model_session = ModelLoader.load_session()
-        print("✓ Model loaded")
     return _model_session
 
 
@@ -335,9 +346,7 @@ def _get_tokenizer() -> TokenizerWrapper:
     """Get or create the tokenizer (singleton)"""
     global _tokenizer
     if _tokenizer is None:
-        print("Loading tokenizer...")
         _tokenizer = TokenizerWrapper()
-        print("✓ Tokenizer loaded")
     return _tokenizer
 
 
@@ -432,68 +441,19 @@ def format_entities(
             expanded_label = LABEL_EXPANSION.get(label, label)
             if include_confidence and "confidence" in entity:
                 confidence_val = entity["confidence"]
-                text = f"{text} (entity_type:{expanded_label}, conf:{confidence_val:.2f})"
+                text = (
+                    f"{text} (entity_type:{expanded_label}, conf:{confidence_val:.2f})"
+                )
             else:
                 text = f"{text} ({expanded_label})"
         result.append(text)
     return result
 
 
-def print_results(text: str, entities: list[dict]) -> None:
-    """Pretty print the inference results"""
-    print(f"Input: {text}")
-    print(f"\nDetected {len(entities)} entities:")
-    print("-" * 60)
-
-    if not entities:
-        print("No entities detected")
-    else:
-        for entity in entities:
-            label = LABEL_EXPANSION.get(entity["label"], entity["label"])
-            confidence_str = ""
-            if "confidence" in entity:
-                confidence_pct = entity["confidence"] * 100
-                confidence_str = f" ({confidence_pct:.1f}% confidence)"
-            print(f"  [{label}] {entity['text']}{confidence_str}")
-
-    print()
-
-
 def main():
-    """Run example inferences and enter interactive mode"""
-    print("=" * 60)
-    print("ONNX DistilBERT-NER Inference Demo")
-    print("=" * 60)
-    print()
-
-    # Example 1: Standard entities
-    print("=" * 60)
-    print("Example 1: Standard Entities")
-    print("=" * 60)
-    text1 = "Apple Inc. is located in Cupertino, California."
-    entities1 = predict_entities(text1)
-    print_results(text1, entities1)
-
-    # Example 2: Novel names (not in vocabulary)
-    print("=" * 60)
-    print("Example 2: Novel Names (Testing Subword Handling)")
-    print("=" * 60)
-    text2 = "Xylophus Thrandor works at Quantum Synergetics in Neo Tokyo."
-    entities2 = predict_entities(text2)
-    print_results(text2, entities2)
-
-    # Example 3: Mixed entities
-    print("=" * 60)
-    print("Example 3: Multiple Entity Types")
-    print("=" * 60)
-    text3 = "Microsoft CEO Satya Nadella announced a partnership with OpenAI in Seattle."
-    entities3 = predict_entities(text3)
-    print_results(text3, entities3)
-
-    # Interactive mode
-    print("=" * 60)
-    print("Interactive Mode (Ctrl+C to exit)")
-    print("=" * 60)
+    # Load model at startup
+    _get_model_session()
+    _get_tokenizer()
 
     try:
         while True:
@@ -502,7 +462,19 @@ def main():
                 continue
 
             entities = predict_entities(text)
-            print_results(text, entities)
+
+            # Display results using format_entities
+            formatted = format_entities(
+                entities, include_labels=True, include_confidence=True
+            )
+            print(f"\nDetected {len(entities)} entities:")
+            print("-" * 60)
+            if formatted:
+                for entity_str in formatted:
+                    print(f"  {entity_str}")
+            else:
+                print("No entities detected")
+            print()
 
     except KeyboardInterrupt:
         print("\n\nExiting...")
