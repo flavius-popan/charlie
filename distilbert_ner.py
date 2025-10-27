@@ -59,13 +59,7 @@ ID2LABEL = {
     8: "I-MISC",  # Miscellaneous entity
 }
 
-# Label expansion for human-readable output
-LABEL_EXPANSION = {
-    "PER": "Person",
-    "ORG": "Organization",
-    "LOC": "Location",
-    "MISC": "Miscellaneous",
-}
+# No longer needed - using short labels directly (PER, ORG, LOC, MISC)
 
 
 def softmax(logits: np.ndarray, axis: int = -1) -> np.ndarray:
@@ -632,13 +626,16 @@ def format_entities(
 
     Args:
         entities: List of entity dicts from predict_entities()
-        include_labels: If True, append label in parentheses like "Microsoft (Organization)"
-        include_confidence: If True, append confidence as decimal (requires include_labels=True)
+        include_labels: If True, append label in brackets like "Microsoft [ORG]"
+        include_confidence: If True, append confidence as percentage (requires include_labels=True)
         deduplicate: If True, remove duplicate entities (case-insensitive, averaging confidence)
 
     Returns:
         List of entity text strings, optionally with labels and confidence scores.
-        With confidence enabled, format is: "SpaceX (entity_type:Organization, conf:0.99)"
+        Format examples:
+        - Plain: "Microsoft"
+        - With labels: "Microsoft [ORG]"
+        - With labels+confidence: "Microsoft [ORG:99%]"
         MISC entities are always returned as plain text (no metadata) to save tokens.
     """
     # Deduplicate if requested
@@ -657,14 +654,11 @@ def format_entities(
 
         # PER/ORG/LOC: add metadata if requested
         if include_labels:
-            expanded_label = LABEL_EXPANSION.get(label, label)
             if include_confidence and "confidence" in entity:
-                confidence_val = entity["confidence"]
-                text = (
-                    f"{text} (entity_type:{expanded_label}, conf:{confidence_val:.2f})"
-                )
+                confidence_pct = int(entity["confidence"] * 100)
+                text = f"{text} [{label}:{confidence_pct}%]"
             else:
-                text = f"{text} ({expanded_label})"
+                text = f"{text} [{label}]"
         result.append(text)
     return result
 
