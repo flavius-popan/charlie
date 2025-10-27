@@ -194,6 +194,9 @@ class EntityExtractor:
         # Aggregate words into entities
         entities = self._aggregate_words_into_entities(words)
 
+        # Merge fragmented entities (e.g., "G.I. Joe" split into ["G", ".", "I. Joe"])
+        entities = self._merge_fragmented_entities(entities, tokens)
+
         return entities
 
     def _group_tokens_into_words(
@@ -323,6 +326,111 @@ class EntityExtractor:
             entities.append(current_entity)
 
         return entities
+
+    def _merge_fragmented_entities(
+        self,
+        entities: list[dict],
+        tokens: list[str]
+    ) -> list[dict]:
+        """
+        Merge consecutive entities of the same type that are fragmented by punctuation.
+
+        This fixes cases like "G.I. Joe" being split into ["G", ".", "I. Joe"] as
+        three separate PER entities. When consecutive same-type entities are separated
+        by only punctuation tokens, they should be merged into one entity.
+
+        IMPORTANT: Only merges when there's clear evidence of fragmentation:
+        - Entities contain very short tokens (1-2 chars like "G", ".", "I")
+        - OR entities are separated by punctuation tokens
+
+        Args:
+            entities: List of entity dicts from _aggregate_words_into_entities()
+            tokens: Original token list to check what's between entities
+
+        Returns:
+            List of entities with fragmented same-type entities merged
+        """
+        if len(entities) <= 1:
+            return entities
+
+        merged = []
+        i = 0
+
+        while i < len(entities):
+            current = entities[i]
+
+            # Look ahead to find consecutive same-type entities that should be merged
+            j = i + 1
+            while j < len(entities):
+                next_entity = entities[j]
+
+                # Check if entities are the same type
+                if current["label"] != next_entity["label"]:
+                    break
+
+                # Check if entities are adjacent or very close (within 2 tokens)
+                gap = next_entity["start_token"] - current["end_token"]
+                if gap > 2:
+                    break
+
+                # Check if this looks like fragmentation that should be merged
+                should_merge = False
+
+                # Strategy 1: Check if either entity has very short tokens (fragments)
+                # Examples: "G", "I", "." (1-2 chars)
+                current_has_short_tokens = any(
+                    len(token.strip("##")) <= 2
+                    for token in current["tokens"]
+                )
+                next_has_short_tokens = any(
+                    len(token.strip("##")) <= 2
+                    for token in next_entity["tokens"]
+                )
+
+                # If both entities have short tokens, likely fragmented (e.g., "G" + "." + "I. Joe")
+                if current_has_short_tokens and next_has_short_tokens:
+                    should_merge = True
+
+                # Strategy 2: Check if gap between entities contains periods/dots
+                # (not commas or other separators - those are legitimate boundaries)
+                if gap > 0:
+                    gap_tokens = tokens[current["end_token"] + 1 : next_entity["start_token"]]
+                    # Remove special tokens
+                    gap_tokens = [t for t in gap_tokens if t not in ["[CLS]", "[SEP]", "[PAD]"]]
+
+                    if gap_tokens:
+                        # Check if all gap tokens are periods/dots (not commas or other punctuation)
+                        # This catches cases like "G" . "I" . "Joe" or "U" . "S" . "A"
+                        has_period_gap = all(
+                            token.strip("##") == "." for token in gap_tokens
+                        )
+
+                        if has_period_gap:
+                            should_merge = True
+
+                if not should_merge:
+                    break
+
+                # Merge current with next_entity
+                current["end_token"] = next_entity["end_token"]
+                current["tokens"].extend(next_entity["tokens"])
+
+                # Merge confidence (average)
+                if "confidence" in current and "confidence" in next_entity:
+                    current["confidence"] = (
+                        current["confidence"] + next_entity["confidence"]
+                    ) / 2
+
+                # Move to next entity to potentially merge
+                j += 1
+
+            # Skip all the entities we merged
+            i = j
+            merged.append(current)
+
+        # Reconstruct text for merged entities using tokenizer
+        # This will be done by the caller
+        return merged
 
 
 # Module-level singletons (lazy initialization)

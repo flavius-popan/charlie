@@ -1545,6 +1545,446 @@ class TestChunkingAndStride:
 
 
 # ============================================================================
+# Bug Tests: Entity Splitting with Dots and Delimiters
+# ============================================================================
+
+
+class TestEntitySplittingBugs:
+    """
+    Tests for entity splitting bugs with dots, spaces, and delimiters.
+
+    These tests currently FAIL and demonstrate issues where entities with
+    special characters (dots, periods) are incorrectly split into multiple entities.
+
+    KNOWN ISSUE: "G.I. Joe" is detected as 3 separate entities instead of 1.
+    """
+
+    def test_gi_joe_should_be_single_entity(self):
+        """
+        Test that "G.I. Joe" is recognized as a single person entity.
+
+        CURRENTLY FAILS: Returns ["G", ".", "I. Joe"] as 3 separate entities.
+        EXPECTED: Should return ["G.I. Joe"] as 1 entity.
+
+        Example from user report:
+        "So you don't have to be G.I. Joe while your civvies are getting washed."
+
+        Current incorrect output:
+        [
+          "G (entity_type:Person, conf:0.83)",
+          ". (entity_type:Person, conf:0.80)",
+          "I. Joe (entity_type:Person, conf:0.69)"
+        ]
+
+        Expected correct output:
+        ["G.I. Joe (entity_type:Person, conf:0.XX)"]
+        """
+        text = "So you don't have to be G.I. Joe while your civvies are getting washed."
+
+        entities = distilbert_ner.predict_entities(text)
+        person_entities = [e for e in entities if e["label"] == "PER"]
+
+        # Should detect exactly ONE person entity
+        assert len(person_entities) == 1, \
+            f"Expected 1 person entity, got {len(person_entities)}: {person_entities}"
+
+        # The entity should be "G.I. Joe" (with or without spaces/dots, but as ONE entity)
+        entity_text = person_entities[0]["text"].strip()
+
+        # The entity should contain all three components: G, I, and Joe
+        assert "G" in entity_text, f"Entity '{entity_text}' should contain 'G'"
+        assert "I" in entity_text, f"Entity '{entity_text}' should contain 'I'"
+        assert "Joe" in entity_text, f"Entity '{entity_text}' should contain 'Joe'"
+
+        # It should NOT be split (length should be reasonable for "G.I. Joe")
+        # If split, we'd get very short fragments like "G" or "."
+        assert len(entity_text) >= 5, \
+            f"Entity '{entity_text}' seems too short - likely split incorrectly"
+
+        # Periods should NOT be standalone entities
+        period_entities = [e for e in person_entities if e["text"].strip() in [".", ".."]]
+        assert len(period_entities) == 0, \
+            f"Periods should not be detected as entities: {period_entities}"
+
+    def test_abbreviations_with_dots_should_be_single_entities(self):
+        """
+        Test that abbreviated names with dots are recognized as single entities.
+
+        CURRENTLY FAILS: Entities like "J.K. Rowling", "T.S. Eliot", "C.S. Lewis"
+        may be split into multiple fragments.
+
+        EXPECTED: Each should be detected as a single person entity.
+        """
+        text = "J.K. Rowling wrote Harry Potter. T.S. Eliot wrote poetry. C.S. Lewis wrote Narnia."
+
+        entities = distilbert_ner.predict_entities(text)
+        person_entities = [e for e in entities if e["label"] == "PER"]
+
+        # Should detect 3 separate people
+        assert len(person_entities) >= 3, \
+            f"Expected at least 3 person entities, got {len(person_entities)}: {person_entities}"
+
+        # Each person entity should contain both initials and surname
+        # J.K. Rowling should have J, K, and Rowling
+        rowling_entities = [e for e in person_entities if "Rowling" in e["text"]]
+        assert len(rowling_entities) == 1, \
+            f"Should find exactly one entity for Rowling, got: {rowling_entities}"
+
+        rowling_text = rowling_entities[0]["text"]
+        assert "J" in rowling_text and "K" in rowling_text and "Rowling" in rowling_text, \
+            f"Rowling entity '{rowling_text}' should contain J, K, and Rowling"
+
+        # T.S. Eliot should have T, S, and Eliot
+        eliot_entities = [e for e in person_entities if "Eliot" in e["text"]]
+        assert len(eliot_entities) == 1, \
+            f"Should find exactly one entity for Eliot, got: {eliot_entities}"
+
+        eliot_text = eliot_entities[0]["text"]
+        assert "T" in eliot_text and "S" in eliot_text and "Eliot" in eliot_text, \
+            f"Eliot entity '{eliot_text}' should contain T, S, and Eliot"
+
+        # C.S. Lewis should have C, S, and Lewis
+        lewis_entities = [e for e in person_entities if "Lewis" in e["text"]]
+        assert len(lewis_entities) == 1, \
+            f"Should find exactly one entity for Lewis, got: {lewis_entities}"
+
+        lewis_text = lewis_entities[0]["text"]
+        assert "C" in lewis_text and "S" in lewis_text and "Lewis" in lewis_text, \
+            f"Lewis entity '{lewis_text}' should contain C, S, and Lewis"
+
+        # No periods should be standalone entities
+        period_only = [e for e in person_entities if e["text"].strip() in [".", ".."]]
+        assert len(period_only) == 0, \
+            f"Periods should not be standalone entities: {period_only}"
+
+    def test_titles_with_dots_should_merge_with_names(self):
+        """
+        Test that titles like "Dr.", "Mr.", "Mrs." merge with following names.
+
+        EXPECTED: "Dr. Smith" should be one entity, not ["Dr", ".", "Smith"]
+        """
+        text = "Dr. Smith met with Mr. Johnson and Mrs. Anderson at the conference."
+
+        entities = distilbert_ner.predict_entities(text)
+        person_entities = [e for e in entities if e["label"] == "PER"]
+
+        # Should detect 3 people
+        assert len(person_entities) >= 3, \
+            f"Expected at least 3 people, got {len(person_entities)}: {person_entities}"
+
+        # Each entity should contain the full name including title
+        entity_texts = [e["text"] for e in person_entities]
+
+        # Check that we have complete names (not fragments)
+        smith_found = any("Smith" in text for text in entity_texts)
+        johnson_found = any("Johnson" in text for text in entity_texts)
+        anderson_found = any("Anderson" in text for text in entity_texts)
+
+        assert smith_found, f"Should find Smith in entities: {entity_texts}"
+        assert johnson_found, f"Should find Johnson in entities: {entity_texts}"
+        assert anderson_found, f"Should find Anderson in entities: {entity_texts}"
+
+        # Periods should NOT be standalone person entities
+        period_entities = [e for e in person_entities if e["text"].strip() == "."]
+        assert len(period_entities) == 0, \
+            f"Period should not be a person entity: {period_entities}"
+
+    def test_usa_and_location_abbreviations(self):
+        """
+        Test that location abbreviations with dots are single entities.
+
+        EXPECTED: "U.S.A.", "U.K.", "U.S." should each be single location entities.
+        """
+        text = "The U.S.A. and the U.K. signed a treaty. The U.S. economy is growing."
+
+        entities = distilbert_ner.predict_entities(text)
+        location_entities = [e for e in entities if e["label"] == "LOC"]
+
+        # Should detect 2-3 location entities (U.S.A., U.K., possibly U.S.)
+        assert len(location_entities) >= 2, \
+            f"Expected at least 2 locations, got {len(location_entities)}: {location_entities}"
+
+        entity_texts = [e["text"] for e in location_entities]
+
+        # Check for complete abbreviations (not fragments)
+        # Each entity should have multiple characters
+        for entity in location_entities:
+            text = entity["text"].strip()
+            # Should be longer than a single letter or period
+            assert len(text) >= 2, \
+                f"Location entity '{text}' seems too short - likely a fragment"
+
+        # Periods should NOT be standalone location entities
+        period_entities = [e for e in location_entities if e["text"].strip() in [".", ".."]]
+        assert len(period_entities) == 0, \
+            f"Periods should not be location entities: {period_entities}"
+
+    def test_same_type_split_entities_should_merge_per(self):
+        """
+        Test that consecutive PERSON fragments with dots should merge into single entity.
+
+        SAME TYPE merging: When multiple consecutive PER entities have dots between them,
+        they should be merged into one entity (not separate people).
+
+        Examples:
+        - "G.I. Joe" → tokens ["G", ".", "I", ".", "Joe"] all tagged PER → should merge to 1 PER
+        - "J.R.R. Tolkien" → should be 1 PER, not 5+ fragments
+        """
+        test_cases = [
+            {
+                "text": "G.I. Joe was a famous action figure line.",
+                "expected_name": "G.I. Joe",
+                "must_contain": ["G", "I", "Joe"],
+                "min_length": 5
+            },
+            {
+                "text": "J.R.R. Tolkien wrote The Lord of the Rings.",
+                "expected_name": "J.R.R. Tolkien",
+                "must_contain": ["J", "R", "Tolkien"],
+                "min_length": 8
+            },
+            {
+                "text": "C.S. Lewis was friends with Tolkien.",
+                "expected_name": "C.S. Lewis",
+                "must_contain": ["C", "S", "Lewis"],
+                "min_length": 5
+            }
+        ]
+
+        for case in test_cases:
+            entities = distilbert_ner.predict_entities(case["text"])
+            person_entities = [e for e in entities if e["label"] == "PER"]
+
+            # Filter to just the entity we're testing (by checking if it contains key parts)
+            target_entities = [
+                e for e in person_entities
+                if any(part in e["text"] for part in case["must_contain"])
+            ]
+
+            # All fragments should be merged into ONE entity
+            assert len(target_entities) == 1, \
+                f"Expected 1 merged PER entity for '{case['expected_name']}', " \
+                f"got {len(target_entities)}: {target_entities}"
+
+            entity_text = target_entities[0]["text"]
+
+            # The entity should contain ALL required components
+            for part in case["must_contain"]:
+                assert part in entity_text, \
+                    f"Entity '{entity_text}' should contain '{part}' for {case['expected_name']}"
+
+            # Should be reasonably long (not a single-letter fragment)
+            assert len(entity_text) >= case["min_length"], \
+                f"Entity '{entity_text}' too short - likely split incorrectly (expected >={case['min_length']} chars)"
+
+    def test_same_type_split_entities_should_merge_loc(self):
+        """
+        Test that consecutive LOCATION fragments with dots should merge into single entity.
+
+        SAME TYPE merging: When multiple consecutive LOC entities have dots between them,
+        they should be merged into one location.
+        """
+        text = "The U.S.A. has strong ties with the U.K. and U.S. territories."
+
+        entities = distilbert_ner.predict_entities(text)
+        location_entities = [e for e in entities if e["label"] == "LOC"]
+
+        # Check each location entity is complete (not fragmented)
+        for entity in location_entities:
+            text = entity["text"].strip()
+
+            # No single-character location entities (would indicate splitting)
+            assert len(text) > 1, \
+                f"Location '{text}' is too short - likely a fragment from splitting"
+
+            # No standalone periods
+            assert text not in [".", "..", "..."], \
+                f"Standalone period '{text}' should not be a location entity"
+
+        # Should have 2-3 complete location entities (U.S.A., U.K., U.S.)
+        assert len(location_entities) >= 2, \
+            f"Expected at least 2 complete locations, got {len(location_entities)}: {location_entities}"
+
+    def test_same_type_split_entities_should_merge_org(self):
+        """
+        Test that organization abbreviations with dots should be single entities.
+
+        SAME TYPE merging: ORG entities with internal punctuation should not split.
+        """
+        text = "He works at I.B.M. and previously worked at A.T.&T. Corp."
+
+        entities = distilbert_ner.predict_entities(text)
+        org_entities = [e for e in entities if e["label"] == "ORG"]
+
+        # Should detect organizations
+        assert len(org_entities) >= 1, \
+            f"Expected at least 1 organization, got {len(org_entities)}: {org_entities}"
+
+        # Each org should be reasonably complete (not single letters)
+        for entity in org_entities:
+            text = entity["text"].strip()
+
+            # Organizations should be longer than 1 character
+            assert len(text) > 1, \
+                f"Organization '{text}' is too short - likely a fragment"
+
+            # No standalone periods as organizations
+            assert text not in [".", "..", "&"], \
+                f"Punctuation '{text}' should not be an organization entity"
+
+    def test_different_types_should_not_merge(self):
+        """
+        Test that adjacent entities of DIFFERENT types should remain separate.
+
+        DIFFERENT TYPE separation: This is CORRECT behavior that should be preserved.
+        A fix for same-type merging should NOT break this.
+
+        Examples:
+        - "Microsoft CEO" → ORG + PER (separate)
+        - "Seattle employee" → LOC + not-entity (separate)
+        - "U.S. Army" → LOC + ORG (separate)
+        """
+        test_cases = [
+            {
+                "text": "Microsoft CEO Satya Nadella announced the news.",
+                "expected_types": {"ORG", "PER"},
+                "org_text": "Microsoft",
+                "per_text": "Nadella"
+            },
+            {
+                "text": "Apple Inc. founder Steve Jobs lived in California.",
+                "expected_types": {"ORG", "PER", "LOC"},
+                "org_text": "Apple",
+                "per_text": "Jobs",
+                "loc_text": "California"
+            },
+            {
+                "text": "Tim Cook visited Seattle to meet with Microsoft executives.",
+                "expected_types": {"PER", "LOC", "ORG"},
+                "per_text": "Cook",
+                "loc_text": "Seattle",
+                "org_text": "Microsoft"
+            }
+        ]
+
+        for case in test_cases:
+            entities = distilbert_ner.predict_entities(case["text"])
+
+            # Verify we detected multiple entity types
+            detected_types = {e["label"] for e in entities}
+            assert case["expected_types"].issubset(detected_types), \
+                f"Expected types {case['expected_types']}, got {detected_types} in: {entities}"
+
+            # Verify specific entities are separate (not merged)
+            if "org_text" in case:
+                org_entities = [e for e in entities if e["label"] == "ORG"]
+                assert any(case["org_text"] in e["text"] for e in org_entities), \
+                    f"Should find separate ORG '{case['org_text']}' in: {entities}"
+
+            if "per_text" in case:
+                per_entities = [e for e in entities if e["label"] == "PER"]
+                assert any(case["per_text"] in e["text"] for e in per_entities), \
+                    f"Should find separate PER '{case['per_text']}' in: {entities}"
+
+            if "loc_text" in case:
+                loc_entities = [e for e in entities if e["label"] == "LOC"]
+                assert any(case["loc_text"] in e["text"] for e in loc_entities), \
+                    f"Should find separate LOC '{case['loc_text']}' in: {entities}"
+
+    def test_mixed_adjacent_same_and_different_types(self):
+        """
+        Test complex scenarios with both same-type merging and different-type separation.
+
+        This tests the interaction between:
+        1. Same-type entities with dots → SHOULD merge
+        2. Different-type entities adjacent → should NOT merge
+        """
+        text = "G.I. Joe visited Washington D.C. and met with U.S. officials from I.B.M. Corporation."
+
+        entities = distilbert_ner.predict_entities(text)
+
+        # G.I. Joe should be ONE person entity (PER-PER-PER merge)
+        person_entities = [e for e in entities if e["label"] == "PER"]
+        gi_joe_entities = [e for e in person_entities if "Joe" in e["text"] or "G" in e["text"]]
+
+        # Should have ONE entity containing G.I. Joe (not 3 separate PER entities)
+        # Note: This will fail until bug is fixed
+        joe_complete = [e for e in gi_joe_entities if "Joe" in e["text"] and "G" in e["text"]]
+        assert len(joe_complete) >= 1, \
+            f"G.I. Joe should be merged into one entity, got fragments: {gi_joe_entities}"
+
+        # Washington D.C. should be ONE location entity (LOC with punctuation)
+        location_entities = [e for e in entities if e["label"] == "LOC"]
+        washington_entities = [e for e in location_entities if "Washington" in e["text"]]
+
+        if washington_entities:
+            # If detected, should be complete (not fragmented)
+            assert len(washington_entities) <= 2, \
+                f"Washington D.C. should be 1-2 entities max, got: {washington_entities}"
+
+        # U.S. should be ONE location (LOC-LOC merge with dots)
+        us_entities = [e for e in location_entities if "U" in e["text"] and "S" in e["text"]]
+        if us_entities:
+            # Should be merged, not "U" + "." + "S" as separate entities
+            us_complete = [e for e in us_entities if len(e["text"].strip()) > 2]
+            assert len(us_complete) >= 1, \
+                f"U.S. should be complete, not fragmented: {us_entities}"
+
+        # I.B.M. should be ONE organization (ORG-ORG merge)
+        org_entities = [e for e in entities if e["label"] == "ORG"]
+        ibm_entities = [e for e in org_entities if "B" in e["text"]]
+
+        if ibm_entities:
+            # Should be reasonably complete
+            ibm_complete = [e for e in ibm_entities if len(e["text"].strip()) > 2]
+            assert len(ibm_complete) >= 1, \
+                f"I.B.M. should be complete, not fragmented: {ibm_entities}"
+
+        # But PER and LOC and ORG should be SEPARATE entities (different types)
+        entity_types = {e["label"] for e in entities}
+        assert len(entity_types) >= 2, \
+            f"Should have multiple entity types (PER, LOC, ORG), got: {entity_types}"
+
+    def test_single_letter_with_period_edge_cases(self):
+        """
+        Test edge cases with single letters followed by periods.
+
+        These are tricky because:
+        - "J." could be an initial (should merge with following name)
+        - "A" could be an article (not an entity)
+        - "I" could be a pronoun (not an entity)
+        """
+        text = "J. Edgar Hoover ran the F.B.I. in Washington."
+
+        entities = distilbert_ner.predict_entities(text)
+        person_entities = [e for e in entities if e["label"] == "PER"]
+
+        # J. Edgar Hoover should be ONE person
+        hoover_entities = [e for e in person_entities if "Hoover" in e["text"]]
+        assert len(hoover_entities) == 1, \
+            f"J. Edgar Hoover should be one entity, got: {hoover_entities}"
+
+        hoover_text = hoover_entities[0]["text"]
+
+        # Should contain J, Edgar, and Hoover (not split)
+        assert "Hoover" in hoover_text, f"Should contain Hoover: {hoover_text}"
+        # May or may not contain J. Edgar depending on how tokenizer handles it
+
+        # F.B.I. should be ONE organization
+        org_entities = [e for e in entities if e["label"] == "ORG"]
+
+        if org_entities:
+            # Check for FBI entity
+            fbi_entities = [e for e in org_entities if "B" in e["text"] or "FBI" in e["text"]]
+
+            if fbi_entities:
+                # Should not be single-letter fragments
+                for entity in fbi_entities:
+                    assert len(entity["text"].strip()) > 1, \
+                        f"FBI entity '{entity['text']}' is too short - likely a fragment"
+
+
+# ============================================================================
 # Test Configuration
 # ============================================================================
 
