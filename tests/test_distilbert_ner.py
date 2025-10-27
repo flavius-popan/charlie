@@ -986,13 +986,13 @@ class TestChunkingAndStride:
     """
     Tests for sliding window chunking to handle long text.
 
-    The model has MAX_LENGTH=128 tokens. For longer text, we use a sliding window
+    The model has MAX_LENGTH=512 tokens. For longer text, we use a sliding window
     with configurable stride to process overlapping chunks and merge results.
     """
 
     def test_single_chunk_short_text(self):
         """
-        Test that short text (< 128 tokens) works correctly with single chunk.
+        Test that short text (< 512 tokens) works correctly with single chunk.
 
         This is a regression test to ensure chunking doesn't break normal operation.
         """
@@ -1022,7 +1022,7 @@ class TestChunkingAndStride:
         """
         Test that text requiring multiple chunks extracts entities from all chunks.
 
-        This test uses a long multi-paragraph text that exceeds 128 tokens,
+        This test uses a long multi-paragraph text that exceeds 512 tokens,
         requiring the sliding window to process multiple chunks.
         """
         # Create text with entities distributed across ~260+ tokens (needs 3+ chunks)
@@ -1289,9 +1289,9 @@ class TestChunkingAndStride:
         This is a stress test: entities appearing exactly at the boundary
         between chunks should be captured correctly.
         """
-        # Create text where entity appears around the 128-token boundary
+        # Create text where entity appears around the 512-token boundary
         # Use repetitive text to reach boundary, then place entity
-        filler = "The quick brown fox jumps over the lazy dog. " * 15  # ~135 tokens
+        filler = "The quick brown fox jumps over the lazy dog. " * 60  # ~540 tokens
         text = filler + "Alice works at Microsoft in Seattle."
 
         entities = distilbert_ner.predict_entities(text)
@@ -1299,9 +1299,9 @@ class TestChunkingAndStride:
 
         # Should still find entities near/after the boundary
         assert any("Alice" in text for text in entity_texts), \
-            "Should find Alice even though it's past the 128-token boundary"
+            "Should find Alice even though it's past the 512-token boundary"
         assert any("Microsoft" in text for text in entity_texts), \
-            "Should find Microsoft even though it's past the 128-token boundary"
+            "Should find Microsoft even though it's past the 512-token boundary"
 
         # All should have confidence and no chunk metadata
         for entity in entities:
@@ -1328,6 +1328,220 @@ class TestChunkingAndStride:
         # Should find no entities (or very few false positives)
         assert len(entities) <= 2, \
             f"Expected no/few entities in text without names, got {len(entities)}: {entities}"
+
+    def test_entity_exactly_at_512_boundary(self):
+        """
+        Test entity extraction when an entity appears exactly at the 512-token boundary.
+
+        This is a critical edge case - entities appearing right at max_length should
+        be captured by the sliding window overlap.
+        """
+        from transformers import AutoTokenizer
+
+        tokenizer = AutoTokenizer.from_pretrained("distilbert-ner-onnx")
+
+        # Build text that reaches exactly ~510 tokens, then add entity
+        base = "The quick brown fox jumps over the lazy dog. "
+
+        # Calculate how many repetitions to get close to 510 tokens
+        base_tokens = len(tokenizer.tokenize(base))
+        repetitions = 510 // base_tokens
+
+        filler = base * repetitions
+
+        # Add entity right at the boundary
+        boundary_text = filler + "Alice works at Microsoft in Seattle."
+
+        # Verify total tokens
+        total_tokens = len(tokenizer.tokenize(boundary_text))
+        print(f"Total tokens: {total_tokens} (target: ~512)")
+
+        # Extract entities with max_length=512
+        entities = distilbert_ner.predict_entities(boundary_text, max_length=512, stride=256)
+        entity_texts = [e["text"] for e in entities]
+
+        # Should find entities even though they're near/past the 512 boundary
+        assert any("Alice" in text for text in entity_texts), \
+            f"Should find Alice at 512-token boundary. Found: {entity_texts}"
+        assert any("Microsoft" in text for text in entity_texts), \
+            f"Should find Microsoft at 512-token boundary. Found: {entity_texts}"
+
+    def test_entity_crosses_512_boundary(self):
+        """
+        Test entity that spans across the 512-token chunk boundary.
+
+        With stride=256, there's a 256-token overlap. An entity near token 500
+        should appear in both chunk 0 (tokens 0-512) and chunk 1 (tokens 256-768).
+        """
+        from transformers import AutoTokenizer
+
+        tokenizer = AutoTokenizer.from_pretrained("distilbert-ner-onnx")
+
+        # Build text to ~500 tokens, add multi-token entity, continue to ~520
+        base = "The system processes data efficiently and handles errors gracefully. "
+        base_tokens = len(tokenizer.tokenize(base))
+
+        # Get to ~500 tokens
+        repetitions = 500 // base_tokens
+        filler_before = base * repetitions
+
+        # Add entity that will straddle the boundary
+        entity_text = "The New York office coordinated with the San Francisco team. "
+
+        # Add more text after to push past 512
+        filler_after = base * 2
+
+        full_text = filler_before + entity_text + filler_after
+
+        total_tokens = len(tokenizer.tokenize(full_text))
+        print(f"Total tokens: {total_tokens} (should be > 512)")
+
+        # Extract with max_length=512, stride=256
+        entities = distilbert_ner.predict_entities(full_text, max_length=512, stride=256)
+        entity_texts = [e["text"] for e in entities]
+
+        # Should find locations even though they span the boundary
+        assert any("New York" in text for text in entity_texts), \
+            f"Should find 'New York' despite boundary crossing. Found: {entity_texts}"
+        assert any("San Francisco" in text for text in entity_texts), \
+            f"Should find 'San Francisco' despite boundary crossing. Found: {entity_texts}"
+
+        # Verify no duplicates due to overlap (deduplication should work)
+        ny_count = sum(1 for e in entities if "New York" in e["text"] and e["label"] == "LOC")
+        assert ny_count <= 1, f"New York should be deduplicated, found {ny_count} instances"
+
+    def test_text_just_under_512_tokens(self):
+        """
+        Test text with exactly 511 tokens (just under the limit).
+
+        Should process in a single chunk with no chunking overhead.
+        """
+        from transformers import AutoTokenizer
+
+        tokenizer = AutoTokenizer.from_pretrained("distilbert-ner-onnx")
+
+        # Build text to exactly 511 tokens
+        base = "Alice works at Microsoft. "
+        base_tokens = len(tokenizer.tokenize(base))
+
+        # Calculate repetitions to get ~511 tokens
+        target = 511
+        repetitions = target // base_tokens
+        text = base * repetitions
+
+        # Fine-tune to get exactly 511
+        current_tokens = len(tokenizer.tokenize(text))
+        while current_tokens < target:
+            text += "Bob works at Google. "
+            current_tokens = len(tokenizer.tokenize(text))
+
+        # Trim if we went over
+        while current_tokens > target:
+            text = " ".join(text.split()[:-1])
+            current_tokens = len(tokenizer.tokenize(text))
+
+        print(f"Text has {current_tokens} tokens (target: 511)")
+
+        # Should process without chunking
+        entities = distilbert_ner.predict_entities(text, max_length=512, stride=256)
+
+        # Should find entities
+        assert len(entities) > 0, "Should find entities in 511-token text"
+
+        # All should have confidence and no chunk artifacts
+        for entity in entities:
+            assert "confidence" in entity
+            assert "chunk_idx" not in entity
+
+    def test_text_just_over_512_tokens(self):
+        """
+        Test text with exactly 513 tokens (just over the limit).
+
+        Should require minimal chunking (2 chunks with stride=256).
+        """
+        from transformers import AutoTokenizer
+
+        tokenizer = AutoTokenizer.from_pretrained("distilbert-ner-onnx")
+
+        # Build text to exactly 513 tokens
+        base = "The meeting included representatives from various offices. "
+        base_tokens = len(tokenizer.tokenize(base))
+
+        # Build to ~513 tokens
+        target = 513
+        repetitions = target // base_tokens
+        text = base * repetitions
+
+        # Add specific entities at start and end
+        text = "Alice from Seattle started the meeting. " + text + "Bob from Chicago concluded the discussion."
+
+        current_tokens = len(tokenizer.tokenize(text))
+        print(f"Text has {current_tokens} tokens (target: 513)")
+
+        # Extract with chunking
+        entities = distilbert_ner.predict_entities(text, max_length=512, stride=256)
+        entity_texts = [e["text"] for e in entities]
+
+        # Should find entities from both start and end (across chunks)
+        assert any("Alice" in text or "Seattle" in text for text in entity_texts), \
+            "Should find Alice/Seattle from first chunk"
+        assert any("Bob" in text or "Chicago" in text for text in entity_texts), \
+            "Should find Bob/Chicago from second chunk"
+
+        # All should have confidence
+        for entity in entities:
+            assert "confidence" in entity
+            assert "chunk_idx" not in entity
+
+    def test_very_large_text_1000_plus_tokens(self):
+        """
+        Test text with 1000+ tokens requiring multiple chunks at 512 max_length.
+
+        Verifies that entities are extracted from early, middle, and late sections.
+        """
+        from transformers import AutoTokenizer
+
+        tokenizer = AutoTokenizer.from_pretrained("distilbert-ner-onnx")
+
+        # Build structured text with entities at different positions
+        paragraphs = []
+
+        # Early section (tokens 0-200)
+        paragraphs.append("Alice Johnson works at Microsoft in Seattle. " * 10)
+
+        # Middle section (tokens 400-600)
+        filler = "The system processes information and generates reports. " * 20
+        paragraphs.append(filler)
+        paragraphs.append("Bob Smith coordinates with the London office. " * 10)
+
+        # Late section (tokens 800-1000)
+        paragraphs.append(filler)
+        paragraphs.append("Carol Davis manages the Tokyo branch. " * 10)
+
+        text = " ".join(paragraphs)
+
+        total_tokens = len(tokenizer.tokenize(text))
+        print(f"Text has {total_tokens} tokens (target: 1000+)")
+
+        # Extract with max_length=512
+        entities = distilbert_ner.predict_entities(text, max_length=512, stride=256)
+        entity_texts = [e["text"] for e in entities]
+
+        # Verify extraction from all sections
+        assert any("Alice" in text or "Johnson" in text for text in entity_texts), \
+            "Should find Alice from early section (tokens 0-200)"
+        assert any("Bob" in text or "Smith" in text for text in entity_texts), \
+            "Should find Bob from middle section (tokens 400-600)"
+        assert any("Carol" in text or "Davis" in text for text in entity_texts), \
+            "Should find Carol from late section (tokens 800-1000)"
+
+        # Should find location entities across all sections
+        assert any("Seattle" in text for text in entity_texts), "Should find Seattle"
+        assert any("London" in text for text in entity_texts), "Should find London"
+        assert any("Tokyo" in text for text in entity_texts), "Should find Tokyo"
+
+        # Verify we got a substantial number of entities
+        assert len(entities) >= 6, f"Expected at least 6 entities from 1000+ token text, got {len(entities)}"
 
 
 # ============================================================================

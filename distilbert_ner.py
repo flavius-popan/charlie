@@ -39,7 +39,7 @@ from transformers import AutoTokenizer
 # Configuration
 MODEL_PATH = "distilbert-ner-onnx/onnx/model.onnx"
 TOKENIZER_PATH = "distilbert-ner-onnx"
-MAX_LENGTH = 128
+MAX_LENGTH = 512  # DistilBERT's max_position_embeddings limit
 
 # HuggingFace model repository
 HF_MODEL_REPO = "onnx-community/distilbert-NER-ONNX"
@@ -355,14 +355,14 @@ def _get_extractor() -> EntityExtractor:
     return _extractor
 
 
-def predict_entities(text: str, max_length: int = MAX_LENGTH, stride: int = 64) -> list[dict]:
+def predict_entities(text: str, max_length: int = MAX_LENGTH, stride: int = 256) -> list[dict]:
     """
     Run NER inference on input text with sliding window for long texts.
 
     Args:
         text: Input text to analyze
-        max_length: Maximum tokens per chunk (default: 128)
-        stride: Number of overlapping tokens between chunks (default: 64)
+        max_length: Maximum tokens per chunk (default: 512)
+        stride: Number of overlapping tokens between chunks (default: 256)
 
     Returns:
         List of detected entities with their labels and positions.
