@@ -34,7 +34,9 @@ class Node(BaseModel):
 class Edge(BaseModel):
     source: int = Field(description="Source node ID")
     target: int = Field(description="Target node ID")
-    label: str = Field(description="Type of relationship")
+    label: str = Field(
+        description="Relationship type as a short (3 words MAX) description with underscores between words"
+    )
     properties: dict = Field(default_factory=dict)
 
 
@@ -45,15 +47,18 @@ class KnowledgeGraph(BaseModel):
 
 # DSPy signature with optional entity hints
 class ExtractKnowledgeGraph(dspy.Signature):
-    """Extract knowledge graph of people and relationships."""
+    """Extract knowledge graph of people and relationships from a personal journal entry,
+    relative to the author's subjective experience."""
 
-    text: str = dspy.InputField(desc="Text to extract entities and relationships from")
-    entity_hints: Optional[List[str]] = dspy.InputField(
-        desc="Clues for potential entities to find",
+    text: str = dspy.InputField(
+        desc="Original journal text to serve as ground truth for relationship extractions"
+    )
+    known_entities: Optional[List[str]] = dspy.InputField(
+        desc="Optional pre-extracted entities to ground relationship facts",
         default=None,
     )
     graph: KnowledgeGraph = dspy.OutputField(
-        desc="Knowledge graph with people as nodes and relationships as edges"
+        desc="Knowledge graph with people as nodes and relationships as edges, with the author as the root node."
     )
 
 
@@ -143,7 +148,7 @@ def extract_and_display(
             )
 
         # Step 2: Extract graph with LLM (with or without hints)
-        result = extractor(text=text, entity_hints=entity_hints)
+        result = extractor(text=text, known_entities=entity_hints)
         graph = result.graph
 
         # Capture adapter information
@@ -179,7 +184,11 @@ def extract_and_display(
         )
 
     except Exception as e:
-        return None, f"Error: {str(e)}", gr.update(value="Error during extraction", visible=True)
+        return (
+            None,
+            f"Error: {str(e)}",
+            gr.update(value="Error during extraction", visible=True),
+        )
 
 
 # Create Gradio interface
