@@ -634,9 +634,8 @@ def format_entities(
         List of entity text strings, optionally with labels and confidence scores.
         Format examples:
         - Plain: "Microsoft"
-        - With labels: "Microsoft [ORG]"
-        - With labels+confidence: "Microsoft [ORG:99%]"
-        MISC entities are always returned as plain text (no metadata) to save tokens.
+        - With labels: "Microsoft [ORG]", "iPhone 15 [MISC]"
+        - With labels+confidence: "Microsoft [ORG:99%]", "iPhone 15 [MISC:85%]"
     """
     # Deduplicate if requested
     if deduplicate:
@@ -647,12 +646,7 @@ def format_entities(
         text = entity["text"]
         label = entity["label"]
 
-        # MISC entities: always return plain text (metadata not useful)
-        if label == "MISC":
-            result.append(text)
-            continue
-
-        # PER/ORG/LOC: add metadata if requested
+        # Add metadata if requested (applies to all entity types including MISC)
         if include_labels:
             if include_confidence and "confidence" in entity:
                 confidence_pct = int(entity["confidence"] * 100)

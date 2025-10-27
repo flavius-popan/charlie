@@ -576,7 +576,7 @@ class TestFormatEntities:
             "Microsoft [ORG]",
             "Satya Nadella [PER]",
             "Seattle [LOC]",
-            "AI Summit",  # MISC returns plain text
+            "AI Summit [MISC]",
         ]
 
     def test_format_empty_list(self):
@@ -616,8 +616,8 @@ class TestFormatEntities:
             "Seattle [LOC:95%]",
         ]
 
-    def test_format_misc_always_plain_text(self):
-        """Test that MISC entities always return plain text, even with labels/confidence"""
+    def test_format_misc_with_labels(self):
+        """Test that MISC entities now get formatted with labels like other entity types"""
         entities = [
             {"text": "Microsoft", "label": "ORG", "confidence": 0.99},
             {"text": "iPhone 15", "label": "MISC", "confidence": 0.85},
@@ -628,8 +628,8 @@ class TestFormatEntities:
         result = distilbert_ner.format_entities(entities, include_labels=True)
         assert result == [
             "Microsoft [ORG]",
-            "iPhone 15",  # MISC: plain text
-            "Nobel Prize",  # MISC: plain text
+            "iPhone 15 [MISC]",
+            "Nobel Prize [MISC]",
         ]
 
         # With labels and confidence
@@ -638,8 +638,8 @@ class TestFormatEntities:
         )
         assert result == [
             "Microsoft [ORG:99%]",
-            "iPhone 15",  # MISC: plain text, no metadata
-            "Nobel Prize",  # MISC: plain text, no metadata
+            "iPhone 15 [MISC:85%]",
+            "Nobel Prize [MISC:95%]",
         ]
 
     def test_format_confidence_requires_labels(self):
@@ -764,32 +764,23 @@ class TestEndToEndInference:
         assert len(labeled_texts) == len(entities)
         assert len(confidence_texts) == len(entities)
 
-        # Verify labels are formatted correctly (but MISC returns plain text)
+        # Verify all entity types get labels in brackets
         for entity, labeled in zip(entities, labeled_texts):
-            if entity["label"] == "MISC":
-                # MISC should be plain text
-                assert "[" not in labeled
-            else:
-                # PER/ORG/LOC should have labels in brackets
-                assert "[" in labeled and "]" in labeled
-                assert any(
-                    exp in labeled
-                    for exp in ["ORG", "PER", "LOC"]
-                )
+            # All entities (including MISC) should have labels in brackets
+            assert "[" in labeled and "]" in labeled
+            assert any(
+                exp in labeled
+                for exp in ["ORG", "PER", "LOC", "MISC"]
+            )
 
-        # Verify confidence formatting (but MISC returns plain text)
+        # Verify all entity types get confidence formatting
         for entity, conf_text in zip(entities, confidence_texts):
-            if entity["label"] == "MISC":
-                # MISC should be plain text
-                assert "[" not in conf_text
-                assert "%" not in conf_text
-            else:
-                # PER/ORG/LOC should have confidence percentage
-                assert "[" in conf_text and "]" in conf_text
-                assert "%" in conf_text
+            # All entities (including MISC) should have confidence percentage
+            assert "[" in conf_text and "]" in conf_text
+            assert "%" in conf_text
 
     def test_misc_entity_handling(self):
-        """Test that MISC entities are included but without metadata"""
+        """Test that MISC entities are now formatted with labels like other entity types"""
         text = "I bought an iPhone 15 and won the Nobel Prize."
 
         entities = distilbert_ner.predict_entities(text)
@@ -803,13 +794,13 @@ class TestEndToEndInference:
                 entities, include_labels=True, include_confidence=True
             )
 
-            # MISC entities should appear as plain text
+            # MISC entities should now have labels and confidence
             for entity, formatted_text in zip(entities, formatted):
                 if entity["label"] == "MISC":
-                    # Should be just the text, no metadata
-                    assert formatted_text == entity["text"]
-                    assert "[" not in formatted_text
-                    assert "%" not in formatted_text
+                    # Should have label and confidence like other entity types
+                    assert entity["text"] in formatted_text
+                    assert "[MISC:" in formatted_text
+                    assert "%" in formatted_text
 
     def test_deduplication_integration(self):
         """Test deduplication with real model on text with repeated entities"""
