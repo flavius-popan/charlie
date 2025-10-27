@@ -185,12 +185,14 @@ class TestEntityExtractor:
         labels = ["O", "B-ORG", "I-ORG", "O"]
         attention_mask = np.array([1, 1, 1, 1])
         # Mock probabilities and label IDs
-        probabilities = np.array([
-            [0.9, 0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],  # [CLS]
-            [0.0, 0.99, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],  # Apple -> B-ORG
-            [0.0, 0.0, 0.98, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],  # Inc -> I-ORG
-            [0.9, 0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],  # [SEP]
-        ])
+        probabilities = np.array(
+            [
+                [0.9, 0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],  # [CLS]
+                [0.0, 0.99, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],  # Apple -> B-ORG
+                [0.0, 0.0, 0.98, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],  # Inc -> I-ORG
+                [0.9, 0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],  # [SEP]
+            ]
+        )
         label_ids = np.array([0, 1, 2, 0])
 
         words = extractor._group_tokens_into_words(
@@ -290,7 +292,12 @@ class TestEntityExtractor:
         words = [
             {"tokens": ["John"], "labels": ["B-PER"], "start_token": 1, "end_token": 1},
             {"tokens": ["Paul"], "labels": ["B-PER"], "start_token": 2, "end_token": 2},
-            {"tokens": ["George"], "labels": ["B-PER"], "start_token": 3, "end_token": 3},
+            {
+                "tokens": ["George"],
+                "labels": ["B-PER"],
+                "start_token": 3,
+                "end_token": 3,
+            },
         ]
 
         entities = extractor._aggregate_words_into_entities(words)
@@ -319,9 +326,24 @@ class TestEntityExtractor:
     def test_aggregate_consecutive_organizations(self, extractor):
         """Test consecutive B-ORG tags create separate organization entities"""
         words = [
-            {"tokens": ["Microsoft"], "labels": ["B-ORG"], "start_token": 1, "end_token": 1},
-            {"tokens": ["Apple"], "labels": ["B-ORG"], "start_token": 2, "end_token": 2},
-            {"tokens": ["Google"], "labels": ["B-ORG"], "start_token": 3, "end_token": 3},
+            {
+                "tokens": ["Microsoft"],
+                "labels": ["B-ORG"],
+                "start_token": 1,
+                "end_token": 1,
+            },
+            {
+                "tokens": ["Apple"],
+                "labels": ["B-ORG"],
+                "start_token": 2,
+                "end_token": 2,
+            },
+            {
+                "tokens": ["Google"],
+                "labels": ["B-ORG"],
+                "start_token": 3,
+                "end_token": 3,
+            },
         ]
 
         entities = extractor._aggregate_words_into_entities(words)
@@ -336,8 +358,18 @@ class TestEntityExtractor:
     def test_aggregate_consecutive_misc(self, extractor):
         """Test consecutive B-MISC tags create separate miscellaneous entities"""
         words = [
-            {"tokens": ["iPhone"], "labels": ["B-MISC"], "start_token": 1, "end_token": 1},
-            {"tokens": ["iPad"], "labels": ["B-MISC"], "start_token": 2, "end_token": 2},
+            {
+                "tokens": ["iPhone"],
+                "labels": ["B-MISC"],
+                "start_token": 1,
+                "end_token": 1,
+            },
+            {
+                "tokens": ["iPad"],
+                "labels": ["B-MISC"],
+                "start_token": 2,
+                "end_token": 2,
+            },
         ]
 
         entities = extractor._aggregate_words_into_entities(words)
@@ -352,9 +384,24 @@ class TestEntityExtractor:
         """Test all four entity types: PER, ORG, LOC, MISC"""
         words = [
             {"tokens": ["John"], "labels": ["B-PER"], "start_token": 1, "end_token": 1},
-            {"tokens": ["Apple"], "labels": ["B-ORG"], "start_token": 2, "end_token": 2},
-            {"tokens": ["Paris"], "labels": ["B-LOC"], "start_token": 3, "end_token": 3},
-            {"tokens": ["iPhone"], "labels": ["B-MISC"], "start_token": 4, "end_token": 4},
+            {
+                "tokens": ["Apple"],
+                "labels": ["B-ORG"],
+                "start_token": 2,
+                "end_token": 2,
+            },
+            {
+                "tokens": ["Paris"],
+                "labels": ["B-LOC"],
+                "start_token": 3,
+                "end_token": 3,
+            },
+            {
+                "tokens": ["iPhone"],
+                "labels": ["B-MISC"],
+                "start_token": 4,
+                "end_token": 4,
+            },
         ]
 
         entities = extractor._aggregate_words_into_entities(words)
@@ -521,8 +568,22 @@ class TestDeduplicateEntities:
     def test_deduplicate_preserves_other_fields(self):
         """Test that deduplication preserves other entity fields"""
         entities = [
-            {"text": "Apple", "label": "ORG", "start_token": 1, "end_token": 1, "tokens": ["Apple"], "confidence": 0.99},
-            {"text": "Apple", "label": "ORG", "start_token": 5, "end_token": 5, "tokens": ["Apple"], "confidence": 0.97},
+            {
+                "text": "Apple",
+                "label": "ORG",
+                "start_token": 1,
+                "end_token": 1,
+                "tokens": ["Apple"],
+                "confidence": 0.99,
+            },
+            {
+                "text": "Apple",
+                "label": "ORG",
+                "start_token": 5,
+                "end_token": 5,
+                "tokens": ["Apple"],
+                "confidence": 0.97,
+            },
         ]
 
         result = distilbert_ner._deduplicate_entities(entities)
@@ -768,10 +829,7 @@ class TestEndToEndInference:
         for entity, labeled in zip(entities, labeled_texts):
             # All entities (including MISC) should have labels in brackets
             assert "[" in labeled and "]" in labeled
-            assert any(
-                exp in labeled
-                for exp in ["ORG", "PER", "LOC", "MISC"]
-            )
+            assert any(exp in labeled for exp in ["ORG", "PER", "LOC", "MISC"])
 
         # Verify all entity types get confidence formatting
         for entity, conf_text in zip(entities, confidence_texts):
@@ -820,8 +878,12 @@ class TestEndToEndInference:
         )
 
         # Count "Apple" occurrences in both
-        apple_count_no_dedup = sum(1 for item in formatted_no_dedup if item.startswith("Apple"))
-        apple_count_with_dedup = sum(1 for item in formatted_with_dedup if item.startswith("Apple"))
+        apple_count_no_dedup = sum(
+            1 for item in formatted_no_dedup if item.startswith("Apple")
+        )
+        apple_count_with_dedup = sum(
+            1 for item in formatted_with_dedup if item.startswith("Apple")
+        )
 
         # With deduplication, we should have fewer or equal Apple mentions
         assert apple_count_with_dedup <= apple_count_no_dedup
@@ -849,7 +911,9 @@ class TestEndToEndInference:
 
         # Verify they are separate entities with different text
         location_texts = [e["text"].strip() for e in locations]
-        assert len(set(location_texts)) >= 2, f"Locations should be distinct: {location_texts}"
+        assert len(set(location_texts)) >= 2, (
+            f"Locations should be distinct: {location_texts}"
+        )
 
         # Common case: should detect "Berlin", "Paris", "London" as separate
         if len(locations) == 3:
@@ -891,7 +955,9 @@ class TestEndToEndInference:
 
         # Verify they are distinct
         org_names = [e["text"].strip() for e in orgs]
-        assert len(set(org_names)) >= 2, f"Organizations should be distinct: {org_names}"
+        assert len(set(org_names)) >= 2, (
+            f"Organizations should be distinct: {org_names}"
+        )
 
     def test_entity_at_sentence_start_real_inference(self):
         """Test that entities at the start of a sentence are detected correctly"""
@@ -987,7 +1053,9 @@ class TestChunkingAndStride:
 
         This is a regression test to ensure chunking doesn't break normal operation.
         """
-        text = "Alice works at Microsoft in Seattle. Bob works at Google in San Francisco."
+        text = (
+            "Alice works at Microsoft in Seattle. Bob works at Google in San Francisco."
+        )
 
         entities = distilbert_ner.predict_entities(text)
 
@@ -1029,20 +1097,36 @@ class TestChunkingAndStride:
 
         # Verify we extracted entities from ALL paragraphs, not just the first
         # Paragraph 1 entities
-        assert any("Alice" in text for text in entity_texts), "Should find Alice from paragraph 1"
-        assert any("Microsoft" in text for text in entity_texts), "Should find Microsoft from paragraph 1"
+        assert any("Alice" in text for text in entity_texts), (
+            "Should find Alice from paragraph 1"
+        )
+        assert any("Microsoft" in text for text in entity_texts), (
+            "Should find Microsoft from paragraph 1"
+        )
 
         # Paragraph 2 entities
-        assert any("London" in text for text in entity_texts), "Should find London from paragraph 2"
-        assert any("Paris" in text for text in entity_texts), "Should find Paris from paragraph 2"
+        assert any("London" in text for text in entity_texts), (
+            "Should find London from paragraph 2"
+        )
+        assert any("Paris" in text for text in entity_texts), (
+            "Should find Paris from paragraph 2"
+        )
 
         # Paragraph 3 entities
-        assert any("Berlin" in text for text in entity_texts), "Should find Berlin from paragraph 3"
-        assert any("Munich" in text for text in entity_texts), "Should find Munich from paragraph 3"
+        assert any("Berlin" in text for text in entity_texts), (
+            "Should find Berlin from paragraph 3"
+        )
+        assert any("Munich" in text for text in entity_texts), (
+            "Should find Munich from paragraph 3"
+        )
 
         # Paragraph 4 entities
-        assert any("Boston" in text for text in entity_texts), "Should find Boston from paragraph 4"
-        assert any("Chicago" in text for text in entity_texts), "Should find Chicago from paragraph 4"
+        assert any("Boston" in text for text in entity_texts), (
+            "Should find Boston from paragraph 4"
+        )
+        assert any("Chicago" in text for text in entity_texts), (
+            "Should find Chicago from paragraph 4"
+        )
 
         # All entities should have confidence scores
         for entity in entities:
@@ -1061,24 +1145,28 @@ class TestChunkingAndStride:
         """
         # Create text where an entity will likely appear in multiple chunks
         # Repeat "Microsoft" multiple times to increase chance of overlap
-        text = " ".join([
-            "Alice works at Microsoft.",
-            "Bob also works at Microsoft.",
-            "Charlie joined Microsoft recently.",
-            "David leads the Microsoft Azure team.",
-            "Emma manages Microsoft Office products.",
-            "Frank develops for Microsoft Windows.",
-            "Grace works on Microsoft Teams.",
-            "Henry maintains Microsoft SQL Server.",
-            "Isabel oversees Microsoft Dynamics.",
-            "Jack contributes to Microsoft Edge browser.",
-        ])
+        text = " ".join(
+            [
+                "Alice works at Microsoft.",
+                "Bob also works at Microsoft.",
+                "Charlie joined Microsoft recently.",
+                "David leads the Microsoft Azure team.",
+                "Emma manages Microsoft Office products.",
+                "Frank develops for Microsoft Windows.",
+                "Grace works on Microsoft Teams.",
+                "Henry maintains Microsoft SQL Server.",
+                "Isabel oversees Microsoft Dynamics.",
+                "Jack contributes to Microsoft Edge browser.",
+            ]
+        )
 
         # Get entities WITHOUT deduplication
         entities = distilbert_ner.predict_entities(text)
 
         # Count how many times "Microsoft" appears
-        microsoft_entities = [e for e in entities if "Microsoft" in e["text"] and e["label"] == "ORG"]
+        microsoft_entities = [
+            e for e in entities if "Microsoft" in e["text"] and e["label"] == "ORG"
+        ]
 
         # Due to chunk overlap and _deduplicate_chunk_entities, we should have
         # fewer Microsoft entities than the 10 mentions in the text
@@ -1101,14 +1189,16 @@ class TestChunkingAndStride:
         Larger stride = less overlap = faster but might miss boundary entities.
         """
         # Text long enough to require chunking
-        text = " ".join([
-            "Alice works at Microsoft in Seattle.",
-            "Bob collaborates with Carol at Google in San Francisco.",
-            "David leads the team at Apple in Cupertino.",
-            "Emma manages the project at Amazon in San Jose.",
-            "Frank coordinates with Grace at Meta in Menlo Park.",
-            "Henry works with Isabel at Tesla in Palo Alto.",
-        ])
+        text = " ".join(
+            [
+                "Alice works at Microsoft in Seattle.",
+                "Bob collaborates with Carol at Google in San Francisco.",
+                "David leads the team at Apple in Cupertino.",
+                "Emma manages the project at Amazon in San Jose.",
+                "Frank coordinates with Grace at Meta in Menlo Park.",
+                "Henry works with Isabel at Tesla in Palo Alto.",
+            ]
+        )
 
         # Test with default stride (64)
         entities_default = distilbert_ner.predict_entities(text, stride=64)
@@ -1159,21 +1249,27 @@ class TestChunkingAndStride:
         entity_texts = [e["text"] for e in entities]
 
         # Verify we extracted entities from EARLY paragraphs
-        assert any("Alice" in text or "Microsoft" in text for text in entity_texts), \
+        assert any("Alice" in text or "Microsoft" in text for text in entity_texts), (
             "Should find entities from first paragraph"
-        assert any("Seattle" in text for text in entity_texts), \
+        )
+        assert any("Seattle" in text for text in entity_texts), (
             "Should find Seattle from first paragraph"
+        )
 
         # Verify we extracted entities from MIDDLE paragraphs
-        assert any("Berlin" in text or "Munich" in text for text in entity_texts), \
+        assert any("Berlin" in text or "Munich" in text for text in entity_texts), (
             "Should find entities from middle paragraphs (April)"
+        )
 
         # Verify we extracted entities from LATE paragraphs
-        assert any("Sydney" in text or "Melbourne" in text for text in entity_texts), \
+        assert any("Sydney" in text or "Melbourne" in text for text in entity_texts), (
             "Should find entities from final paragraph (October)"
+        )
 
         # Should have many entities across the long text
-        assert len(entities) >= 15, f"Expected many entities from long text, got {len(entities)}"
+        assert len(entities) >= 15, (
+            f"Expected many entities from long text, got {len(entities)}"
+        )
 
         # All should have confidence and no chunk metadata
         for entity in entities:
@@ -1195,7 +1291,7 @@ class TestChunkingAndStride:
                 "chunk_idx": 0,
                 "start_token": 5,
                 "end_token": 5,
-                "tokens": ["Microsoft"]
+                "tokens": ["Microsoft"],
             },
             {
                 "text": "Microsoft",
@@ -1204,7 +1300,7 @@ class TestChunkingAndStride:
                 "chunk_idx": 1,
                 "start_token": 3,
                 "end_token": 3,
-                "tokens": ["Microsoft"]
+                "tokens": ["Microsoft"],
             },
             {
                 "text": "Apple",
@@ -1213,7 +1309,7 @@ class TestChunkingAndStride:
                 "chunk_idx": 1,
                 "start_token": 10,
                 "end_token": 10,
-                "tokens": ["Apple"]
+                "tokens": ["Apple"],
             },
         ]
 
@@ -1289,10 +1385,12 @@ class TestChunkingAndStride:
         entity_texts = [e["text"] for e in entities]
 
         # Should still find entities near/after the boundary
-        assert any("Alice" in text for text in entity_texts), \
+        assert any("Alice" in text for text in entity_texts), (
             "Should find Alice even though it's past the 512-token boundary"
-        assert any("Microsoft" in text for text in entity_texts), \
+        )
+        assert any("Microsoft" in text for text in entity_texts), (
             "Should find Microsoft even though it's past the 512-token boundary"
+        )
 
         # All should have confidence and no chunk metadata
         for entity in entities:
@@ -1306,19 +1404,23 @@ class TestChunkingAndStride:
         Regression test to ensure chunking doesn't create false positives.
         """
         # Long text with no named entities
-        text = " ".join([
-            "The system works well when configured properly.",
-            "It processes data efficiently and handles errors gracefully.",
-            "Performance metrics show consistent results across tests.",
-            "Integration with existing infrastructure proceeds smoothly.",
-            "Documentation provides clear guidance for implementation."
-        ] * 5)  # Repeat to ensure multiple chunks
+        text = " ".join(
+            [
+                "The system works well when configured properly.",
+                "It processes data efficiently and handles errors gracefully.",
+                "Performance metrics show consistent results across tests.",
+                "Integration with existing infrastructure proceeds smoothly.",
+                "Documentation provides clear guidance for implementation.",
+            ]
+            * 5
+        )  # Repeat to ensure multiple chunks
 
         entities = distilbert_ner.predict_entities(text)
 
         # Should find no entities (or very few false positives)
-        assert len(entities) <= 2, \
+        assert len(entities) <= 2, (
             f"Expected no/few entities in text without names, got {len(entities)}: {entities}"
+        )
 
     def test_entity_exactly_at_512_boundary(self):
         """
@@ -1329,7 +1431,7 @@ class TestChunkingAndStride:
         """
         from transformers import AutoTokenizer
 
-        tokenizer = AutoTokenizer.from_pretrained("distilbert-ner-onnx")
+        tokenizer = AutoTokenizer.from_pretrained("distilbert-ner-uncased-onnx")
 
         # Build text that reaches exactly ~510 tokens, then add entity
         base = "The quick brown fox jumps over the lazy dog. "
@@ -1348,14 +1450,18 @@ class TestChunkingAndStride:
         print(f"Total tokens: {total_tokens} (target: ~512)")
 
         # Extract entities with max_length=512
-        entities = distilbert_ner.predict_entities(boundary_text, max_length=512, stride=256)
+        entities = distilbert_ner.predict_entities(
+            boundary_text, max_length=512, stride=256
+        )
         entity_texts = [e["text"] for e in entities]
 
         # Should find entities even though they're near/past the 512 boundary
-        assert any("Alice" in text for text in entity_texts), \
+        assert any("Alice" in text for text in entity_texts), (
             f"Should find Alice at 512-token boundary. Found: {entity_texts}"
-        assert any("Microsoft" in text for text in entity_texts), \
+        )
+        assert any("Microsoft" in text for text in entity_texts), (
             f"Should find Microsoft at 512-token boundary. Found: {entity_texts}"
+        )
 
     def test_entity_crosses_512_boundary(self):
         """
@@ -1366,7 +1472,7 @@ class TestChunkingAndStride:
         """
         from transformers import AutoTokenizer
 
-        tokenizer = AutoTokenizer.from_pretrained("distilbert-ner-onnx")
+        tokenizer = AutoTokenizer.from_pretrained("distilbert-ner-uncased-onnx")
 
         # Build text to ~500 tokens, add multi-token entity, continue to ~520
         base = "The system processes data efficiently and handles errors gracefully. "
@@ -1388,18 +1494,26 @@ class TestChunkingAndStride:
         print(f"Total tokens: {total_tokens} (should be > 512)")
 
         # Extract with max_length=512, stride=256
-        entities = distilbert_ner.predict_entities(full_text, max_length=512, stride=256)
+        entities = distilbert_ner.predict_entities(
+            full_text, max_length=512, stride=256
+        )
         entity_texts = [e["text"] for e in entities]
 
         # Should find locations even though they span the boundary
-        assert any("New York" in text for text in entity_texts), \
+        assert any("New York" in text for text in entity_texts), (
             f"Should find 'New York' despite boundary crossing. Found: {entity_texts}"
-        assert any("San Francisco" in text for text in entity_texts), \
+        )
+        assert any("San Francisco" in text for text in entity_texts), (
             f"Should find 'San Francisco' despite boundary crossing. Found: {entity_texts}"
+        )
 
         # Verify no duplicates due to overlap (deduplication should work)
-        ny_count = sum(1 for e in entities if "New York" in e["text"] and e["label"] == "LOC")
-        assert ny_count <= 1, f"New York should be deduplicated, found {ny_count} instances"
+        ny_count = sum(
+            1 for e in entities if "New York" in e["text"] and e["label"] == "LOC"
+        )
+        assert ny_count <= 1, (
+            f"New York should be deduplicated, found {ny_count} instances"
+        )
 
     def test_text_just_under_512_tokens(self):
         """
@@ -1409,7 +1523,7 @@ class TestChunkingAndStride:
         """
         from transformers import AutoTokenizer
 
-        tokenizer = AutoTokenizer.from_pretrained("distilbert-ner-onnx")
+        tokenizer = AutoTokenizer.from_pretrained("distilbert-ner-uncased-onnx")
 
         # Build text to exactly 511 tokens
         base = "Alice works at Microsoft. "
@@ -1452,7 +1566,7 @@ class TestChunkingAndStride:
         """
         from transformers import AutoTokenizer
 
-        tokenizer = AutoTokenizer.from_pretrained("distilbert-ner-onnx")
+        tokenizer = AutoTokenizer.from_pretrained("distilbert-ner-uncased-onnx")
 
         # Build text to exactly 513 tokens
         base = "The meeting included representatives from various offices. "
@@ -1464,7 +1578,11 @@ class TestChunkingAndStride:
         text = base * repetitions
 
         # Add specific entities at start and end
-        text = "Alice from Seattle started the meeting. " + text + "Bob from Chicago concluded the discussion."
+        text = (
+            "Alice from Seattle started the meeting. "
+            + text
+            + "Bob from Chicago concluded the discussion."
+        )
 
         current_tokens = len(tokenizer.tokenize(text))
         print(f"Text has {current_tokens} tokens (target: 513)")
@@ -1474,10 +1592,12 @@ class TestChunkingAndStride:
         entity_texts = [e["text"] for e in entities]
 
         # Should find entities from both start and end (across chunks)
-        assert any("Alice" in text or "Seattle" in text for text in entity_texts), \
+        assert any("Alice" in text or "Seattle" in text for text in entity_texts), (
             "Should find Alice/Seattle from first chunk"
-        assert any("Bob" in text or "Chicago" in text for text in entity_texts), \
+        )
+        assert any("Bob" in text or "Chicago" in text for text in entity_texts), (
             "Should find Bob/Chicago from second chunk"
+        )
 
         # All should have confidence
         for entity in entities:
@@ -1492,7 +1612,7 @@ class TestChunkingAndStride:
         """
         from transformers import AutoTokenizer
 
-        tokenizer = AutoTokenizer.from_pretrained("distilbert-ner-onnx")
+        tokenizer = AutoTokenizer.from_pretrained("distilbert-ner-uncased-onnx")
 
         # Build structured text with entities at different positions
         paragraphs = []
@@ -1519,12 +1639,15 @@ class TestChunkingAndStride:
         entity_texts = [e["text"] for e in entities]
 
         # Verify extraction from all sections
-        assert any("Alice" in text or "Johnson" in text for text in entity_texts), \
+        assert any("Alice" in text or "Johnson" in text for text in entity_texts), (
             "Should find Alice from early section (tokens 0-200)"
-        assert any("Bob" in text or "Smith" in text for text in entity_texts), \
+        )
+        assert any("Bob" in text or "Smith" in text for text in entity_texts), (
             "Should find Bob from middle section (tokens 400-600)"
-        assert any("Carol" in text or "Davis" in text for text in entity_texts), \
+        )
+        assert any("Carol" in text or "Davis" in text for text in entity_texts), (
             "Should find Carol from late section (tokens 800-1000)"
+        )
 
         # Should find location entities across all sections
         assert any("Seattle" in text for text in entity_texts), "Should find Seattle"
@@ -1532,7 +1655,9 @@ class TestChunkingAndStride:
         assert any("Tokyo" in text for text in entity_texts), "Should find Tokyo"
 
         # Verify we got a substantial number of entities
-        assert len(entities) >= 6, f"Expected at least 6 entities from 1000+ token text, got {len(entities)}"
+        assert len(entities) >= 6, (
+            f"Expected at least 6 entities from 1000+ token text, got {len(entities)}"
+        )
 
 
 # ============================================================================
@@ -1546,56 +1671,7 @@ class TestEntitySplittingBugs:
 
     These tests currently FAIL and demonstrate issues where entities with
     special characters (dots, periods) are incorrectly split into multiple entities.
-
-    KNOWN ISSUE: "G.I. Joe" is detected as 3 separate entities instead of 1.
     """
-
-    def test_gi_joe_should_be_single_entity(self):
-        """
-        Test that "G.I. Joe" is recognized as a single person entity.
-
-        CURRENTLY FAILS: Returns ["G", ".", "I. Joe"] as 3 separate entities.
-        EXPECTED: Should return ["G.I. Joe"] as 1 entity.
-
-        Example from user report:
-        "So you don't have to be G.I. Joe while your civvies are getting washed."
-
-        Current incorrect output:
-        [
-          "G [PER:83%]",
-          ". [PER:80%]",
-          "I. Joe [PER:69%]"
-        ]
-
-        Expected correct output:
-        ["G.I. Joe [PER:XX%]"]
-        """
-        text = "So you don't have to be G.I. Joe while your civvies are getting washed."
-
-        entities = distilbert_ner.predict_entities(text)
-        person_entities = [e for e in entities if e["label"] == "PER"]
-
-        # Should detect exactly ONE person entity
-        assert len(person_entities) == 1, \
-            f"Expected 1 person entity, got {len(person_entities)}: {person_entities}"
-
-        # The entity should be "G.I. Joe" (with or without spaces/dots, but as ONE entity)
-        entity_text = person_entities[0]["text"].strip()
-
-        # The entity should contain all three components: G, I, and Joe
-        assert "G" in entity_text, f"Entity '{entity_text}' should contain 'G'"
-        assert "I" in entity_text, f"Entity '{entity_text}' should contain 'I'"
-        assert "Joe" in entity_text, f"Entity '{entity_text}' should contain 'Joe'"
-
-        # It should NOT be split (length should be reasonable for "G.I. Joe")
-        # If split, we'd get very short fragments like "G" or "."
-        assert len(entity_text) >= 5, \
-            f"Entity '{entity_text}' seems too short - likely split incorrectly"
-
-        # Periods should NOT be standalone entities
-        period_entities = [e for e in person_entities if e["text"].strip() in [".", ".."]]
-        assert len(period_entities) == 0, \
-            f"Periods should not be detected as entities: {period_entities}"
 
     def test_abbreviations_with_dots_should_be_single_entities(self):
         """
@@ -1612,41 +1688,49 @@ class TestEntitySplittingBugs:
         person_entities = [e for e in entities if e["label"] == "PER"]
 
         # Should detect 3 separate people
-        assert len(person_entities) >= 3, \
+        assert len(person_entities) >= 3, (
             f"Expected at least 3 person entities, got {len(person_entities)}: {person_entities}"
+        )
 
         # Each person entity should contain both initials and surname
         # J.K. Rowling should have J, K, and Rowling
         rowling_entities = [e for e in person_entities if "Rowling" in e["text"]]
-        assert len(rowling_entities) == 1, \
+        assert len(rowling_entities) == 1, (
             f"Should find exactly one entity for Rowling, got: {rowling_entities}"
+        )
 
         rowling_text = rowling_entities[0]["text"]
-        assert "J" in rowling_text and "K" in rowling_text and "Rowling" in rowling_text, \
-            f"Rowling entity '{rowling_text}' should contain J, K, and Rowling"
+        assert (
+            "J" in rowling_text and "K" in rowling_text and "Rowling" in rowling_text
+        ), f"Rowling entity '{rowling_text}' should contain J, K, and Rowling"
 
         # T.S. Eliot should have T, S, and Eliot
         eliot_entities = [e for e in person_entities if "Eliot" in e["text"]]
-        assert len(eliot_entities) == 1, \
+        assert len(eliot_entities) == 1, (
             f"Should find exactly one entity for Eliot, got: {eliot_entities}"
+        )
 
         eliot_text = eliot_entities[0]["text"]
-        assert "T" in eliot_text and "S" in eliot_text and "Eliot" in eliot_text, \
+        assert "T" in eliot_text and "S" in eliot_text and "Eliot" in eliot_text, (
             f"Eliot entity '{eliot_text}' should contain T, S, and Eliot"
+        )
 
         # C.S. Lewis should have C, S, and Lewis
         lewis_entities = [e for e in person_entities if "Lewis" in e["text"]]
-        assert len(lewis_entities) == 1, \
+        assert len(lewis_entities) == 1, (
             f"Should find exactly one entity for Lewis, got: {lewis_entities}"
+        )
 
         lewis_text = lewis_entities[0]["text"]
-        assert "C" in lewis_text and "S" in lewis_text and "Lewis" in lewis_text, \
+        assert "C" in lewis_text and "S" in lewis_text and "Lewis" in lewis_text, (
             f"Lewis entity '{lewis_text}' should contain C, S, and Lewis"
+        )
 
         # No periods should be standalone entities
         period_only = [e for e in person_entities if e["text"].strip() in [".", ".."]]
-        assert len(period_only) == 0, \
+        assert len(period_only) == 0, (
             f"Periods should not be standalone entities: {period_only}"
+        )
 
     def test_titles_with_dots_should_merge_with_names(self):
         """
@@ -1660,8 +1744,9 @@ class TestEntitySplittingBugs:
         person_entities = [e for e in entities if e["label"] == "PER"]
 
         # Should detect 3 people
-        assert len(person_entities) >= 3, \
+        assert len(person_entities) >= 3, (
             f"Expected at least 3 people, got {len(person_entities)}: {person_entities}"
+        )
 
         # Each entity should contain the full name including title
         entity_texts = [e["text"] for e in person_entities]
@@ -1677,8 +1762,9 @@ class TestEntitySplittingBugs:
 
         # Periods should NOT be standalone person entities
         period_entities = [e for e in person_entities if e["text"].strip() == "."]
-        assert len(period_entities) == 0, \
+        assert len(period_entities) == 0, (
             f"Period should not be a person entity: {period_entities}"
+        )
 
     def test_usa_and_location_abbreviations(self):
         """
@@ -1692,8 +1778,9 @@ class TestEntitySplittingBugs:
         location_entities = [e for e in entities if e["label"] == "LOC"]
 
         # Should detect 2-3 location entities (U.S.A., U.K., possibly U.S.)
-        assert len(location_entities) >= 2, \
+        assert len(location_entities) >= 2, (
             f"Expected at least 2 locations, got {len(location_entities)}: {location_entities}"
+        )
 
         entity_texts = [e["text"] for e in location_entities]
 
@@ -1702,71 +1789,17 @@ class TestEntitySplittingBugs:
         for entity in location_entities:
             text = entity["text"].strip()
             # Should be longer than a single letter or period
-            assert len(text) >= 2, \
+            assert len(text) >= 2, (
                 f"Location entity '{text}' seems too short - likely a fragment"
+            )
 
         # Periods should NOT be standalone location entities
-        period_entities = [e for e in location_entities if e["text"].strip() in [".", ".."]]
-        assert len(period_entities) == 0, \
-            f"Periods should not be location entities: {period_entities}"
-
-    def test_same_type_split_entities_should_merge_per(self):
-        """
-        Test that consecutive PERSON fragments with dots should merge into single entity.
-
-        SAME TYPE merging: When multiple consecutive PER entities have dots between them,
-        they should be merged into one entity (not separate people).
-
-        Examples:
-        - "G.I. Joe" → tokens ["G", ".", "I", ".", "Joe"] all tagged PER → should merge to 1 PER
-        - "J.R.R. Tolkien" → should be 1 PER, not 5+ fragments
-        """
-        test_cases = [
-            {
-                "text": "G.I. Joe was a famous action figure line.",
-                "expected_name": "G.I. Joe",
-                "must_contain": ["G", "I", "Joe"],
-                "min_length": 5
-            },
-            {
-                "text": "J.R.R. Tolkien wrote The Lord of the Rings.",
-                "expected_name": "J.R.R. Tolkien",
-                "must_contain": ["J", "R", "Tolkien"],
-                "min_length": 8
-            },
-            {
-                "text": "C.S. Lewis was friends with Tolkien.",
-                "expected_name": "C.S. Lewis",
-                "must_contain": ["C", "S", "Lewis"],
-                "min_length": 5
-            }
+        period_entities = [
+            e for e in location_entities if e["text"].strip() in [".", ".."]
         ]
-
-        for case in test_cases:
-            entities = distilbert_ner.predict_entities(case["text"])
-            person_entities = [e for e in entities if e["label"] == "PER"]
-
-            # Filter to just the entity we're testing (by checking if it contains key parts)
-            target_entities = [
-                e for e in person_entities
-                if any(part in e["text"] for part in case["must_contain"])
-            ]
-
-            # All fragments should be merged into ONE entity
-            assert len(target_entities) == 1, \
-                f"Expected 1 merged PER entity for '{case['expected_name']}', " \
-                f"got {len(target_entities)}: {target_entities}"
-
-            entity_text = target_entities[0]["text"]
-
-            # The entity should contain ALL required components
-            for part in case["must_contain"]:
-                assert part in entity_text, \
-                    f"Entity '{entity_text}' should contain '{part}' for {case['expected_name']}"
-
-            # Should be reasonably long (not a single-letter fragment)
-            assert len(entity_text) >= case["min_length"], \
-                f"Entity '{entity_text}' too short - likely split incorrectly (expected >={case['min_length']} chars)"
+        assert len(period_entities) == 0, (
+            f"Periods should not be location entities: {period_entities}"
+        )
 
     def test_same_type_split_entities_should_merge_loc(self):
         """
@@ -1785,16 +1818,19 @@ class TestEntitySplittingBugs:
             text = entity["text"].strip()
 
             # No single-character location entities (would indicate splitting)
-            assert len(text) > 1, \
+            assert len(text) > 1, (
                 f"Location '{text}' is too short - likely a fragment from splitting"
+            )
 
             # No standalone periods
-            assert text not in [".", "..", "..."], \
+            assert text not in [".", "..", "..."], (
                 f"Standalone period '{text}' should not be a location entity"
+            )
 
         # Should have 2-3 complete location entities (U.S.A., U.K., U.S.)
-        assert len(location_entities) >= 2, \
+        assert len(location_entities) >= 2, (
             f"Expected at least 2 complete locations, got {len(location_entities)}: {location_entities}"
+        )
 
     def test_same_type_split_entities_should_merge_org(self):
         """
@@ -1808,20 +1844,23 @@ class TestEntitySplittingBugs:
         org_entities = [e for e in entities if e["label"] == "ORG"]
 
         # Should detect organizations
-        assert len(org_entities) >= 1, \
+        assert len(org_entities) >= 1, (
             f"Expected at least 1 organization, got {len(org_entities)}: {org_entities}"
+        )
 
         # Each org should be reasonably complete (not single letters)
         for entity in org_entities:
             text = entity["text"].strip()
 
             # Organizations should be longer than 1 character
-            assert len(text) > 1, \
+            assert len(text) > 1, (
                 f"Organization '{text}' is too short - likely a fragment"
+            )
 
             # No standalone periods as organizations
-            assert text not in [".", "..", "&"], \
+            assert text not in [".", "..", "&"], (
                 f"Punctuation '{text}' should not be an organization entity"
+            )
 
     def test_different_types_should_not_merge(self):
         """
@@ -1840,22 +1879,22 @@ class TestEntitySplittingBugs:
                 "text": "Microsoft CEO Satya Nadella announced the news.",
                 "expected_types": {"ORG", "PER"},
                 "org_text": "Microsoft",
-                "per_text": "Nadella"
+                "per_text": "Nadella",
             },
             {
                 "text": "Apple Inc. founder Steve Jobs lived in California.",
                 "expected_types": {"ORG", "PER", "LOC"},
                 "org_text": "Apple",
                 "per_text": "Jobs",
-                "loc_text": "California"
+                "loc_text": "California",
             },
             {
                 "text": "Tim Cook visited Seattle to meet with Microsoft executives.",
                 "expected_types": {"PER", "LOC", "ORG"},
                 "per_text": "Cook",
                 "loc_text": "Seattle",
-                "org_text": "Microsoft"
-            }
+                "org_text": "Microsoft",
+            },
         ]
 
         for case in test_cases:
@@ -1863,24 +1902,28 @@ class TestEntitySplittingBugs:
 
             # Verify we detected multiple entity types
             detected_types = {e["label"] for e in entities}
-            assert case["expected_types"].issubset(detected_types), \
+            assert case["expected_types"].issubset(detected_types), (
                 f"Expected types {case['expected_types']}, got {detected_types} in: {entities}"
+            )
 
             # Verify specific entities are separate (not merged)
             if "org_text" in case:
                 org_entities = [e for e in entities if e["label"] == "ORG"]
-                assert any(case["org_text"] in e["text"] for e in org_entities), \
+                assert any(case["org_text"] in e["text"] for e in org_entities), (
                     f"Should find separate ORG '{case['org_text']}' in: {entities}"
+                )
 
             if "per_text" in case:
                 per_entities = [e for e in entities if e["label"] == "PER"]
-                assert any(case["per_text"] in e["text"] for e in per_entities), \
+                assert any(case["per_text"] in e["text"] for e in per_entities), (
                     f"Should find separate PER '{case['per_text']}' in: {entities}"
+                )
 
             if "loc_text" in case:
                 loc_entities = [e for e in entities if e["label"] == "LOC"]
-                assert any(case["loc_text"] in e["text"] for e in loc_entities), \
+                assert any(case["loc_text"] in e["text"] for e in loc_entities), (
                     f"Should find separate LOC '{case['loc_text']}' in: {entities}"
+                )
 
     def test_mixed_adjacent_same_and_different_types(self):
         """
@@ -1896,30 +1939,41 @@ class TestEntitySplittingBugs:
 
         # G.I. Joe should be ONE person entity (PER-PER-PER merge)
         person_entities = [e for e in entities if e["label"] == "PER"]
-        gi_joe_entities = [e for e in person_entities if "Joe" in e["text"] or "G" in e["text"]]
+        gi_joe_entities = [
+            e for e in person_entities if "Joe" in e["text"] or "G" in e["text"]
+        ]
 
         # Should have ONE entity containing G.I. Joe (not 3 separate PER entities)
         # Note: This will fail until bug is fixed
-        joe_complete = [e for e in gi_joe_entities if "Joe" in e["text"] and "G" in e["text"]]
-        assert len(joe_complete) >= 1, \
+        joe_complete = [
+            e for e in gi_joe_entities if "Joe" in e["text"] and "G" in e["text"]
+        ]
+        assert len(joe_complete) >= 1, (
             f"G.I. Joe should be merged into one entity, got fragments: {gi_joe_entities}"
+        )
 
         # Washington D.C. should be ONE location entity (LOC with punctuation)
         location_entities = [e for e in entities if e["label"] == "LOC"]
-        washington_entities = [e for e in location_entities if "Washington" in e["text"]]
+        washington_entities = [
+            e for e in location_entities if "Washington" in e["text"]
+        ]
 
         if washington_entities:
             # If detected, should be complete (not fragmented)
-            assert len(washington_entities) <= 2, \
+            assert len(washington_entities) <= 2, (
                 f"Washington D.C. should be 1-2 entities max, got: {washington_entities}"
+            )
 
         # U.S. should be ONE location (LOC-LOC merge with dots)
-        us_entities = [e for e in location_entities if "U" in e["text"] and "S" in e["text"]]
+        us_entities = [
+            e for e in location_entities if "U" in e["text"] and "S" in e["text"]
+        ]
         if us_entities:
             # Should be merged, not "U" + "." + "S" as separate entities
             us_complete = [e for e in us_entities if len(e["text"].strip()) > 2]
-            assert len(us_complete) >= 1, \
+            assert len(us_complete) >= 1, (
                 f"U.S. should be complete, not fragmented: {us_entities}"
+            )
 
         # I.B.M. should be ONE organization (ORG-ORG merge)
         org_entities = [e for e in entities if e["label"] == "ORG"]
@@ -1928,13 +1982,15 @@ class TestEntitySplittingBugs:
         if ibm_entities:
             # Should be reasonably complete
             ibm_complete = [e for e in ibm_entities if len(e["text"].strip()) > 2]
-            assert len(ibm_complete) >= 1, \
+            assert len(ibm_complete) >= 1, (
                 f"I.B.M. should be complete, not fragmented: {ibm_entities}"
+            )
 
         # But PER and LOC and ORG should be SEPARATE entities (different types)
         entity_types = {e["label"] for e in entities}
-        assert len(entity_types) >= 2, \
+        assert len(entity_types) >= 2, (
             f"Should have multiple entity types (PER, LOC, ORG), got: {entity_types}"
+        )
 
     def test_single_letter_with_period_edge_cases(self):
         """
@@ -1952,8 +2008,9 @@ class TestEntitySplittingBugs:
 
         # J. Edgar Hoover should be ONE person
         hoover_entities = [e for e in person_entities if "Hoover" in e["text"]]
-        assert len(hoover_entities) == 1, \
+        assert len(hoover_entities) == 1, (
             f"J. Edgar Hoover should be one entity, got: {hoover_entities}"
+        )
 
         hoover_text = hoover_entities[0]["text"]
 
@@ -1966,13 +2023,16 @@ class TestEntitySplittingBugs:
 
         if org_entities:
             # Check for FBI entity
-            fbi_entities = [e for e in org_entities if "B" in e["text"] or "FBI" in e["text"]]
+            fbi_entities = [
+                e for e in org_entities if "B" in e["text"] or "FBI" in e["text"]
+            ]
 
             if fbi_entities:
                 # Should not be single-letter fragments
                 for entity in fbi_entities:
-                    assert len(entity["text"].strip()) > 1, \
+                    assert len(entity["text"].strip()) > 1, (
                         f"FBI entity '{entity['text']}' is too short - likely a fragment"
+                    )
 
 
 # ============================================================================

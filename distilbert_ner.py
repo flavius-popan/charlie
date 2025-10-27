@@ -5,22 +5,29 @@ DistilBERT NER - ONNX Inference Module
 Lightweight NER inference using ONNX Runtime (no PyTorch required).
 Dependencies: onnxruntime (~10MB), transformers (tokenizer only), numpy
 
-Auto-downloads the ONNX model from HuggingFace if not present (~249MB).
+Uses distilbert-base-uncased fine-tuned for NER - detects entities regardless of
+capitalization while preserving the original text casing in results.
+
+Auto-downloads the ONNX model from HuggingFace if not present (~255MB).
 Tokenizer files are included in the repository.
 
 Usage:
     # As a module
     from distilbert_ner import predict_entities, format_entities
 
-    entities = predict_entities("Apple Inc. is in Cupertino.")
-    texts = format_entities(entities)  # ["Apple Inc.", "Cupertino"]
-    labeled = format_entities(entities, include_labels=True)  # ["Apple Inc. (Organization)", ...]
+    # Works with any capitalization, preserves original casing
+    entities = predict_entities("charlie was a cool guy")
+    texts = format_entities(entities)  # ["charlie"] - lowercase preserved
+
+    entities = predict_entities("Charlie was a cool guy")
+    texts = format_entities(entities)  # ["Charlie"] - proper case preserved
+
+    labeled = format_entities(entities, include_labels=True)  # ["Charlie [PER]", ...]
     with_conf = format_entities(entities, include_labels=True, include_confidence=True)
-    # ["Apple Inc. (entity_type:Organization, conf:0.99)", ...]
-    # MISC entities return plain text without metadata: ["iPhone 15"]
+    # ["Charlie [PER:99%]", ...]
 
     # As a script
-    python distilbert-ner.py  # Starts interactive mode
+    python distilbert_ner.py  # Starts interactive mode
 """
 
 import os
@@ -37,13 +44,14 @@ from transformers import AutoTokenizer
 
 
 # Configuration
-MODEL_PATH = "distilbert-ner-onnx/onnx/model.onnx"
-TOKENIZER_PATH = "distilbert-ner-onnx"
+MODEL_PATH = "distilbert-ner-uncased-onnx/onnx/model.onnx"
+TOKENIZER_PATH = "distilbert-ner-uncased-onnx"
 MAX_LENGTH = 512  # DistilBERT's max_position_embeddings limit
 
 # HuggingFace model repository
-HF_MODEL_REPO = "onnx-community/distilbert-NER-ONNX"
+HF_MODEL_REPO = "andi611/distilbert-base-uncased-ner-conll2003"
 HF_MODEL_FILE = "onnx/model.onnx"
+HF_REVISION = "refs/pr/4"  # PR with ONNX export
 
 # Label mapping from model config (https://huggingface.co/dslim/distilbert-NER)
 # According to CoNLL-2003 BIO tagging scheme used by this model
@@ -81,7 +89,7 @@ class ModelLoader:
 
         print(f"Model not found at {model_path}")
         print(f"Downloading from HuggingFace ({HF_MODEL_REPO})...")
-        print("This will download ~249MB...")
+        print("This will download ~255MB...")
 
         try:
             from huggingface_hub import hf_hub_download
@@ -92,6 +100,7 @@ class ModelLoader:
                 repo_id=HF_MODEL_REPO,
                 filename=HF_MODEL_FILE,
                 local_dir=TOKENIZER_PATH,
+                revision=HF_REVISION,
             )
 
             print(f"✓ Model downloaded to {model_path}")
@@ -166,6 +175,7 @@ class EntityExtractor:
         attention_mask: np.ndarray,
         probabilities: Optional[np.ndarray] = None,
         label_ids: Optional[np.ndarray] = None,
+        offset_mapping: Optional[list[tuple[int, int]]] = None,
     ) -> list[dict]:
         """
         Extract entities from BIO-tagged tokens with word-level aggregation.
@@ -179,6 +189,7 @@ class EntityExtractor:
             attention_mask: Attention mask array
             probabilities: Optional probability distribution over labels for each token
             label_ids: Optional predicted label IDs for each token
+            offset_mapping: Optional list of (start_char, end_char) tuples for each token
         """
         # Group tokens into words and aggregate labels
         words = self._group_tokens_into_words(
@@ -190,6 +201,20 @@ class EntityExtractor:
 
         # Merge fragmented entities (e.g., "G.I. Joe" split into ["G", ".", "I. Joe"])
         entities = self._merge_fragmented_entities(entities, tokens)
+
+        # Add character offsets if available
+        if offset_mapping:
+            for entity in entities:
+                start_token = entity["start_token"]
+                end_token = entity["end_token"]
+
+                # Get character offsets from first and last tokens
+                # Skip special tokens (which have offset (0, 0))
+                start_char = offset_mapping[start_token][0]
+                end_char = offset_mapping[end_token][1]
+
+                entity["start_char"] = start_char
+                entity["end_char"] = end_char
 
         return entities
 
@@ -468,13 +493,15 @@ def predict_entities(text: str, max_length: int = MAX_LENGTH, stride: int = 256)
 
     Returns:
         List of detected entities with their labels and positions.
-        Each entity is a dict with keys: 'text', 'label', 'start_token', 'end_token', 'tokens', 'confidence'
+        Each entity is a dict with keys: 'text', 'label', 'start_char', 'end_char',
+        'start_token', 'end_token', 'tokens', 'confidence'
+        The 'text' field preserves the original capitalization from the input.
     """
     session = _get_model_session()
     tokenizer = _get_tokenizer()
     extractor = _get_extractor()
 
-    # Tokenize with stride to get overlapping chunks
+    # Tokenize with stride to get overlapping chunks and character offsets
     encoded = tokenizer.tokenizer(
         text,
         padding="max_length",
@@ -482,6 +509,7 @@ def predict_entities(text: str, max_length: int = MAX_LENGTH, stride: int = 256)
         truncation=True,
         stride=stride,
         return_overflowing_tokens=True,
+        return_offsets_mapping=True,  # Get character offsets for each token
         return_tensors="np",
     )
 
@@ -492,6 +520,7 @@ def predict_entities(text: str, max_length: int = MAX_LENGTH, stride: int = 256)
     for chunk_idx in range(num_chunks):
         input_ids = encoded["input_ids"][chunk_idx : chunk_idx + 1].astype(np.int64)
         attention_mask = encoded["attention_mask"][chunk_idx : chunk_idx + 1].astype(np.int64)
+        offset_mapping = encoded["offset_mapping"][chunk_idx].tolist()
 
         # Run ONNX inference
         outputs = session.run(
@@ -513,14 +542,19 @@ def predict_entities(text: str, max_length: int = MAX_LENGTH, stride: int = 256)
         tokens = tokenizer.convert_ids_to_tokens(input_ids[0])
         labels = [ID2LABEL[label_id] for label_id in label_ids]
 
-        # Extract entities from BIO tags with confidence scores
+        # Extract entities from BIO tags with confidence scores and character offsets
         chunk_entities = extractor.extract(
-            tokens, labels, attention_mask[0], probabilities, label_ids
+            tokens, labels, attention_mask[0], probabilities, label_ids, offset_mapping
         )
 
-        # Reconstruct entity text using tokenizer
+        # Extract entity text from original input using character offsets
         for entity in chunk_entities:
-            entity["text"] = tokenizer.convert_tokens_to_string(entity["tokens"])
+            if "start_char" in entity and "end_char" in entity:
+                # Use original text to preserve capitalization
+                entity["text"] = text[entity["start_char"]:entity["end_char"]]
+            else:
+                # Fallback to tokenizer reconstruction (shouldn't happen)
+                entity["text"] = tokenizer.convert_tokens_to_string(entity["tokens"])
             entity["chunk_idx"] = chunk_idx
 
         all_entities.extend(chunk_entities)
@@ -664,7 +698,7 @@ def main():
 
     try:
         while True:
-            text = input("\nEnter text to analyze: ").strip()
+            text = input("Enter text to analyze: ").strip()
             if not text:
                 continue
 

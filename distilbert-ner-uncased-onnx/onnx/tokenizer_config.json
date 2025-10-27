@@ -41,20 +41,16 @@
       "special": true
     }
   },
-  "clean_up_tokenization_spaces": true,
+  "clean_up_tokenization_spaces": false,
   "cls_token": "[CLS]",
-  "do_lower_case": false,
+  "do_lower_case": true,
   "extra_special_tokens": {},
   "mask_token": "[MASK]",
-  "max_length": 512,
   "model_max_length": 512,
   "pad_token": "[PAD]",
   "sep_token": "[SEP]",
-  "stride": 0,
   "strip_accents": null,
   "tokenize_chinese_chars": true,
   "tokenizer_class": "DistilBertTokenizer",
-  "truncation_side": "right",
-  "truncation_strategy": "longest_first",
   "unk_token": "[UNK]"
 }
