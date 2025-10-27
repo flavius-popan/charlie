@@ -27,7 +27,9 @@ dspy.configure(lm=lm, adapter=adapter)
 # Pydantic models
 class Node(BaseModel):
     id: int = Field(description="Unique identifier for the node")
-    label: str = Field(description="Name of the entity")
+    label: str = Field(
+        description="Name of the entity (person, place, or concept). Include 'Author' or 'I' ONLY when the journal explicitly involves first-person experiences (direct interactions, feelings, thoughts)."
+    )
     properties: dict = Field(default_factory=dict)
 
 
@@ -35,30 +37,40 @@ class Edge(BaseModel):
     source: int = Field(description="Source node ID")
     target: int = Field(description="Target node ID")
     label: str = Field(
-        description="Relationship type as a short (3 words MAX) description with underscores between words"
+        description="Relationship type in PRESENT TENSE (e.g., 'knows', 'works_with', 'feels_anxious_about', 'admires'). Use underscores between words. Max 3 words. Connect to Author node ONLY for direct interactions or emotional/subjective states."
     )
     properties: dict = Field(default_factory=dict)
 
 
 class KnowledgeGraph(BaseModel):
-    nodes: List[Node]
-    edges: List[Edge]
+    nodes: List[Node] = Field(
+        description="All entities mentioned. Include 'Author' or 'I' as a node ONLY when extracting direct interactions or emotional states. Observed third-party entities stand alone."
+    )
+    edges: List[Edge] = Field(
+        description="Relationships in present tense. Author-connected edges for direct interactions (met_with, spoke_to) and subjective states (feels_about, admires, worried_about). Third-party relationships captured independently (e.g., Bob knows Alice)."
+    )
 
 
 # DSPy signature with optional entity hints
 class ExtractKnowledgeGraph(dspy.Signature):
-    """Extract knowledge graph of people and relationships from a personal journal entry,
-    relative to the author's subjective experience."""
+    """Extract a knowledge graph from a personal journal entry, capturing both the author's direct experiences and observed facts.
+
+    Create an Author/I node ONLY when the entry describes:
+    - Direct interactions (Author met_with Bob, Author spoke_to Alice)
+    - Emotional or subjective states (Author feels_anxious_about work, Author admires mentor)
+
+    For observed third-party relationships (Bob knows Alice, Sarah works_for Microsoft), create independent edges without forcing connection to the author.
+    """
 
     text: str = dspy.InputField(
-        desc="Original journal text to serve as ground truth for relationship extractions"
+        desc="Journal entry text describing personal experiences, interactions, and observations"
     )
     known_entities: Optional[List[str]] = dspy.InputField(
-        desc="Optional pre-extracted entities to ground relationship facts",
+        desc="Optional pre-extracted entity names to guide node creation",
         default=None,
     )
     graph: KnowledgeGraph = dspy.OutputField(
-        desc="Knowledge graph with people as nodes and relationships as edges, with the author as the root node."
+        desc="Graph with entities as nodes and relationships as edges (present tense). Balance author-centric edges (direct interactions, emotions) with independent observed relationships."
     )
 
 
