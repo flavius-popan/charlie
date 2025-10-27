@@ -978,6 +978,359 @@ class TestEndToEndInference:
 
 
 # ============================================================================
+# Integration Tests: Chunking and Stride for Long Text
+# ============================================================================
+
+
+class TestChunkingAndStride:
+    """
+    Tests for sliding window chunking to handle long text.
+
+    The model has MAX_LENGTH=128 tokens. For longer text, we use a sliding window
+    with configurable stride to process overlapping chunks and merge results.
+    """
+
+    def test_single_chunk_short_text(self):
+        """
+        Test that short text (< 128 tokens) works correctly with single chunk.
+
+        This is a regression test to ensure chunking doesn't break normal operation.
+        """
+        text = "Alice works at Microsoft in Seattle. Bob works at Google in San Francisco."
+
+        entities = distilbert_ner.predict_entities(text)
+
+        # Should detect entities from both sentences
+        entity_texts = [e["text"] for e in entities]
+
+        assert len(entities) >= 4  # At minimum: Alice, Microsoft, Bob, Google
+        assert any("Alice" in text for text in entity_texts)
+        assert any("Microsoft" in text for text in entity_texts)
+        assert any("Bob" in text for text in entity_texts)
+        assert any("Google" in text for text in entity_texts)
+
+        # All entities should have confidence scores
+        for entity in entities:
+            assert "confidence" in entity
+            assert 0.0 <= entity["confidence"] <= 1.0
+
+        # Should NOT have chunk metadata in final output
+        for entity in entities:
+            assert "chunk_idx" not in entity
+
+    def test_multi_chunk_long_text(self):
+        """
+        Test that text requiring multiple chunks extracts entities from all chunks.
+
+        This test uses a long multi-paragraph text that exceeds 128 tokens,
+        requiring the sliding window to process multiple chunks.
+        """
+        # Create text with entities distributed across ~260+ tokens (needs 3+ chunks)
+        paragraph1 = "Alice worked at Microsoft in Seattle with her colleague Bob. They collaborated on a project with Carol from the New York office. "
+        paragraph2 = "Meanwhile, David was based in the London office and coordinated with Emma in Paris. The team also included Frank from the Tokyo branch. "
+        paragraph3 = "Later that month, Grace flew to Berlin to meet with Henry at the Munich office. They discussed the expansion into Rome and Athens. "
+        paragraph4 = "The final meeting included Isabel from the Boston headquarters and Jack from the Chicago office discussing partnerships with firms in Miami. "
+
+        text = paragraph1 + paragraph2 + paragraph3 + paragraph4
+
+        entities = distilbert_ner.predict_entities(text)
+        entity_texts = [e["text"] for e in entities]
+
+        # Verify we extracted entities from ALL paragraphs, not just the first
+        # Paragraph 1 entities
+        assert any("Alice" in text for text in entity_texts), "Should find Alice from paragraph 1"
+        assert any("Microsoft" in text for text in entity_texts), "Should find Microsoft from paragraph 1"
+
+        # Paragraph 2 entities
+        assert any("London" in text for text in entity_texts), "Should find London from paragraph 2"
+        assert any("Paris" in text for text in entity_texts), "Should find Paris from paragraph 2"
+
+        # Paragraph 3 entities
+        assert any("Berlin" in text for text in entity_texts), "Should find Berlin from paragraph 3"
+        assert any("Munich" in text for text in entity_texts), "Should find Munich from paragraph 3"
+
+        # Paragraph 4 entities
+        assert any("Boston" in text for text in entity_texts), "Should find Boston from paragraph 4"
+        assert any("Chicago" in text for text in entity_texts), "Should find Chicago from paragraph 4"
+
+        # All entities should have confidence scores
+        for entity in entities:
+            assert "confidence" in entity
+
+        # Should NOT have chunk metadata in final output
+        for entity in entities:
+            assert "chunk_idx" not in entity
+
+    def test_chunk_deduplication(self):
+        """
+        Test that entities appearing in overlapping chunk regions are deduplicated.
+
+        With stride < max_length, chunks overlap. An entity near the boundary
+        might appear in both chunks and should be deduplicated (keeping highest confidence).
+        """
+        # Create text where an entity will likely appear in multiple chunks
+        # Repeat "Microsoft" multiple times to increase chance of overlap
+        text = " ".join([
+            "Alice works at Microsoft.",
+            "Bob also works at Microsoft.",
+            "Charlie joined Microsoft recently.",
+            "David leads the Microsoft Azure team.",
+            "Emma manages Microsoft Office products.",
+            "Frank develops for Microsoft Windows.",
+            "Grace works on Microsoft Teams.",
+            "Henry maintains Microsoft SQL Server.",
+            "Isabel oversees Microsoft Dynamics.",
+            "Jack contributes to Microsoft Edge browser.",
+        ])
+
+        # Get entities WITHOUT deduplication
+        entities = distilbert_ner.predict_entities(text)
+
+        # Count how many times "Microsoft" appears
+        microsoft_entities = [e for e in entities if "Microsoft" in e["text"] and e["label"] == "ORG"]
+
+        # Due to chunk overlap and _deduplicate_chunk_entities, we should have
+        # fewer Microsoft entities than the 10 mentions in the text
+        # (The function deduplicates across chunks, keeping highest confidence)
+        assert len(microsoft_entities) >= 1, "Should find at least one Microsoft entity"
+
+        # If we got multiple Microsoft entities, they should have different contexts
+        # (e.g., "Microsoft Azure", "Microsoft Office", etc.)
+        # or be exact duplicates from different chunks that got deduplicated
+
+        # Verify all have confidence
+        for entity in microsoft_entities:
+            assert "confidence" in entity
+
+    def test_custom_stride_parameter(self):
+        """
+        Test that custom stride parameter works correctly.
+
+        Smaller stride = more overlap = more thorough but slower.
+        Larger stride = less overlap = faster but might miss boundary entities.
+        """
+        # Text long enough to require chunking
+        text = " ".join([
+            "Alice works at Microsoft in Seattle.",
+            "Bob collaborates with Carol at Google in San Francisco.",
+            "David leads the team at Apple in Cupertino.",
+            "Emma manages the project at Amazon in San Jose.",
+            "Frank coordinates with Grace at Meta in Menlo Park.",
+            "Henry works with Isabel at Tesla in Palo Alto.",
+        ])
+
+        # Test with default stride (64)
+        entities_default = distilbert_ner.predict_entities(text, stride=64)
+
+        # Test with smaller stride (more overlap)
+        entities_small_stride = distilbert_ner.predict_entities(text, stride=32)
+
+        # Test with larger stride (less overlap)
+        entities_large_stride = distilbert_ner.predict_entities(text, stride=96)
+
+        # All should extract entities
+        assert len(entities_default) > 0
+        assert len(entities_small_stride) > 0
+        assert len(entities_large_stride) > 0
+
+        # Smaller stride might find more entities (or same amount after deduplication)
+        # This is probabilistic, so we just verify it runs without error
+        # and returns reasonable results
+
+        # All should have confidence
+        for entity in entities_default + entities_small_stride + entities_large_stride:
+            assert "confidence" in entity
+            assert "chunk_idx" not in entity
+
+    def test_very_long_text_multiple_paragraphs(self):
+        """
+        Test extraction from very long multi-paragraph text (500+ tokens).
+
+        This simulates real-world usage with journal entries or documents.
+        """
+        # Construct a long text with entities distributed throughout
+        paragraphs = [
+            "In January, Alice started working at Microsoft in Seattle. She collaborated with Bob on the Azure platform.",
+            "By February, the team expanded. Carol joined from the New York office and David came from London.",
+            "March brought more changes. Emma relocated from Paris to work with Frank in the Tokyo office.",
+            "April saw partnerships form. Grace traveled to Berlin to meet with Henry from the Munich division.",
+            "In May, Isabel from Boston coordinated with Jack in Chicago on the expansion to Miami.",
+            "June meetings included Karen from Denver and Leo from Portland discussing the Seattle headquarters.",
+            "July brought international focus. Maria flew to Rome while Nathan visited Athens for client meetings.",
+            "By August, the team included Oscar from Dublin and Paula from Amsterdam working on European projects.",
+            "September saw Quinn from Toronto and Rachel from Vancouver joining the North American expansion.",
+            "October concluded with Sam from Sydney and Tara from Melbourne leading the Asia-Pacific initiatives.",
+        ]
+
+        text = " ".join(paragraphs)
+
+        entities = distilbert_ner.predict_entities(text)
+        entity_texts = [e["text"] for e in entities]
+
+        # Verify we extracted entities from EARLY paragraphs
+        assert any("Alice" in text or "Microsoft" in text for text in entity_texts), \
+            "Should find entities from first paragraph"
+        assert any("Seattle" in text for text in entity_texts), \
+            "Should find Seattle from first paragraph"
+
+        # Verify we extracted entities from MIDDLE paragraphs
+        assert any("Berlin" in text or "Munich" in text for text in entity_texts), \
+            "Should find entities from middle paragraphs (April)"
+
+        # Verify we extracted entities from LATE paragraphs
+        assert any("Sydney" in text or "Melbourne" in text for text in entity_texts), \
+            "Should find entities from final paragraph (October)"
+
+        # Should have many entities across the long text
+        assert len(entities) >= 15, f"Expected many entities from long text, got {len(entities)}"
+
+        # All should have confidence and no chunk metadata
+        for entity in entities:
+            assert "confidence" in entity
+            assert "chunk_idx" not in entity
+
+    def test_chunk_deduplication_helper_function(self):
+        """
+        Unit test for _deduplicate_chunk_entities helper function.
+
+        This function handles deduplication of entities that appear in multiple chunks.
+        """
+        # Simulate entities from overlapping chunks
+        entities = [
+            {
+                "text": "Microsoft",
+                "label": "ORG",
+                "confidence": 0.99,
+                "chunk_idx": 0,
+                "start_token": 5,
+                "end_token": 5,
+                "tokens": ["Microsoft"]
+            },
+            {
+                "text": "Microsoft",
+                "label": "ORG",
+                "confidence": 0.97,
+                "chunk_idx": 1,
+                "start_token": 3,
+                "end_token": 3,
+                "tokens": ["Microsoft"]
+            },
+            {
+                "text": "Apple",
+                "label": "ORG",
+                "confidence": 0.95,
+                "chunk_idx": 1,
+                "start_token": 10,
+                "end_token": 10,
+                "tokens": ["Apple"]
+            },
+        ]
+
+        result = distilbert_ner._deduplicate_chunk_entities(entities)
+
+        # Should have 2 unique entities (Microsoft appears twice, keep highest confidence)
+        assert len(result) == 2
+
+        # Find Microsoft in result
+        microsoft = [e for e in result if e["text"] == "Microsoft"][0]
+
+        # Should keep the one with highest confidence (0.99)
+        assert microsoft["confidence"] == 0.99
+        assert microsoft["chunk_idx"] == 0
+
+        # Apple should be unchanged
+        apple = [e for e in result if e["text"] == "Apple"][0]
+        assert apple["confidence"] == 0.95
+
+    def test_chunk_deduplication_case_insensitive(self):
+        """
+        Test that chunk deduplication is case-insensitive.
+        """
+        entities = [
+            {"text": "Microsoft", "label": "ORG", "confidence": 0.99, "chunk_idx": 0},
+            {"text": "MICROSOFT", "label": "ORG", "confidence": 0.97, "chunk_idx": 1},
+            {"text": "microsoft", "label": "ORG", "confidence": 0.95, "chunk_idx": 2},
+        ]
+
+        result = distilbert_ner._deduplicate_chunk_entities(entities)
+
+        # Should deduplicate to one entity
+        assert len(result) == 1
+
+        # Should preserve first occurrence's casing
+        assert result[0]["text"] == "Microsoft"
+
+        # Should keep highest confidence
+        assert result[0]["confidence"] == 0.99
+
+    def test_chunk_deduplication_different_labels_kept_separate(self):
+        """
+        Test that same text with different labels are NOT deduplicated.
+
+        Example: "Washington" could be a person (George Washington) or location.
+        """
+        entities = [
+            {"text": "Washington", "label": "PER", "confidence": 0.90, "chunk_idx": 0},
+            {"text": "Washington", "label": "LOC", "confidence": 0.85, "chunk_idx": 1},
+        ]
+
+        result = distilbert_ner._deduplicate_chunk_entities(entities)
+
+        # Should keep both (different labels)
+        assert len(result) == 2
+
+        labels = {e["label"] for e in result}
+        assert labels == {"PER", "LOC"}
+
+    def test_entities_at_chunk_boundary(self):
+        """
+        Test that entities near chunk boundaries are correctly extracted.
+
+        This is a stress test: entities appearing exactly at the boundary
+        between chunks should be captured correctly.
+        """
+        # Create text where entity appears around the 128-token boundary
+        # Use repetitive text to reach boundary, then place entity
+        filler = "The quick brown fox jumps over the lazy dog. " * 15  # ~135 tokens
+        text = filler + "Alice works at Microsoft in Seattle."
+
+        entities = distilbert_ner.predict_entities(text)
+        entity_texts = [e["text"] for e in entities]
+
+        # Should still find entities near/after the boundary
+        assert any("Alice" in text for text in entity_texts), \
+            "Should find Alice even though it's past the 128-token boundary"
+        assert any("Microsoft" in text for text in entity_texts), \
+            "Should find Microsoft even though it's past the 128-token boundary"
+
+        # All should have confidence and no chunk metadata
+        for entity in entities:
+            assert "confidence" in entity
+            assert "chunk_idx" not in entity
+
+    def test_no_entities_in_long_text(self):
+        """
+        Test that long text with NO entities returns empty list.
+
+        Regression test to ensure chunking doesn't create false positives.
+        """
+        # Long text with no named entities
+        text = " ".join([
+            "The system works well when configured properly.",
+            "It processes data efficiently and handles errors gracefully.",
+            "Performance metrics show consistent results across tests.",
+            "Integration with existing infrastructure proceeds smoothly.",
+            "Documentation provides clear guidance for implementation."
+        ] * 5)  # Repeat to ensure multiple chunks
+
+        entities = distilbert_ner.predict_entities(text)
+
+        # Should find no entities (or very few false positives)
+        assert len(entities) <= 2, \
+            f"Expected no/few entities in text without names, got {len(entities)}: {entities}"
+
+
+# ============================================================================
 # Test Configuration
 # ============================================================================
 

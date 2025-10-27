@@ -355,12 +355,14 @@ def _get_extractor() -> EntityExtractor:
     return _extractor
 
 
-def predict_entities(text: str) -> list[dict]:
+def predict_entities(text: str, max_length: int = MAX_LENGTH, stride: int = 64) -> list[dict]:
     """
-    Run NER inference on input text.
+    Run NER inference on input text with sliding window for long texts.
 
     Args:
         text: Input text to analyze
+        max_length: Maximum tokens per chunk (default: 128)
+        stride: Number of overlapping tokens between chunks (default: 64)
 
     Returns:
         List of detected entities with their labels and positions.
@@ -370,41 +372,106 @@ def predict_entities(text: str) -> list[dict]:
     tokenizer = _get_tokenizer()
     extractor = _get_extractor()
 
-    # Tokenize input
-    encoded = tokenizer.encode(text)
-    input_ids = encoded["input_ids"]
-    attention_mask = encoded["attention_mask"]
-
-    # Run ONNX inference
-    outputs = session.run(
-        None,  # Get all outputs
-        {
-            "input_ids": input_ids,
-            "attention_mask": attention_mask,
-        },
+    # Tokenize with stride to get overlapping chunks
+    encoded = tokenizer.tokenizer(
+        text,
+        padding="max_length",
+        max_length=max_length,
+        truncation=True,
+        stride=stride,
+        return_overflowing_tokens=True,
+        return_tensors="np",
     )
 
-    # Extract logits and convert to label predictions
-    logits = outputs[0]  # Shape: (1, MAX_LENGTH, num_labels)
-    label_ids = np.argmax(logits[0], axis=-1)  # Shape: (MAX_LENGTH,)
+    all_entities = []
 
-    # Convert logits to probabilities
-    probabilities = softmax(logits[0], axis=-1)  # Shape: (MAX_LENGTH, num_labels)
+    # Process each chunk
+    num_chunks = len(encoded["input_ids"])
+    for chunk_idx in range(num_chunks):
+        input_ids = encoded["input_ids"][chunk_idx : chunk_idx + 1].astype(np.int64)
+        attention_mask = encoded["attention_mask"][chunk_idx : chunk_idx + 1].astype(np.int64)
 
-    # Decode tokens and labels
-    tokens = tokenizer.convert_ids_to_tokens(input_ids[0])
-    labels = [ID2LABEL[label_id] for label_id in label_ids]
+        # Run ONNX inference
+        outputs = session.run(
+            None,  # Get all outputs
+            {
+                "input_ids": input_ids,
+                "attention_mask": attention_mask,
+            },
+        )
 
-    # Extract entities from BIO tags with confidence scores
-    entities = extractor.extract(
-        tokens, labels, attention_mask[0], probabilities, label_ids
-    )
+        # Extract logits and convert to label predictions
+        logits = outputs[0]  # Shape: (1, max_length, num_labels)
+        label_ids = np.argmax(logits[0], axis=-1)  # Shape: (max_length,)
 
-    # Reconstruct entity text using tokenizer
+        # Convert logits to probabilities
+        probabilities = softmax(logits[0], axis=-1)  # Shape: (max_length, num_labels)
+
+        # Decode tokens and labels
+        tokens = tokenizer.convert_ids_to_tokens(input_ids[0])
+        labels = [ID2LABEL[label_id] for label_id in label_ids]
+
+        # Extract entities from BIO tags with confidence scores
+        chunk_entities = extractor.extract(
+            tokens, labels, attention_mask[0], probabilities, label_ids
+        )
+
+        # Reconstruct entity text using tokenizer
+        for entity in chunk_entities:
+            entity["text"] = tokenizer.convert_tokens_to_string(entity["tokens"])
+            entity["chunk_idx"] = chunk_idx
+
+        all_entities.extend(chunk_entities)
+
+    # Deduplicate entities across chunk boundaries
+    if num_chunks > 1:
+        all_entities = _deduplicate_chunk_entities(all_entities)
+
+    # Remove chunk metadata
+    for entity in all_entities:
+        entity.pop("chunk_idx", None)
+
+    return all_entities
+
+
+def _deduplicate_chunk_entities(entities: list[dict]) -> list[dict]:
+    """
+    Deduplicate entities from overlapping chunks.
+
+    When processing text with sliding windows, the same entity may appear in multiple
+    chunks. This function keeps the entity with the highest confidence score.
+
+    Args:
+        entities: List of entity dicts with 'chunk_idx' field
+
+    Returns:
+        Deduplicated list with highest-confidence version of each entity
+    """
+    # Group entities by normalized text and label
+    entity_groups = {}
+
     for entity in entities:
-        entity["text"] = tokenizer.convert_tokens_to_string(entity["tokens"])
+        # Create key based on normalized text and label
+        key = (entity["text"].strip().lower(), entity["label"])
 
-    return entities
+        if key not in entity_groups:
+            entity_groups[key] = []
+        entity_groups[key].append(entity)
+
+    # For each group, keep the entity with highest confidence
+    deduplicated = []
+    for group in entity_groups.values():
+        if len(group) == 1:
+            deduplicated.append(group[0])
+        else:
+            # Multiple instances - keep the one with highest confidence
+            best_entity = max(
+                group,
+                key=lambda e: e.get("confidence", 0.0)
+            )
+            deduplicated.append(best_entity)
+
+    return deduplicated
 
 
 def _deduplicate_entities(entities: list[dict]) -> list[dict]:
