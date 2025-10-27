@@ -200,7 +200,7 @@ class EntityExtractor:
         entities = self._aggregate_words_into_entities(words)
 
         # Merge fragmented entities (e.g., "G.I. Joe" split into ["G", ".", "I. Joe"])
-        entities = self._merge_fragmented_entities(entities, tokens)
+        entities = self._merge_fragmented_entities(entities, tokens, labels)
 
         # Add character offsets if available
         if offset_mapping:
@@ -349,7 +349,8 @@ class EntityExtractor:
     def _merge_fragmented_entities(
         self,
         entities: list[dict],
-        tokens: list[str]
+        tokens: list[str],
+        labels: list[str]
     ) -> list[dict]:
         """
         Merge consecutive entities of the same type that are fragmented by punctuation.
@@ -360,11 +361,13 @@ class EntityExtractor:
 
         IMPORTANT: Only merges when there's clear evidence of fragmentation:
         - Entities contain very short tokens (1-2 chars like "G", ".", "I")
-        - OR entities are separated by punctuation tokens
+        - OR entities are separated by punctuation tokens that are PART OF ENTITIES
+          (labeled as B-/I-, not O)
 
         Args:
             entities: List of entity dicts from _aggregate_words_into_entities()
             tokens: Original token list to check what's between entities
+            labels: Original label list to check if gap tokens are entity components
 
         Returns:
             List of entities with fragmented same-type entities merged
@@ -411,20 +414,29 @@ class EntityExtractor:
                     should_merge = True
 
                 # Strategy 2: Check if gap between entities contains periods/dots
-                # (not commas or other separators - those are legitimate boundaries)
+                # that are PART OF ENTITIES (labeled B-/I-), not sentence punctuation (labeled O)
                 if gap > 0:
-                    gap_tokens = tokens[current["end_token"] + 1 : next_entity["start_token"]]
-                    # Remove special tokens
-                    gap_tokens = [t for t in gap_tokens if t not in ["[CLS]", "[SEP]", "[PAD]"]]
+                    gap_start = current["end_token"] + 1
+                    gap_end = next_entity["start_token"]
+                    gap_tokens = tokens[gap_start:gap_end]
+                    gap_labels = labels[gap_start:gap_end]
 
-                    if gap_tokens:
-                        # Check if all gap tokens are periods/dots (not commas or other punctuation)
-                        # This catches cases like "G" . "I" . "Joe" or "U" . "S" . "A"
-                        has_period_gap = all(
-                            token.strip("##") == "." for token in gap_tokens
+                    # Remove special tokens
+                    gap_data = [
+                        (t, l) for t, l in zip(gap_tokens, gap_labels)
+                        if t not in ["[CLS]", "[SEP]", "[PAD]"]
+                    ]
+
+                    if gap_data:
+                        # Check if all gap tokens are periods/dots AND are entity components
+                        # This catches cases like "G.I. Joe" where periods are labeled B-/I-
+                        # but NOT "Riley. XANDER" where period is labeled 'O'
+                        has_entity_period_gap = all(
+                            token.strip("##") == "." and label != "O"
+                            for token, label in gap_data
                         )
 
-                        if has_period_gap:
+                        if has_entity_period_gap:
                             should_merge = True
 
                 if not should_merge:
