@@ -61,19 +61,20 @@ def _render_graph_image(graph) -> str:
     dot.attr(
         "node",
         shape="circle",
-        style="filled,setlinewidth(1.5)",
+        style="filled",
         fontname="Helvetica",
         fontsize="11",
-        color="#1f2937",
-        fontcolor="#0f172a",
+        color="transparent",
+        fontcolor="#1f2937",
     )
     dot.attr(
         "edge",
-        color="#4b5563",
+        color="#60a5fa",
         penwidth="1.6",
-        arrowsize="0.85",
+        arrowsize="1.0",
+        arrowhead="vee",
         fontname="Helvetica",
-        fontcolor="#1f2937",
+        fontcolor="#e2e8f0",
         fontsize="10",
     )
 
@@ -81,13 +82,13 @@ def _render_graph_image(graph) -> str:
         label = node.label
         normalized = label.lower()
         is_author = normalized in {"author", "i"}
-        fillcolor = "#fde68a" if is_author else "#bfdbfe"
-        outline = "#f97316" if is_author else "#2563eb"
+        fillcolor = "#facc15" if is_author else "#dbeafe"
+        fontcolor = "#1f2937"
         dot.node(
             str(node.id),
             label,
             fillcolor=fillcolor,
-            color=outline,
+            fontcolor=fontcolor,
             tooltip=label,
         )
 
@@ -97,6 +98,8 @@ def _render_graph_image(graph) -> str:
             str(edge.source),
             str(edge.target),
             label=edge_label,
+            color="#60a5fa",
+            fontcolor="#e2e8f0",
             tooltip=edge_label,
         )
 
@@ -322,10 +325,10 @@ with gr.Blocks(title="KG Builder Demo", analytics_enabled=False) as demo:
     # Examples
     gr.Examples(
         examples=[
-            "Dear diary, I'm fifteen and my hands shake thinking about tomorrow's science fair. Emma stayed late to glue the solar model, and Dad keeps reminding me my curiosity is bigger than the nerves.",
-            "Orientation day wiped me out, but Malik walked me around campus and told me the dining hall coffee is survivable. I called Mom and she said she could hear excitement vibrating in my voice.",
-            "Baby Mia screamed through sunrise but Theo brewed lavender tea and hugged me until the exhaustion unclenched. I texted Sasha because she always reminds me that tenderness counts as progress.",
-            "Sam brought tulips this afternoon and we sat on the porch naming the shades. I let the gratitude bloom until the ache loosened its grip.",
+            "Residency schedule got scrambled again and the cohort Discord is a whole meltdown; I spent lunch break rewriting coverage spreadsheets while the therapist keeps texting reminders to drink water and step outside.",
+            "Daycare called about Maya's fever right as Slack started lighting up about the Q3 deck, so I reheated last night's pad thai, dialed into Nana's telehealth, and promised Leo I'd actually sit for dinner even if the slides aren't done.",
+            "Dropped Jonah at robotics, nudged Dad through his cardiologist's walking plan, then converted two more VHS tapes because apparently the class reunion committee thinks I'm the only one who remembers how.",
+            "HOA thread blew up over someone's solar install, the library shift ran long when the new catalog crashed, and now I'm drafting a note to council because the bus route cut is going to leave Doris and Ken stranded after church.",
         ],
         inputs=text_input,
     )
