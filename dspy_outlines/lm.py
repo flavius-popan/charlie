@@ -120,25 +120,31 @@ class OutlinesLM(dspy.BaseLM):
 
         # Lock MLX model access to prevent Metal command buffer race conditions
         with MLX_LOCK:
+            outlines_kwargs = {"max_tokens": max_tokens}
+            if self.prompt_cache is not None:
+                outlines_kwargs["prompt_cache"] = self.prompt_cache
+
             if constraint:
                 # Use Outlines wrapper for constrained generation
-                # Cache IS updated in-place by MLX during generation
                 result_json = self.outlines_model(
                     formatted_prompt,
                     output_type=constraint,
-                    max_tokens=max_tokens,
-                    prompt_cache=self.prompt_cache,
+                    **outlines_kwargs,
                 )
             else:
                 # Use raw MLX for unconstrained generation
-                # Cache IS updated in-place by MLX during generation
+                generate_kwargs = {
+                    "prompt_cache": self.prompt_cache,
+                    "verbose": False,
+                }
+                if self.prompt_cache is None:
+                    generate_kwargs.pop("prompt_cache")
                 completion = mlx_lm.generate(
                     self.raw_mlx_model,
                     self.tokenizer,
                     formatted_prompt,
                     max_tokens=max_tokens,
-                    prompt_cache=self.prompt_cache,
-                    verbose=False,
+                    **generate_kwargs,
                 )
 
         # Process results outside lock (can run concurrently)
