@@ -25,6 +25,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Reduce noisy loggers - keep INFO to see HTTP requests, but hide DEBUG noise
+logging.getLogger("httpcore").setLevel(logging.INFO)
+logging.getLogger("urllib3").setLevel(logging.INFO)
+logging.getLogger("httpx").setLevel(logging.INFO)
+logging.getLogger("asyncio").setLevel(logging.WARNING)  # Hide selector spam
+
 # Initialize LM and adapter
 lm = OutlinesLM()
 adapter = OutlinesAdapter()
@@ -224,7 +230,7 @@ def extract_and_display(
 
 
 # Create Gradio interface
-with gr.Blocks(title="KG Builder Demo") as demo:
+with gr.Blocks(title="KG Builder Demo", analytics_enabled=False) as demo:
     gr.Markdown("# Charlie - Knowledge Graph Extraction")
     gr.Markdown("**Model Fusion**: distilbert-NER x Qwen3-4B")
 

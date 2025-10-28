@@ -25,6 +25,8 @@ def load_mlx_model(model_path: str = None):
         model_path = DEFAULT_MODEL_PATH
 
     logger.info(f"Loading MLX model: {model_path}")
+    # mlx_lm.load() automatically checks ~/.cache/huggingface/hub/ first
+    # Only downloads if not cached
     mlx_model, mlx_tokenizer = mlx_lm.load(model_path)
     logger.info("MLX model loaded successfully")
 

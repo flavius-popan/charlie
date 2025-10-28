@@ -2,8 +2,15 @@ import dspy
 from pydantic import BaseModel, Field
 from typing import List
 import json
+import logging
 
 from dspy_outlines import OutlinesLM, OutlinesAdapter
+
+# Reduce noisy loggers - keep INFO to see HTTP requests, but hide DEBUG noise
+logging.getLogger("httpcore").setLevel(logging.INFO)
+logging.getLogger("urllib3").setLevel(logging.INFO)
+logging.getLogger("httpx").setLevel(logging.INFO)
+logging.getLogger("asyncio").setLevel(logging.WARNING)
 
 # Configure Outlines+MLX hybrid LM
 lm = OutlinesLM()
