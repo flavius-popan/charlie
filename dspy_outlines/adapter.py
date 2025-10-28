@@ -5,12 +5,10 @@ from typing import Any
 
 from dspy.adapters import ChatAdapter
 from dspy.adapters.types.tool import ToolCalls
-from dspy.adapters.utils import parse_value
 from dspy.clients.lm import LM
 from dspy.signatures.signature import Signature
 from dspy.utils.exceptions import AdapterParseError
-import json_repair
-import regex
+from litellm import ContextWindowExceededError
 
 logger = logging.getLogger(__name__)
 
@@ -71,31 +69,36 @@ class OutlinesAdapter(ChatAdapter):
             )
 
         # Chat: ChatAdapter field-marker format
-        chat_response = None
+        # NOTE: Cannot delegate to ChatAdapter() because it has built-in JSONAdapter fallback
+        # that would bypass our tier 2. Must manually replicate Adapter.__call__() logic.
+        # Check dspy.adapters.base.Adapter.__call__ for updates with each DSPy release.
+        outputs = None
         try:
             logger.info("Using DSPy ChatAdapter (field-marker format)")
-            # Format messages using parent's format method
-            messages = self.format(signature, demos, inputs)
 
-            # Generate and capture response
-            chat_response = lm(messages=messages, **lm_kwargs)
+            # 1. Preprocess (handles tool calling, signature modifications)
+            processed_signature = self._call_preprocess(lm, lm_kwargs, signature, inputs)
 
-            # Parse using parent's parse method
-            result = self.parse(signature, chat_response)
+            # 2. Format messages using parent's format method
+            messages = self.format(processed_signature, demos, inputs)
+
+            # 3. Generate and capture response
+            outputs = lm(messages=messages, **lm_kwargs)
+
+            # 4. Postprocess (handles list iteration, dict extraction, tool_calls, logprobs)
+            result = self._call_postprocess(processed_signature, signature, outputs)
+
             self.metrics["chat_success"] += 1
             self.last_adapter_used = "chat"
             logger.info("Chat succeeded")
             return result
+
         except Exception as e:
             self.metrics["chat_failures"] += 1
 
             # Log the actual response for prompt optimization
-            if chat_response:
-                response_text = (
-                    chat_response[0]
-                    if isinstance(chat_response, list)
-                    else chat_response
-                )
+            if outputs:
+                response_text = outputs[0] if isinstance(outputs, list) else outputs
                 if isinstance(response_text, dict):
                     response_text = response_text.get("text", str(response_text))
                 response_preview = str(response_text)[:1000]
@@ -105,13 +108,19 @@ class OutlinesAdapter(ChatAdapter):
                 logger.info(f"Chat failed: {e}")
 
             # Don't re-raise ContextWindowExceededError - no point in retrying
-            if "ContextWindowExceededError" in str(type(e)):
+            if isinstance(e, ContextWindowExceededError):
+                logger.warning(f"Context window exceeded: {e}")
                 raise
 
-        # JSON: Unconstrained JSON with json_repair
+        # JSON: Unconstrained JSON (delegate to stock JSONAdapter for 1-to-1 parity)
         try:
-            logger.info("Using DSPy JSONAdapter (json_repair)")
-            result = self._json_fallback(lm, lm_kwargs, signature, demos, inputs)
+            logger.info("Using DSPy JSONAdapter")
+            from dspy.adapters.json_adapter import JSONAdapter
+
+            # Use stock JSONAdapter for 1-to-1 parity with DSPy defaults
+            json_adapter = JSONAdapter()
+            result = json_adapter(lm, lm_kwargs, signature, demos, inputs)
+
             self.metrics["json_success"] += 1
             self.last_adapter_used = "json"
             logger.info("JSON succeeded")
@@ -119,6 +128,13 @@ class OutlinesAdapter(ChatAdapter):
         except AdapterParseError as e:
             self.metrics["json_failures"] += 1
             logger.info(f"JSON failed: {e}")
+        except Exception as e:
+            # Catch other exceptions to prevent tier 3 from being skipped
+            self.metrics["json_failures"] += 1
+            logger.info(f"JSON failed with unexpected error: {e}")
+            if isinstance(e, ContextWindowExceededError):
+                logger.warning(f"Context window exceeded: {e}")
+                raise
 
         # OutlinesJSON: Constrained JSON via Outlines
         if skip_tier3:
@@ -169,44 +185,6 @@ class OutlinesAdapter(ChatAdapter):
                 return True
         return False
 
-    def _json_fallback(
-        self,
-        lm: LM,
-        lm_kwargs: dict[str, Any],
-        signature: type[Signature],
-        demos: list[dict[str, Any]],
-        inputs: dict[str, Any],
-    ) -> list[dict[str, Any]]:
-        """
-        JSON: Unconstrained JSON format with json_repair parsing.
-
-        Uses ChatAdapter's format() to create messages, adds JSON instruction,
-        then parses with json_repair for robustness.
-        """
-        # Format messages using parent's format method
-        messages = self.format(signature, demos, inputs)
-
-        # Add JSON instruction to last user message
-        json_instruction = self._user_message_output_requirements(signature)
-        if messages and messages[-1].get("role") == "user":
-            messages[-1]["content"] += f"\n\n{json_instruction}"
-
-        # Generate (unconstrained)
-        outputs = lm(messages=messages, **lm_kwargs)
-
-        # Parse JSON response
-        completions = []
-        for output in outputs:
-            # Standard DSPy output handling (see Adapter._call_postprocess)
-            text = output
-            if isinstance(output, dict):
-                text = output["text"]
-
-            parsed = self._parse_json(signature, text)
-            completions.append(parsed)
-
-        return completions
-
     def _constrained_fallback(
         self,
         lm: LM,
@@ -227,18 +205,16 @@ class OutlinesAdapter(ChatAdapter):
         lm_kwargs["_outlines_constraint"] = constraint
         lm_kwargs["_outlines_field_name"] = output_field_name
 
-        # Format messages using parent's format method
-        messages = self.format(signature, demos, inputs)
+        # Use JSONAdapter's format for proper JSON-formatted messages
+        # (avoids conflicting field-marker instructions from ChatAdapter)
+        from dspy.adapters.json_adapter import JSONAdapter
+        json_adapter = JSONAdapter()
+        messages = json_adapter.format(signature, demos, inputs)
 
-        # Add JSON instruction to last user message
-        json_instruction = self._user_message_output_requirements(signature)
-        if messages and messages[-1].get("role") == "user":
-            messages[-1]["content"] += f"\n\n{json_instruction}"
-
-        # Generate with constraint
+        # Generate with constraint (messages already have JSON instructions from JSONAdapter)
         outputs = lm(messages=messages, **lm_kwargs)
 
-        # Parse JSON response (guaranteed valid by Outlines)
+        # Parse JSON response using JSONAdapter's parse method (guaranteed valid by Outlines)
         completions = []
         for output in outputs:
             # Standard DSPy output handling (see Adapter._call_postprocess)
@@ -246,67 +222,8 @@ class OutlinesAdapter(ChatAdapter):
             if isinstance(output, dict):
                 text = output["text"]
 
-            parsed = self._parse_json(signature, text)
+            # Use JSONAdapter's parse for 1-to-1 parity
+            parsed = json_adapter.parse(signature, text)
             completions.append(parsed)
 
         return completions
-
-    def _user_message_output_requirements(self, signature: type[Signature]) -> str:
-        """Create JSON output instruction for user message."""
-        field_names = list(signature.output_fields.keys())
-        message = "Respond with a JSON object in the following order of fields: "
-        message += ", then ".join(f"`{f}`" for f in field_names)
-        message += "."
-        return message
-
-    def _parse_json(
-        self, signature: type[Signature], completion: str
-    ) -> dict[str, Any]:
-        """
-        Parse JSON completion using json_repair for robustness.
-
-        Raises AdapterParseError if parsing fails or fields don't match.
-        """
-        # Extract JSON object using regex
-        pattern = r"\{(?:[^{}]|(?R))*\}"
-        match = regex.search(pattern, completion, regex.DOTALL)
-        if match:
-            completion = match.group(0)
-
-        # Parse with json_repair for robustness
-        try:
-            fields = json_repair.loads(completion)
-        except Exception as e:
-            raise AdapterParseError(
-                adapter_name="OutlinesAdapter",
-                signature=signature,
-                lm_response=completion,
-                message=f"Failed to parse JSON: {e}",
-            )
-
-        if not isinstance(fields, dict):
-            raise AdapterParseError(
-                adapter_name="OutlinesAdapter",
-                signature=signature,
-                lm_response=completion,
-                message="LM response cannot be serialized to a JSON object.",
-            )
-
-        # Filter to output fields only
-        fields = {k: v for k, v in fields.items() if k in signature.output_fields}
-
-        # Parse each field value to its annotation type
-        for k, v in fields.items():
-            if k in signature.output_fields:
-                fields[k] = parse_value(v, signature.output_fields[k].annotation)
-
-        # Verify all output fields are present
-        if fields.keys() != signature.output_fields.keys():
-            raise AdapterParseError(
-                adapter_name="OutlinesAdapter",
-                signature=signature,
-                lm_response=completion,
-                parsed_result=fields,
-            )
-
-        return fields

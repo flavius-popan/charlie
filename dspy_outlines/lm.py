@@ -67,13 +67,22 @@ class OutlinesLM(dspy.BaseLM):
         Args:
             model_path: Path to MLX model (uses default if None)
         """
-        super().__init__(model="outlines-mlx")
-        self.model, self.tokenizer, self.prompt_cache = create_outlines_model(
+        # Import here to get default path
+        from .mlx_loader import DEFAULT_MODEL_PATH
+
+        if model_path is None:
+            model_path = DEFAULT_MODEL_PATH
+
+        # Keep self.model as string for DSPy compatibility (JSONAdapter expects lm.model.split())
+        super().__init__(model=model_path)
+
+        # Store Outlines wrapper separately
+        self.outlines_model, self.tokenizer, self.prompt_cache = create_outlines_model(
             model_path
         )
         # Store raw MLX model for unconstrained generation with caching support
-        # self.model is the Outlines wrapper, self.model.model is the underlying MLX nn.Module
-        self.raw_mlx_model = self.model.model
+        # self.outlines_model is the Outlines wrapper, self.outlines_model.model is the underlying MLX nn.Module
+        self.raw_mlx_model = self.outlines_model.model
         logger.info("OutlinesLM initialized with Outlines+MLX backend")
 
     def forward(self, prompt=None, messages=None, **kwargs):
@@ -114,7 +123,7 @@ class OutlinesLM(dspy.BaseLM):
             if constraint:
                 # Use Outlines wrapper for constrained generation
                 # Cache IS updated in-place by MLX during generation
-                result_json = self.model(
+                result_json = self.outlines_model(
                     formatted_prompt,
                     output_type=constraint,
                     max_tokens=max_tokens,
@@ -158,6 +167,7 @@ class OutlinesLM(dspy.BaseLM):
         # Return OpenAI format response as object (not dict)
         # BaseLM expects object with attributes, not dict
         # Note: usage must be dict-convertible (dict() is called on it for logging)
+        # model should be the string path for compatibility
         return SimpleNamespace(
             choices=[
                 SimpleNamespace(
@@ -170,7 +180,7 @@ class OutlinesLM(dspy.BaseLM):
                 completion_tokens=0,
                 total_tokens=0,
             ),
-            model=self.model,
+            model=self.model,  # String model path for DSPy compatibility
         )
 
     def _get_cache_size(self) -> int:
