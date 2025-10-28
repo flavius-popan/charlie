@@ -17,6 +17,7 @@ import json
 from types import SimpleNamespace
 
 import dspy
+import mlx_lm
 from pydantic import BaseModel
 
 from .mlx_loader import create_outlines_model
@@ -31,12 +32,16 @@ logger = logging.getLogger(__name__)
 # This module-level lock serializes all MLX inference calls across all OutlinesLM instances.
 MLX_LOCK = threading.Lock()
 
+
 class AttrDict(dict):
     """Dict that allows attribute-style access (needed for DSPy compatibility)."""
+
     def __getattr__(self, key):
         return self[key]
+
     def __setattr__(self, key, value):
         self[key] = value
+
 
 class OutlinesLM(dspy.BaseLM):
     """
@@ -63,7 +68,12 @@ class OutlinesLM(dspy.BaseLM):
             model_path: Path to MLX model (uses default if None)
         """
         super().__init__(model="outlines-mlx")
-        self.model, self.tokenizer = create_outlines_model(model_path)
+        self.model, self.tokenizer, self.prompt_cache = create_outlines_model(
+            model_path
+        )
+        # Store raw MLX model for unconstrained generation with caching support
+        # self.model is the Outlines wrapper, self.model.model is the underlying MLX nn.Module
+        self.raw_mlx_model = self.model.model
         logger.info("OutlinesLM initialized with Outlines+MLX backend")
 
     def forward(self, prompt=None, messages=None, **kwargs):
@@ -82,9 +92,9 @@ class OutlinesLM(dspy.BaseLM):
         Returns:
             OpenAI-format response dict
         """
-        max_tokens = kwargs.get('max_tokens', 512)
-        constraint = kwargs.pop('_outlines_constraint', None)
-        field_name = kwargs.pop('_outlines_field_name', None)
+        max_tokens = kwargs.get("max_tokens", 512)
+        constraint = kwargs.pop("_outlines_constraint", None)
+        field_name = kwargs.pop("_outlines_field_name", None)
 
         # Format prompt outside lock (can run concurrently)
         if messages:
@@ -92,20 +102,34 @@ class OutlinesLM(dspy.BaseLM):
         else:
             formatted_prompt = prompt
 
-        logger.info(f"Generating with constraint: {constraint.__name__ if constraint else 'None'}")
+        # Log cache statistics before generation
+        cache_size = self._get_cache_size()
+        logger.info(
+            f"Generating with constraint: {constraint.__name__ if constraint else 'None'}, "
+            f"cache_size={cache_size} tokens"
+        )
 
         # Lock MLX model access to prevent Metal command buffer race conditions
         with MLX_LOCK:
             if constraint:
+                # Use Outlines wrapper for constrained generation
+                # Cache IS updated in-place by MLX during generation
                 result_json = self.model(
                     formatted_prompt,
                     output_type=constraint,
-                    max_tokens=max_tokens
+                    max_tokens=max_tokens,
+                    prompt_cache=self.prompt_cache,
                 )
             else:
-                completion = self.model(
+                # Use raw MLX for unconstrained generation
+                # Cache IS updated in-place by MLX during generation
+                completion = mlx_lm.generate(
+                    self.raw_mlx_model,
+                    self.tokenizer,
                     formatted_prompt,
-                    max_tokens=max_tokens
+                    max_tokens=max_tokens,
+                    prompt_cache=self.prompt_cache,
+                    verbose=False,
                 )
 
         # Process results outside lock (can run concurrently)
@@ -127,10 +151,9 @@ class OutlinesLM(dspy.BaseLM):
         # Store in history (best-effort, not critical for correctness)
         # Note: No lock needed - history is for debugging only, not read by application
         # Worst case: corrupted/missing history entries under concurrent access
-        self.history.append({
-            "prompt": formatted_prompt[:200],
-            "completion": completion[:200]
-        })
+        self.history.append(
+            {"prompt": formatted_prompt[:200], "completion": completion[:200]}
+        )
 
         # Return OpenAI format response as object (not dict)
         # BaseLM expects object with attributes, not dict
@@ -139,16 +162,38 @@ class OutlinesLM(dspy.BaseLM):
             choices=[
                 SimpleNamespace(
                     message=SimpleNamespace(content=completion, role="assistant"),
-                    finish_reason="stop"
+                    finish_reason="stop",
                 )
             ],
             usage=AttrDict(
                 prompt_tokens=0,  # MLX doesn't provide token counts easily
                 completion_tokens=0,
-                total_tokens=0
+                total_tokens=0,
             ),
-            model=self.model
+            model=self.model,
         )
+
+    def _get_cache_size(self) -> int:
+        """
+        Get the number of tokens currently in the prompt cache.
+
+        Returns:
+            Number of cached tokens (0 if cache is empty or None)
+        """
+        if self.prompt_cache is None:
+            return 0
+        # MLX prompt cache is a list of KVCache objects
+        # Each KVCache has keys, values, and offset attributes
+        # The offset indicates how many tokens are cached
+        try:
+            if len(self.prompt_cache) > 0:
+                # Get the first layer's cache
+                first_layer_cache = self.prompt_cache[0]
+                if hasattr(first_layer_cache, 'offset'):
+                    return first_layer_cache.offset
+        except (IndexError, AttributeError):
+            pass
+        return 0
 
     def _format_messages(self, messages: list[dict]) -> str:
         """
@@ -160,21 +205,19 @@ class OutlinesLM(dspy.BaseLM):
         Returns:
             Formatted prompt string
         """
-        if hasattr(self.tokenizer, 'apply_chat_template'):
+        if hasattr(self.tokenizer, "apply_chat_template"):
             return self.tokenizer.apply_chat_template(
-                messages,
-                tokenize=False,
-                add_generation_prompt=True
+                messages, tokenize=False, add_generation_prompt=True
             )
         else:
             # Fallback: simple formatting
             prompt = ""
             for msg in messages:
-                role = msg.get('role', 'user')
-                content = msg.get('content', '')
-                if role == 'system':
+                role = msg.get("role", "user")
+                content = msg.get("content", "")
+                if role == "system":
                     prompt += f"System: {content}\n\n"
-                elif role == 'user':
+                elif role == "user":
                     prompt += f"User: {content}\n\n"
             prompt += "Assistant:"
             return prompt

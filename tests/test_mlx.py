@@ -371,5 +371,125 @@ def test_lock_overhead_minimal(shared_lm):
     lm.model = original_model
 
 
+# Prompt Caching Tests
+
+def test_prompt_cache_created(shared_lm):
+    """Test that prompt cache is initialized."""
+    lm = shared_lm
+    assert lm.prompt_cache is not None
+    assert isinstance(lm.prompt_cache, list)
+
+
+def test_cache_size_helper(shared_lm):
+    """Test that _get_cache_size() returns valid values."""
+    lm = shared_lm
+
+    # Should return 0 or positive integer
+    cache_size = lm._get_cache_size()
+    assert isinstance(cache_size, int)
+    assert cache_size >= 0
+
+
+def test_prompt_caching_with_repeated_prefix(shared_lm):
+    """Test that prompt caching speeds up generation with repeated prefixes.
+
+    This test verifies that:
+    1. Cache is empty initially
+    2. Cache grows after first generation
+    3. Subsequent generations with shared prefix are faster (cache hit)
+    """
+    lm = shared_lm
+
+    # Check initial cache size
+    initial_cache_size = lm._get_cache_size()
+
+    # Define a common prefix for testing
+    common_prefix = "You are a helpful assistant. Answer concisely.\n\nQuestion: "
+
+    # First generation - should populate cache
+    start1 = time.time()
+    result1 = lm.forward(
+        prompt=common_prefix + "What is 2+2?",
+        max_tokens=20
+    )
+    duration1 = time.time() - start1
+
+    # Cache should have grown
+    cache_size_after_first = lm._get_cache_size()
+    assert cache_size_after_first > initial_cache_size, "Cache should grow after first generation"
+
+    # Second generation with same prefix - should be faster due to cache
+    start2 = time.time()
+    result2 = lm.forward(
+        prompt=common_prefix + "What is 3+3?",
+        max_tokens=20
+    )
+    duration2 = time.time() - start2
+
+    # Cache size should remain similar (same prefix length)
+    cache_size_after_second = lm._get_cache_size()
+    assert cache_size_after_second > 0, "Cache should still be populated"
+
+    # Third generation with same prefix - should also benefit from cache
+    start3 = time.time()
+    result3 = lm.forward(
+        prompt=common_prefix + "What is 5+5?",
+        max_tokens=20
+    )
+    duration3 = time.time() - start3
+
+    # Verify all generations succeeded
+    assert result1 is not None
+    assert result2 is not None
+    assert result3 is not None
+
+    # Cache hit should make subsequent calls faster
+    # Allow for some variance, but expect at least 10% speedup (caching overhead exists)
+    print(f"\nCache performance: first={duration1:.3f}s, second={duration2:.3f}s, third={duration3:.3f}s")
+    print(f"Cache sizes: initial={initial_cache_size}, after_first={cache_size_after_first}, after_second={cache_size_after_second}")
+
+    # At least one of the cached calls should be faster
+    speedup2 = duration1 / duration2 if duration2 > 0 else 1.0
+    speedup3 = duration1 / duration3 if duration3 > 0 else 1.0
+
+    assert speedup2 > 1.1 or speedup3 > 1.1, (
+        f"Expected cache speedup > 1.1x, got speedup2={speedup2:.2f}x, speedup3={speedup3:.2f}x. "
+        f"Durations: {duration1:.3f}s, {duration2:.3f}s, {duration3:.3f}s. "
+        f"Cache sizes: {initial_cache_size} -> {cache_size_after_first} -> {cache_size_after_second}"
+    )
+
+
+def test_cache_works_with_constrained_generation(shared_lm):
+    """Test that caching also works for constrained generation.
+
+    The cache is updated in-place by MLX during generation, regardless of
+    whether we're using constrained (Outlines) or unconstrained generation.
+    """
+    lm = shared_lm
+
+    # Reset cache for clean test
+    from mlx_lm.models.cache import make_prompt_cache
+    lm.prompt_cache = make_prompt_cache(lm.raw_mlx_model)
+
+    # Get initial cache size (should be 0 after reset)
+    initial_cache_size = lm._get_cache_size()
+    assert initial_cache_size == 0, "Cache should be empty after reset"
+
+    # Constrained generation with Pydantic model
+    result = lm.forward(
+        prompt="What is 5+5? Answer with just the number.",
+        max_tokens=50,
+        _outlines_constraint=SimpleResponse
+    )
+
+    # Verify cache was updated
+    cache_size_after = lm._get_cache_size()
+    assert cache_size_after > 0, "Cache should be populated after constrained generation"
+    assert result is not None
+    assert hasattr(result.choices[0].message, 'content')
+
+    print(f"\nConstrained generation cache test: {initial_cache_size} -> {cache_size_after} tokens")
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

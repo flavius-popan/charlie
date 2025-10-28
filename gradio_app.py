@@ -1,22 +1,29 @@
 """Gradio UI for knowledge graph extraction."""
 
+import json
+import logging
 import os
+import tempfile
+import threading
+import time
+from typing import List, Optional
+
+import dspy
+import gradio as gr
+from graphviz import Digraph
+from pydantic import BaseModel, Field
+
+from distilbert_ner import format_entities, predict_entities
+from dspy_outlines import OutlinesAdapter, OutlinesLM
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
-import gradio as gr
-import dspy
-from pydantic import BaseModel, Field
-from typing import List, Optional
-import json
-import tempfile
-import os
-from graphviz import Digraph
-import time
-import threading
 
-from dspy_outlines import OutlinesLM, OutlinesAdapter
-from distilbert_ner import predict_entities, format_entities
+# Configure logging
+logging.basicConfig(
+    level=logging.DEBUG, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger(__name__)
 
 # Initialize LM and adapter
 lm = OutlinesLM()
@@ -85,14 +92,17 @@ _input_lock = threading.Lock()
 def extract_ner_only(text: str):
     """Extract NER entities with 1 second debounce."""
     global _last_input_time
+    logger.debug(f"extract_ner_only called with text length: {len(text)}")
 
     if not text.strip():
+        logger.debug("Empty text, returning early")
         return "Please enter some text.", None
 
     # Record when this input arrived
     with _input_lock:
         current_time = time.time()
         _last_input_time = current_time
+        logger.debug(f"Input timestamp recorded: {current_time}")
 
     # Wait for 1 second
     time.sleep(1.0)
@@ -100,14 +110,14 @@ def extract_ner_only(text: str):
     # Check if we're still the most recent input
     with _input_lock:
         if time.time() - _last_input_time < 0.95:  # Allow small timing variance
-            # Another input came in, abort this execution
+            logger.debug("Debounced - newer input received")
             return gr.update(), gr.update()
 
     try:
-        # Extract entities using NER model
+        logger.debug("Starting NER entity extraction")
         ner_entities = predict_entities(text)
+        logger.debug(f"NER extracted {len(ner_entities)} entities")
 
-        # Format NER entities for display (always with labels and confidence)
         ner_display = format_entities(
             ner_entities, include_labels=True, include_confidence=True
         )
@@ -117,6 +127,7 @@ def extract_ner_only(text: str):
 
         return ner_output, ner_entities
     except Exception as e:
+        logger.error(f"NER extraction failed: {str(e)}", exc_info=True)
         return f"Error: {str(e)}", None
 
 
@@ -129,9 +140,7 @@ def update_hints_preview(use_hints: bool, persons_only: bool, ner_entities):
         # Filter to Person entities only if checkbox is enabled
         filtered_entities = ner_entities
         if persons_only:
-            filtered_entities = [
-                e for e in ner_entities if e.get("label") == "PER"
-            ]
+            filtered_entities = [e for e in ner_entities if e.get("label") == "PER"]
 
         # Always use plain text format (no labels, no confidence)
         entity_hints = format_entities(
@@ -161,9 +170,7 @@ def extract_and_display(
             # Filter to Person entities only if checkbox is enabled
             filtered_entities = ner_entities
             if persons_only:
-                filtered_entities = [
-                    e for e in ner_entities if e.get("label") == "PER"
-                ]
+                filtered_entities = [e for e in ner_entities if e.get("label") == "PER"]
 
             # Always use plain text format (no labels, no confidence)
             entity_hints = format_entities(
