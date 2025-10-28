@@ -60,12 +60,13 @@ class OutlinesLM(dspy.BaseLM):
     - MLX's efficient local inference
     """
 
-    def __init__(self, model_path: str = None):
+    def __init__(self, model_path: str = None, *, enable_prompt_cache: bool = False):
         """
         Initialize hybrid LM.
 
         Args:
             model_path: Path to MLX model (uses default if None)
+            enable_prompt_cache: Whether to build an MLX prompt cache (off by default)
         """
         # Import here to get default path
         from .mlx_loader import DEFAULT_MODEL_PATH
@@ -77,12 +78,20 @@ class OutlinesLM(dspy.BaseLM):
         super().__init__(model=model_path)
 
         # Store Outlines wrapper separately
-        self.outlines_model, self.tokenizer, self.prompt_cache = create_outlines_model(
-            model_path
+        (
+            self.outlines_model,
+            self.tokenizer,
+            self.prompt_cache,
+        ) = create_outlines_model(
+            model_path, enable_prompt_cache=enable_prompt_cache
         )
         # Store raw MLX model for unconstrained generation with caching support
         # self.outlines_model is the Outlines wrapper, self.outlines_model.model is the underlying MLX nn.Module
         self.raw_mlx_model = self.outlines_model.model
+        if self.prompt_cache is None:
+            logger.info("OutlinesLM initialized with prompt caching disabled")
+        else:
+            logger.info("OutlinesLM initialized with prompt caching enabled")
         logger.info("OutlinesLM initialized with Outlines+MLX backend")
 
     def forward(self, prompt=None, messages=None, **kwargs):
@@ -120,30 +129,27 @@ class OutlinesLM(dspy.BaseLM):
 
         # Lock MLX model access to prevent Metal command buffer race conditions
         with MLX_LOCK:
-            outlines_kwargs = {"max_tokens": max_tokens}
-            if self.prompt_cache is not None:
-                outlines_kwargs["prompt_cache"] = self.prompt_cache
+        outlines_kwargs = {"max_tokens": max_tokens}
+        if self.prompt_cache is not None:
+            outlines_kwargs["prompt_cache"] = self.prompt_cache
 
-            if constraint:
-                # Use Outlines wrapper for constrained generation
-                result_json = self.outlines_model(
-                    formatted_prompt,
+        if constraint:
+            # Use Outlines wrapper for constrained generation
+            result_json = self.outlines_model(
+                formatted_prompt,
                     output_type=constraint,
                     **outlines_kwargs,
                 )
-            else:
-                # Use raw MLX for unconstrained generation
-                generate_kwargs = {
-                    "prompt_cache": self.prompt_cache,
-                    "verbose": False,
-                }
-                if self.prompt_cache is None:
-                    generate_kwargs.pop("prompt_cache")
-                completion = mlx_lm.generate(
-                    self.raw_mlx_model,
-                    self.tokenizer,
-                    formatted_prompt,
-                    max_tokens=max_tokens,
+        else:
+            # Use raw MLX for unconstrained generation
+            generate_kwargs = {"verbose": False}
+            if self.prompt_cache is not None:
+                generate_kwargs["prompt_cache"] = self.prompt_cache
+            completion = mlx_lm.generate(
+                self.raw_mlx_model,
+                self.tokenizer,
+                formatted_prompt,
+                max_tokens=max_tokens,
                     **generate_kwargs,
                 )
 
@@ -188,6 +194,33 @@ class OutlinesLM(dspy.BaseLM):
             ),
             model=self.model,  # String model path for DSPy compatibility
         )
+
+    def enable_prompt_cache(self, *, reset: bool = True) -> None:
+        """
+        Lazily build the MLX prompt cache for this instance.
+
+        Args:
+            reset: If True, rebuilds the cache even if one already exists.
+        """
+        if self.prompt_cache is not None and not reset:
+            logger.info("Prompt cache already initialized; skipping rebuild")
+            return
+
+        from mlx_lm.models.cache import make_prompt_cache
+
+        with MLX_LOCK:
+            logger.info("Enabling MLX prompt cache")
+            self.prompt_cache = make_prompt_cache(self.raw_mlx_model)
+
+    def disable_prompt_cache(self) -> None:
+        """Disable MLX prompt caching for this instance."""
+        if self.prompt_cache is None:
+            logger.info("Prompt cache already disabled")
+            return
+
+        with MLX_LOCK:
+            logger.info("Disabling MLX prompt cache")
+            self.prompt_cache = None
 
     def _get_cache_size(self) -> int:
         """

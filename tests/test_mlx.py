@@ -48,6 +48,16 @@ def shared_lm():
     return OutlinesLM()
 
 
+@pytest.fixture
+def cached_lm(shared_lm):
+    """Shared LM with prompt cache explicitly enabled for cache-specific tests."""
+    shared_lm.enable_prompt_cache()
+    try:
+        yield shared_lm
+    finally:
+        shared_lm.disable_prompt_cache()
+
+
 # Model Loading Tests
 
 def test_load_mlx_model():
@@ -449,9 +459,15 @@ def test_lock_overhead_minimal(shared_lm):
 
 # Prompt Caching Tests
 
-def test_prompt_cache_created(shared_lm):
-    """Test that prompt cache is initialized."""
+def test_prompt_cache_disabled_by_default(shared_lm):
+    """Prompt caching should be disabled unless explicitly requested."""
     lm = shared_lm
+    assert lm.prompt_cache is None
+
+
+def test_prompt_cache_created_on_demand(cached_lm):
+    """Prompt cache can be initialized on demand."""
+    lm = cached_lm
     assert lm.prompt_cache is not None
     assert isinstance(lm.prompt_cache, list)
 
@@ -466,7 +482,7 @@ def test_cache_size_helper(shared_lm):
     assert cache_size >= 0
 
 
-def test_prompt_caching_with_repeated_prefix(shared_lm):
+def test_prompt_caching_with_repeated_prefix(cached_lm):
     """Test that prompt caching speeds up generation with repeated prefixes.
 
     This test verifies that:
@@ -474,7 +490,7 @@ def test_prompt_caching_with_repeated_prefix(shared_lm):
     2. Cache grows after first generation
     3. Subsequent generations with shared prefix are faster (cache hit)
     """
-    lm = shared_lm
+    lm = cached_lm
 
     # Check initial cache size
     initial_cache_size = lm._get_cache_size()
@@ -532,17 +548,13 @@ def test_prompt_caching_with_repeated_prefix(shared_lm):
     assert cache_size_after_second > 0, "Cache should remain populated across multiple calls"
 
 
-def test_cache_works_with_constrained_generation(shared_lm):
+def test_cache_works_with_constrained_generation(cached_lm):
     """Test that caching also works for constrained generation.
 
     The cache is updated in-place by MLX during generation, regardless of
     whether we're using constrained (Outlines) or unconstrained generation.
     """
-    lm = shared_lm
-
-    # Reset cache for clean test
-    from mlx_lm.models.cache import make_prompt_cache
-    lm.prompt_cache = make_prompt_cache(lm.raw_mlx_model)
+    lm = cached_lm
 
     # Get initial cache size (should be 0 after reset)
     initial_cache_size = lm._get_cache_size()

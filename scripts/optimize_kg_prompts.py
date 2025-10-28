@@ -27,13 +27,14 @@ def configure_lm(disable_prompt_cache: bool = True) -> None:
     adapter = OutlinesAdapter()
     dspy.configure(lm=lm, adapter=adapter)
     if disable_prompt_cache:
-        lm.prompt_cache = None
-        # Mirror the change on the configured global LM reference.
-        if getattr(dspy.settings, "lm", None) is not None:
-            dspy.settings.lm.prompt_cache = None
-        logger.info("Configured DSPy with OutlinesLM and OutlinesAdapter (prompt cache disabled).")
+        logger.info(
+            "Configured DSPy with OutlinesLM and OutlinesAdapter (prompt cache disabled)."
+        )
     else:
-        logger.info("Configured DSPy with OutlinesLM and OutlinesAdapter.")
+        lm.enable_prompt_cache()
+        logger.info(
+            "Configured DSPy with OutlinesLM and OutlinesAdapter (prompt cache enabled)."
+        )
 
 
 def build_trainset() -> list[dspy.Example]:

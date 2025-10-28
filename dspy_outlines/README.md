@@ -66,7 +66,7 @@ class QA(dspy.Signature):
     question: str = dspy.InputField()
     answer: Answer = dspy.OutputField()
 
-# Configure with fallback adapter
+# Configure with fallback adapter (prompt cache disabled by default)
 lm = OutlinesLM()
 adapter = OutlinesAdapter()
 dspy.configure(lm=lm, adapter=adapter)
@@ -88,6 +88,7 @@ For non-Pydantic constraints (multiple choice, regex), use direct model access:
 from typing import Literal
 from outlines.types import Regex
 
+# prompt cache stays disabled unless you opt in
 lm = OutlinesLM()
 
 # Multiple choice (Literal)
@@ -150,4 +151,14 @@ Lock scope: Only wraps `self.model()` call, not entire `forward()`. Prompt forma
 pytest tests/test_outlines_adapter_parsing.py -v  # Adapter parsing and integration tests
 pytest tests/test_mlx_loader.py -v                # MLX model loading
 pytest tests/test_mlx_lock.py -v                  # Thread safety verification
+```
+## Enabling Prompt Cache (optional)
+
+Prompt caching is disabled by default to avoid leaking context between requests. Enable it only when you manage cache resets yourself:
+
+```python
+lm = OutlinesLM()
+lm.enable_prompt_cache()           # builds cache once
+# ... use lm ...
+lm.disable_prompt_cache()          # tear down when done
 ```
