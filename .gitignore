@@ -18,3 +18,4 @@ wheels/
 .claude
 distilbert-ner-uncased-onnx/onnx/*.onnx
 distilbert-ner-uncased-onnx/.cache/
+prompts/.dspy_cache/

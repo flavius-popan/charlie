@@ -7,12 +7,12 @@ import tempfile
 import threading
 import time
 from pathlib import Path
-import dspy
 import gradio as gr
 from graphviz import Digraph
 
 from distilbert_ner import format_entities, predict_entities
 from dspy_outlines import KGExtractionModule, OutlinesAdapter, OutlinesLM
+import dspy
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 

@@ -6,9 +6,8 @@ import logging
 from pathlib import Path
 from typing import Any, Optional
 
-import dspy
-
 from dspy_outlines import KGExtractionModule, OutlinesAdapter, OutlinesLM
+import dspy
 
 # Reduce noisy loggers - keep INFO to see HTTP requests, but hide DEBUG noise
 logging.getLogger("httpcore").setLevel(logging.INFO)
