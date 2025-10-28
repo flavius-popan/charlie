@@ -32,22 +32,25 @@ class Person(BaseModel):
 
 
 def test_model_attribute_exists():
-    """Test that OutlinesLM exposes .model attribute."""
+    """Test that OutlinesLM exposes .outlines_model attribute."""
     lm = OutlinesLM()
 
     assert hasattr(lm, "model")
     assert lm.model is not None
-    assert callable(lm.model)
+    assert isinstance(lm.model, str), "lm.model should be model path string for DSPy compatibility"
+    assert hasattr(lm, "outlines_model")
+    assert lm.outlines_model is not None
+    assert callable(lm.outlines_model)
 
 
 def test_model_is_outlines_mlxlm():
-    """Test that .model is the Outlines MLXLM instance."""
+    """Test that .outlines_model is the Outlines MLXLM instance."""
     lm = OutlinesLM()
 
     # Check it's an Outlines model (has __call__ with output_type parameter)
     import inspect
 
-    sig = inspect.signature(lm.model.__call__)
+    sig = inspect.signature(lm.outlines_model.__call__)
     params = list(sig.parameters.keys())
 
     # Outlines models accept: model_input, output_type, backend, **inference_kwargs
@@ -76,7 +79,7 @@ def test_basic_type_int():
     lm = OutlinesLM()
 
     prompt = "How many days are in a week? Answer with just the number:"
-    result = lm.model(prompt, int, max_tokens=5)
+    result = lm.outlines_model(prompt, int, max_tokens=5)
 
     assert isinstance(result, str)
     # Constraint guarantees valid integer format
@@ -96,7 +99,7 @@ def test_basic_type_float():
     lm = OutlinesLM()
 
     prompt = "What is half of one? Answer with a decimal number:"
-    result = lm.model(prompt, float, max_tokens=10)
+    result = lm.outlines_model(prompt, float, max_tokens=10)
 
     assert isinstance(result, str)
     # Constraint guarantees valid float format - can successfully parse
@@ -110,7 +113,7 @@ def test_basic_type_bool():
     lm = OutlinesLM()
 
     prompt = "Is the sky blue during daytime? Answer True or False:"
-    result = lm.model(prompt, bool, max_tokens=10)
+    result = lm.outlines_model(prompt, bool, max_tokens=10)
 
     assert isinstance(result, str)
     assert result.strip() in ["True", "False"]
@@ -124,7 +127,7 @@ def test_multiple_choice_literal():
     lm = OutlinesLM()
 
     prompt = "What color is the sky during daytime? Choose one:"
-    result = lm.model(prompt, Literal["blue", "red", "green"], max_tokens=10)
+    result = lm.outlines_model(prompt, Literal["blue", "red", "green"], max_tokens=10)
 
     assert result.strip() in ["blue", "red", "green"]
     assert result.strip() == "blue"
@@ -135,7 +138,7 @@ def test_multiple_choice_enum():
     lm = OutlinesLM()
 
     prompt = "Is this review positive or negative: 'This product is amazing!' Answer:"
-    result = lm.model(prompt, Sentiment, max_tokens=10)
+    result = lm.outlines_model(prompt, Sentiment, max_tokens=10)
 
     assert result.strip() in ["positive", "negative", "neutral"]
     assert result.strip() == "positive"
@@ -150,7 +153,7 @@ def test_multiple_choice_choice():
     # Dynamic choice list
     cities = ["Paris", "London", "Tokyo"]
     prompt = "Name a world capital city:"
-    result = lm.model(prompt, Choice(cities), max_tokens=10)
+    result = lm.outlines_model(prompt, Choice(cities), max_tokens=10)
 
     assert result.strip() in cities
 
@@ -163,7 +166,7 @@ def test_json_schema_pydantic():
     lm = OutlinesLM()
 
     prompt = "Create a person named Alice who is 30 years old. Respond in JSON:"
-    result = lm.model(prompt, Person, max_tokens=50)
+    result = lm.outlines_model(prompt, Person, max_tokens=50)
 
     assert isinstance(result, str)
     # Should be valid JSON matching Person schema
@@ -179,7 +182,7 @@ def test_json_schema_dict():
     prompt = (
         "Create a simple key-value mapping with 'name' and 'value'. Respond in JSON:"
     )
-    result = lm.model(prompt, Dict[str, str], max_tokens=50)
+    result = lm.outlines_model(prompt, Dict[str, str], max_tokens=50)
 
     assert isinstance(result, str)
     # Should be parseable as JSON dict
@@ -201,7 +204,7 @@ def test_regex_pattern_custom():
     # Phone number format: XXX-XXXX
     pattern = r"\d{3}-\d{4}"
     prompt = "Generate a phone number in format XXX-XXXX:"
-    result = lm.model(prompt, Regex(pattern), max_tokens=20)
+    result = lm.outlines_model(prompt, Regex(pattern), max_tokens=20)
 
     assert isinstance(result, str)
     # Verify it matches the pattern
@@ -217,7 +220,7 @@ def test_regex_pattern_builtin():
     lm = OutlinesLM()
 
     prompt = "Write a short sentence about the weather:"
-    result = lm.model(prompt, sentence, max_tokens=30)
+    result = lm.outlines_model(prompt, sentence, max_tokens=30)
 
     assert isinstance(result, str)
     # Built-in sentence pattern: starts with capital, ends with punctuation
@@ -233,7 +236,7 @@ def test_unconstrained_generation():
     lm = OutlinesLM()
 
     prompt = "Say hello in one word:"
-    result = lm.model(prompt, max_tokens=10)
+    result = lm.outlines_model(prompt, max_tokens=10)
 
     assert isinstance(result, str)
     assert len(result) > 0
@@ -248,6 +251,6 @@ def test_direct_call_bypasses_dspy():
 
     # No dspy.configure() needed - direct Outlines usage
     prompt = "Choose A, B, or C:"
-    result = lm.model(prompt, Literal["A", "B", "C"], max_tokens=5)
+    result = lm.outlines_model(prompt, Literal["A", "B", "C"], max_tokens=5)
 
     assert result.strip() in ["A", "B", "C"]
