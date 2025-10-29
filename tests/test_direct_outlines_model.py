@@ -9,6 +9,8 @@ from enum import Enum
 from pydantic import BaseModel
 from dspy_outlines import OutlinesLM
 
+# TODO: TEST THIS ON BARE MODEL WITHOUT DSPy ADAPTER!
+
 
 # Fixtures and helper classes
 
@@ -37,7 +39,9 @@ def test_model_attribute_exists():
 
     assert hasattr(lm, "model")
     assert lm.model is not None
-    assert isinstance(lm.model, str), "lm.model should be model path string for DSPy compatibility"
+    assert isinstance(lm.model, str), (
+        "lm.model should be model path string for DSPy compatibility"
+    )
     assert hasattr(lm, "outlines_model")
     assert lm.outlines_model is not None
     assert callable(lm.outlines_model)
