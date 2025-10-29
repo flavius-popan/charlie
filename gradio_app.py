@@ -6,15 +6,13 @@ import os
 import tempfile
 import threading
 import time
-from typing import List, Optional
-
-import dspy
+from pathlib import Path
 import gradio as gr
 from graphviz import Digraph
-from pydantic import BaseModel, Field
 
 from distilbert_ner import format_entities, predict_entities
-from dspy_outlines import OutlinesAdapter, OutlinesLM
+from dspy_outlines import KGExtractionModule, OutlinesAdapter, OutlinesLM
+import dspy
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
@@ -37,58 +35,78 @@ adapter = OutlinesAdapter()
 dspy.configure(lm=lm, adapter=adapter)
 
 
-# Pydantic models
-class Node(BaseModel):
-    id: int = Field(description="Unique identifier for the node")
-    label: str = Field(
-        description="Name of the entity (person, place, or concept). Include 'Author' or 'I' ONLY when the journal explicitly involves first-person experiences (direct interactions, feelings, thoughts)."
+# Create KG extraction module
+kg_extractor = KGExtractionModule()
+_PROMPTS_PATH = Path("prompts/kg_extraction_optimized.json")
+if _PROMPTS_PATH.exists():
+    try:
+        kg_extractor.load_prompts(str(_PROMPTS_PATH))
+        logger.info("Loaded optimized prompts from %s", _PROMPTS_PATH)
+    except Exception as exc:
+        logger.warning("Failed to load optimized prompts: %s", exc)
+
+
+def _render_graph_image(graph) -> str:
+    """Render the extracted graph with improved styling."""
+    dot = Digraph(format="png")
+    dot.attr(
+        "graph",
+        rankdir="LR",
+        splines="spline",
+        pad="0.35",
+        nodesep="0.7",
+        ranksep="1.0",
+        bgcolor="transparent",
     )
-    properties: dict = Field(default_factory=dict)
-
-
-class Edge(BaseModel):
-    source: int = Field(description="Source node ID")
-    target: int = Field(description="Target node ID")
-    label: str = Field(
-        description="Relationship type in PRESENT TENSE (e.g., 'knows', 'works_with', 'feels_anxious_about', 'admires'). Use underscores between words. Max 3 words. Connect to Author node ONLY for direct interactions or emotional/subjective states."
+    dot.attr(
+        "node",
+        shape="circle",
+        style="filled",
+        fontname="Helvetica",
+        fontsize="11",
+        color="transparent",
+        fontcolor="#1f2937",
     )
-    properties: dict = Field(default_factory=dict)
-
-
-class KnowledgeGraph(BaseModel):
-    nodes: List[Node] = Field(
-        description="All entities mentioned. Include 'Author' or 'I' as a node ONLY when extracting direct interactions or emotional states. Observed third-party entities stand alone."
-    )
-    edges: List[Edge] = Field(
-        description="Relationships in present tense. Author-connected edges for direct interactions (met_with, spoke_to) and subjective states (feels_about, admires, worried_about). Third-party relationships captured independently (e.g., Bob knows Alice)."
-    )
-
-
-# DSPy signature with optional entity hints
-class ExtractKnowledgeGraph(dspy.Signature):
-    """Extract a knowledge graph from a personal journal entry, capturing both the author's direct experiences and observed facts.
-
-    Create an Author/I node ONLY when the entry describes:
-    - Direct interactions (Author met_with Bob, Author spoke_to Alice)
-    - Emotional or subjective states (Author feels_anxious_about work, Author admires mentor)
-
-    For observed third-party relationships (Bob knows Alice, Sarah works_for Microsoft), create independent edges without forcing connection to the author.
-    """
-
-    text: str = dspy.InputField(
-        desc="Journal entry text describing personal experiences, interactions, and observations"
-    )
-    known_entities: Optional[List[str]] = dspy.InputField(
-        desc="Optional pre-extracted entity names to guide node creation",
-        default=None,
-    )
-    graph: KnowledgeGraph = dspy.OutputField(
-        desc="Graph with entities as nodes and relationships as edges (present tense). Balance author-centric edges (direct interactions, emotions) with independent observed relationships."
+    dot.attr(
+        "edge",
+        color="#60a5fa",
+        penwidth="1.6",
+        arrowsize="1.0",
+        arrowhead="vee",
+        fontname="Helvetica",
+        fontcolor="#e2e8f0",
+        fontsize="10",
     )
 
+    for node in graph.nodes:
+        label = node.label
+        normalized = label.lower()
+        is_author = normalized in {"author", "i"}
+        fillcolor = "#facc15" if is_author else "#dbeafe"
+        fontcolor = "#1f2937"
+        dot.node(
+            str(node.id),
+            label,
+            fillcolor=fillcolor,
+            fontcolor=fontcolor,
+            tooltip=label,
+        )
 
-# Create predictor
-extractor = dspy.Predict(ExtractKnowledgeGraph)
+    for edge in graph.edges:
+        edge_label = edge.label.replace("_", " ")
+        dot.edge(
+            str(edge.source),
+            str(edge.target),
+            label=edge_label,
+            color="#60a5fa",
+            fontcolor="#e2e8f0",
+            tooltip=edge_label,
+        )
+
+    fd, tmp_png_path = tempfile.mkstemp(suffix=".png")
+    os.close(fd)
+    dot.render(tmp_png_path[:-4], format="png", cleanup=True)
+    return tmp_png_path
 
 # Global debounce state
 _last_input_time = 0
@@ -186,7 +204,7 @@ def extract_and_display(
             )
 
         # Step 2: Extract graph with LLM (with or without hints)
-        result = extractor(text=text, known_entities=entity_hints)
+        result = kg_extractor(text=text, known_entities=entity_hints)
         graph = result.graph
 
         # Capture adapter information
@@ -200,23 +218,11 @@ def extract_and_display(
         # Format JSON
         json_output = json.dumps(graph.model_dump(), indent=2)
 
-        # Create Graphviz visualization
-        dot = Digraph()
-        dot.attr(rankdir="LR")
-
-        for node in graph.nodes:
-            dot.node(str(node.id), node.label, shape="circle", width="1", height="1")
-
-        for edge in graph.edges:
-            dot.edge(str(edge.source), str(edge.target), label=edge.label)
-
-        # Render to temp file (Gradio needs file path)
-        fd, path = tempfile.mkstemp(suffix=".png")
-        os.close(fd)
-        dot.render(path.replace(".png", ""), format="png", cleanup=True)
+        # Create Graphviz visualization with enhanced styling
+        graph_image = _render_graph_image(graph)
 
         return (
-            path,
+            graph_image,
             json_output,
             gr.update(value=adapter_display, visible=True),
         )
@@ -319,9 +325,10 @@ with gr.Blocks(title="KG Builder Demo", analytics_enabled=False) as demo:
     # Examples
     gr.Examples(
         examples=[
-            "Alice met Bob at the coffee shop. Dr. Charlie Smith joined them later to discuss the research project with Professor Diana Lee.",
-            "John works at Microsoft. He reports to Sarah, the VP of Engineering. Sarah previously worked with David at Google.",
-            "Apple Inc. is headquartered in Cupertino, California. Tim Cook became CEO in 2011 after Steve Jobs.",
+            "Residency schedule got scrambled again and the cohort Discord is a whole meltdown; I spent lunch break rewriting coverage spreadsheets while the therapist keeps texting reminders to drink water and step outside.",
+            "Daycare called about Maya's fever right as Slack started lighting up about the Q3 deck, so I reheated last night's pad thai, dialed into Nana's telehealth, and promised Leo I'd actually sit for dinner even if the slides aren't done.",
+            "Dropped Jonah at robotics, nudged Dad through his cardiologist's walking plan, then converted two more VHS tapes because apparently the class reunion committee thinks I'm the only one who remembers how.",
+            "HOA thread blew up over someone's solar install, the library shift ran long when the new catalog crashed, and now I'm drafting a note to council because the bus route cut is going to leave Doris and Ken stranded after church.",
         ],
         inputs=text_input,
     )

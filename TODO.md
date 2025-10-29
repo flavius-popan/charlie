@@ -1,5 +1,5 @@
 ## Technical
-
+- Check if you can use MLX batch()
 - Integrate [Distilbert-NER](https://huggingface.co/dslim/distilbert-NER), combo with smaller LLM to do edges instead of nodes.
 - Watch [this video to grok Distilbert-NER](https://www.youtube.com/watch?v=Q1i4bIIFOFc)
 - Evaluate quantized ONNX models after collecting sample data - test if smaller versions (int8: 63MB, q4: 112MB) are sufficient vs full model (249MB)

@@ -73,48 +73,8 @@ def test_has_tool_calls_false():
     assert adapter._has_tool_calls(SimpleSignature) is False
 
 
-def test_parse_json_valid():
-    """Test JSON parsing with valid input."""
-    adapter = OutlinesAdapter()
-    completion = '{"output": {"result": "test"}}'
-
-    parsed = adapter._parse_json(SimpleSignature, completion)
-
-    assert "output" in parsed
-    assert isinstance(parsed["output"], SimpleOutput)
-    assert parsed["output"].result == "test"
-
-
-def test_parse_json_with_extra_text():
-    """Test JSON parsing extracts JSON from text."""
-    adapter = OutlinesAdapter()
-    completion = 'Here is the result: {"output": {"result": "test"}} and more text'
-
-    parsed = adapter._parse_json(SimpleSignature, completion)
-
-    assert "output" in parsed
-    assert isinstance(parsed["output"], SimpleOutput)
-    assert parsed["output"].result == "test"
-
-
-def test_parse_json_missing_field():
-    """Test JSON parsing fails when field is missing."""
-    from dspy.utils.exceptions import AdapterParseError
-
-    adapter = OutlinesAdapter()
-    completion = '{"wrong_field": {"result": "test"}}'
-
-    with pytest.raises(AdapterParseError):
-        adapter._parse_json(SimpleSignature, completion)
-
-
-def test_user_message_output_requirements():
-    """Test JSON instruction generation."""
-    adapter = OutlinesAdapter()
-    instruction = adapter._user_message_output_requirements(SimpleSignature)
-
-    assert "JSON object" in instruction
-    assert "`output`" in instruction
+# NOTE: _parse_json and _user_message_output_requirements methods removed
+# OutlinesAdapter now delegates JSON parsing to stock JSONAdapter for 1-to-1 parity
 
 
 # Integration Tests (with mock LM)
@@ -127,8 +87,8 @@ def test_chat_success():
     adapter = OutlinesAdapter()
     mock_lm = MockLM()
 
-    # Mock ChatAdapter.__call__ to succeed
-    with patch.object(adapter.__class__.__bases__[0], '__call__', return_value=[{"output": SimpleOutput(result="test")}]):
+    # Mock _call_postprocess to succeed (tier 1 processing)
+    with patch.object(adapter, '_call_postprocess', return_value=[{"output": SimpleOutput(result="mock")}]):
         result = adapter(
             lm=mock_lm,
             lm_kwargs={},
@@ -138,7 +98,7 @@ def test_chat_success():
         )
 
     assert len(result) == 1
-    assert result[0]["output"].result == "test"
+    assert result[0]["output"].result == "mock"
     assert adapter.metrics["chat_success"] == 1
     assert adapter.metrics["chat_failures"] == 0
     assert adapter.metrics["json_success"] == 0
@@ -151,8 +111,9 @@ def test_chat_fails_json_succeeds():
 
     adapter = OutlinesAdapter()
     mock_lm = MockLM(responses=['{"output": {"result": "json_success"}}'])
+    mock_lm.model = "test-model"  # JSONAdapter needs lm.model to be a string
 
-    # Mock ChatAdapter.__call__ to fail
+    # Mock tier 1 (ChatAdapter processing) to fail
     def chat_fail(*args, **kwargs):
         raise AdapterParseError(
             adapter_name="ChatAdapter",
@@ -161,14 +122,17 @@ def test_chat_fails_json_succeeds():
             message="Parse failed"
         )
 
+    # Mock tier 2 (JSONAdapter) to succeed
+    from dspy.adapters.json_adapter import JSONAdapter
     with patch.object(adapter.__class__.__bases__[0], '__call__', side_effect=chat_fail):
-        result = adapter(
-            lm=mock_lm,
-            lm_kwargs={},
-            signature=SimpleSignature,
-            demos=[],
-            inputs={"text": "test input"}
-        )
+        with patch.object(JSONAdapter, '__call__', return_value=[{"output": SimpleOutput(result="json_success")}]):
+            result = adapter(
+                lm=mock_lm,
+                lm_kwargs={},
+                signature=SimpleSignature,
+                demos=[],
+                inputs={"text": "test input"}
+            )
 
     assert len(result) == 1
     assert result[0]["output"].result == "json_success"
@@ -184,8 +148,9 @@ def test_chat_json_fail_outlines_succeeds():
 
     adapter = OutlinesAdapter()
     mock_lm = MockLM(responses=['{"output": {"result": "outlines_success"}}'])
+    mock_lm.model = "test-model"  # JSONAdapter needs lm.model to be a string
 
-    # Mock ChatAdapter.__call__ to fail
+    # Mock tier 1 (ChatAdapter processing) to fail
     def chat_fail(*args, **kwargs):
         raise AdapterParseError(
             adapter_name="ChatAdapter",
@@ -194,14 +159,18 @@ def test_chat_json_fail_outlines_succeeds():
             message="Parse failed"
         )
 
-    with patch.object(adapter.__class__.__bases__[0], '__call__', side_effect=chat_fail):
-        # Mock _json_fallback to fail
-        with patch.object(adapter, '_json_fallback', side_effect=AdapterParseError(
-            adapter_name="OutlinesAdapter",
+    # Mock tier 2 (JSONAdapter) to fail
+    def json_fail(*args, **kwargs):
+        raise AdapterParseError(
+            adapter_name="JSONAdapter",
             signature=SimpleSignature,
             lm_response="bad json",
             message="JSON parse failed"
-        )):
+        )
+
+    from dspy.adapters.json_adapter import JSONAdapter
+    with patch.object(adapter.__class__.__bases__[0], '__call__', side_effect=chat_fail):
+        with patch.object(JSONAdapter, '__call__', side_effect=json_fail):
             result = adapter(
                 lm=mock_lm,
                 lm_kwargs={},
@@ -231,8 +200,9 @@ def test_tool_calls_skips_outlines_json():
 
     adapter = OutlinesAdapter()
     mock_lm = MockLM()
+    mock_lm.model = "test-model"  # JSONAdapter needs lm.model to be a string
 
-    # Mock ChatAdapter and JSON to both fail
+    # Mock tier 1 (ChatAdapter processing) to fail
     def chat_fail(*args, **kwargs):
         raise AdapterParseError(
             adapter_name="ChatAdapter",
@@ -241,13 +211,18 @@ def test_tool_calls_skips_outlines_json():
             message="Parse failed"
         )
 
-    with patch.object(adapter.__class__.__bases__[0], '__call__', side_effect=chat_fail):
-        with patch.object(adapter, '_json_fallback', side_effect=AdapterParseError(
-            adapter_name="OutlinesAdapter",
+    # Mock tier 2 (JSONAdapter) to fail
+    def json_fail(*args, **kwargs):
+        raise AdapterParseError(
+            adapter_name="JSONAdapter",
             signature=ToolSignature,
             lm_response="bad json",
             message="JSON parse failed"
-        )):
+        )
+
+    from dspy.adapters.json_adapter import JSONAdapter
+    with patch.object(adapter.__class__.__bases__[0], '__call__', side_effect=chat_fail):
+        with patch.object(JSONAdapter, '__call__', side_effect=json_fail):
             with pytest.raises(AdapterParseError) as exc_info:
                 adapter(
                     lm=mock_lm,
@@ -291,19 +266,20 @@ def test_multiple_completions_warning(caplog):
 def test_context_window_error_propagates():
     """Test ContextWindowExceededError doesn't trigger fallback."""
     from unittest.mock import patch
+    from litellm import ContextWindowExceededError
 
     adapter = OutlinesAdapter()
     mock_lm = MockLM()
 
-    # Create a mock ContextWindowExceededError
-    class ContextWindowExceededError(Exception):
-        pass
-
-    # Mock ChatAdapter to raise ContextWindowExceededError
+    # Mock tier 1 to raise ContextWindowExceededError
     def chat_context_error(*args, **kwargs):
-        raise ContextWindowExceededError("Context window exceeded")
+        raise ContextWindowExceededError(
+            message="Context window exceeded",
+            model="test-model",
+            llm_provider="test"
+        )
 
-    with patch.object(adapter.__class__.__bases__[0], '__call__', side_effect=chat_context_error):
+    with patch.object(adapter, '_call_postprocess', side_effect=chat_context_error):
         with pytest.raises(ContextWindowExceededError):
             adapter(
                 lm=mock_lm,

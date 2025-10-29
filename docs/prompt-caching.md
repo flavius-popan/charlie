@@ -4,16 +4,24 @@
 
 MLX prompt caching speeds up generation by reusing previously computed key-value (KV) states from the transformer layers. The cache is updated in-place during generation, accumulating conversation history or repeated prompt prefixes.
 
-**Performance**: ~11-15% speedup for prompts with shared prefixes (measured on Qwen3-4B-8bit).
+**Default**: Prompt caching is **disabled**. We observed degraded graph extraction quality when stale KV states leaked across requests, so new `OutlinesLM` instances start without a cache.
+
+**Performance** (when enabled): ~11-15% speedup for prompts with shared prefixes (measured on Qwen3-4B-8bit).
 
 ## How It Works
 
-The cache is created once per `OutlinesLM` instance and passed to every generation:
+Enable caching explicitly when you control the prompt lifecycle:
 
 ```python
 from dspy_outlines import OutlinesLM
 
-lm = OutlinesLM()  # Cache created automatically
+# Option 1: enable at construction time
+lm = OutlinesLM(enable_prompt_cache=True)
+
+# Option 2: lazily enable on an existing instance
+lm = OutlinesLM()
+lm.enable_prompt_cache()
+
 # All subsequent calls reuse and extend this cache
 ```
 
@@ -30,22 +38,22 @@ Call 2: "System prompt... Q2" → cache: 40 → 80 tokens (reuses first 40)
 Call 3: "System prompt... Q3" → cache: 80 → 120 tokens (reuses first 40)
 ```
 
-## Preventing Performance Degradation
+## Preventing Cross-Request Contamination
 
-### Problem: Growing Cache Overhead
+### Problem: Stale KV States
 
-As the cache grows, MLX must process larger KV tensors, increasing memory usage and eventually slowing generation.
+Caching can bleed contextual hints across unrelated graph extraction calls. If you enable caching, plan to reset frequently.
 
 ### Solution: Reset Cache Periodically
 
 ```python
-from mlx_lm.models.cache import make_prompt_cache
-
-lm = OutlinesLM()
+lm.enable_prompt_cache()  # ensures cache exists
 
 # After N generations or when switching contexts:
-lm.prompt_cache = make_prompt_cache(lm.raw_mlx_model)
+lm.enable_prompt_cache(reset=True)  # rebuild fresh cache
 ```
+
+Alternatively, call `lm.disable_prompt_cache()` to revert to uncached generation.
 
 ### Recommended Reset Triggers
 
@@ -61,20 +69,20 @@ print(f"Cache: {cache_size} tokens")
 
 # Reset if too large
 if cache_size > 2048:
-    lm.prompt_cache = make_prompt_cache(lm.raw_mlx_model)
+    lm.enable_prompt_cache(reset=True)
 ```
 
 ## Best Practices
 
 **✅ DO:**
-- Use caching for repeated prompt prefixes (system prompts, few-shot examples)
+- Enable caching only when you manage request isolation or reuse identical prefixes
 - Reset cache between independent conversations
 - Monitor cache size in long-running applications
 
 **❌ DON'T:**
-- Share one `OutlinesLM` instance across completely different tasks without resetting
+- Leave caching on for user-facing workflows that send unrelated prompts
 - Let cache grow unbounded in production (set a max token limit)
-- Create new `OutlinesLM` instances per request (defeats caching, wastes 4GB RAM each)
+- Assume caching is beneficial without measuring latency and quality
 
 ## Thread Safety
 
@@ -83,7 +91,8 @@ The cache is accessed within `MLX_LOCK`, making it thread-safe when multiple thr
 ## Testing
 
 See `tests/test_mlx.py` for cache verification tests:
-- `test_prompt_cache_created`
+- `test_prompt_cache_disabled_by_default`
+- `test_prompt_cache_created_on_demand`
 - `test_cache_size_helper`
 - `test_prompt_caching_with_repeated_prefix`
 - `test_cache_works_with_constrained_generation`
