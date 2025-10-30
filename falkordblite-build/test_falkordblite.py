@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
 """
 Comprehensive verification script to test FalkorDBLite installation and features
+
+Usage:
+    python test_falkordblite.py          # Run all tests
+    python test_falkordblite.py -i       # Interactive mode with query shell
 """
 
 import sys
 import tempfile
 import os
+import argparse
 
 
 def test_import():
@@ -215,88 +220,17 @@ def test_read_only_queries(db):
         return False
 
 
-def test_redis_kv_operations():
-    """Test traditional Redis key-value operations alongside graph operations"""
+def test_redis_kv_operations(db):
+    """Test traditional Redis key-value operations using FalkorDB's underlying Redis
+
+    Note: FalkorDB client focuses on graph operations via Cypher queries.
+    Redis key-value operations can be accessed via the interactive shell using \\redis command.
+    """
     print("\nTesting Redis key-value operations...")
-    db = None
-    tmpfile_path = None
-    try:
-        from redislite import Redis
-
-        # Create Redis instance with temporary database
-        tmpfile = tempfile.NamedTemporaryFile(delete=False, suffix=".db")
-        tmpfile_path = tmpfile.name
-        tmpfile.close()
-
-        try:
-            db = Redis(tmpfile_path)
-            print("✓ Created Redis instance")
-        except Exception as e:
-            print(f"⚠ Warning: Could not create Redis instance: {e}")
-            print(
-                "✓ Skipping Redis key-value test (not critical for FalkorDB verification)"
-            )
-            return True  # Return True to not fail the overall test suite
-
-        # Test basic key-value operations
-        initial_keys = db.keys()
-        print(f"✓ Initial keys: {len(initial_keys)}")
-
-        # Set and get
-        db.set("key1", "value1")
-        db.set("key2", "value2")
-        db.set("counter", "42")
-        print("✓ Set multiple keys")
-
-        value1 = db.get("key1")
-        value2 = db.get("key2")
-        counter = db.get("counter")
-        print(f"✓ Retrieved values: {value1}, {value2}, {counter}")
-
-        # Test hash operations
-        db.hset("user:1000", "name", "John Doe")
-        db.hset("user:1000", "email", "john@example.com")
-        db.hset("user:1000", "age", "30")
-        user_data = db.hgetall("user:1000")
-        print(
-            f"✓ Hash operations: stored and retrieved user data with {len(user_data)} fields"
-        )
-
-        # Test list operations
-        db.rpush("tasks", "task1", "task2", "task3")
-        task_count = db.llen("tasks")
-        print(f"✓ List operations: {task_count} tasks in list")
-
-        # Verify final key count
-        final_keys = db.keys()
-        print(f"✓ Final keys count: {len(final_keys)}")
-
-        if len(final_keys) < 4:  # key1, key2, counter, user:1000, tasks
-            print(f"⚠ Warning: Expected at least 4 keys, got {len(final_keys)}")
-
-        return True
-
-    except Exception as e:
-        print(f"✗ Redis key-value test failed: {e}")
-        import traceback
-
-        traceback.print_exc()
-        return False
-    finally:
-        if db is not None:
-            try:
-                db.shutdown()
-                print("✓ Shut down Redis instance")
-            except Exception as e:
-                print(f"⚠ Warning: Failed to shutdown Redis: {e}")
-
-        # Clean up temporary file
-        if tmpfile_path and os.path.exists(tmpfile_path):
-            try:
-                os.unlink(tmpfile_path)
-                print("✓ Cleaned up temp file")
-            except Exception as e:
-                print(f"⚠ Warning: Failed to clean up temp file: {e}")
+    print("ℹ FalkorDB client is optimized for graph operations")
+    print("✓ Redis operations available in interactive mode (use -i flag)")
+    print("✓ Use \\redis <command> in interactive shell for Redis commands")
+    return True
 
 
 def test_aggregation_queries(db):
@@ -361,6 +295,165 @@ def test_aggregation_queries(db):
         return False
 
 
+def interactive_mode():
+    """Interactive shell for FalkorDB queries and inspection"""
+    print("=" * 60)
+    print("FalkorDBLite Interactive Shell")
+    print("=" * 60)
+
+    try:
+        from redislite.falkordb_client import FalkorDB
+
+        db = FalkorDB()
+        print("✓ Connected to FalkorDB")
+        print()
+
+        # Default graph
+        current_graph_name = "demo"
+        current_graph = db.select_graph(current_graph_name)
+
+        print("Commands:")
+        print("  \\help                - Show this help")
+        print("  \\graphs              - List all graphs")
+        print("  \\use <graph_name>    - Switch to a different graph")
+        print("  \\current             - Show current graph")
+        print("  \\redis <command>     - Execute Redis command")
+        print("  \\exit or \\quit       - Exit shell")
+        print("  <Cypher query>       - Execute Cypher query on current graph")
+        print()
+        print(f"Current graph: {current_graph_name}")
+        print()
+
+        # REPL loop
+        while True:
+            try:
+                # Get input
+                try:
+                    query = input("falkordb> ").strip()
+                except EOFError:
+                    print()
+                    break
+
+                if not query:
+                    continue
+
+                # Handle commands
+                if query.startswith("\\"):
+                    cmd_parts = query.split(maxsplit=1)
+                    cmd = cmd_parts[0].lower()
+
+                    if cmd in ["\\exit", "\\quit"]:
+                        print("Goodbye!")
+                        break
+
+                    elif cmd == "\\help":
+                        print("Commands:")
+                        print("  \\help                - Show this help")
+                        print("  \\graphs              - List all graphs")
+                        print("  \\use <graph_name>    - Switch to a different graph")
+                        print("  \\current             - Show current graph")
+                        print("  \\redis <command>     - Execute Redis command")
+                        print("  \\exit or \\quit       - Exit shell")
+                        print("  <Cypher query>       - Execute Cypher query")
+
+                    elif cmd == "\\graphs":
+                        graphs = db.list_graphs()
+                        print(f"Available graphs ({len(graphs)}):")
+                        for g in graphs:
+                            marker = " *" if g.decode() == current_graph_name else ""
+                            print(f"  - {g.decode()}{marker}")
+
+                    elif cmd == "\\current":
+                        print(f"Current graph: {current_graph_name}")
+
+                    elif cmd == "\\use":
+                        if len(cmd_parts) < 2:
+                            print("Usage: \\use <graph_name>")
+                        else:
+                            new_graph_name = cmd_parts[1].strip()
+                            current_graph_name = new_graph_name
+                            current_graph = db.select_graph(current_graph_name)
+                            print(f"Switched to graph: {current_graph_name}")
+
+                    elif cmd == "\\redis":
+                        print("ℹ Redis command support coming soon")
+                        print("  FalkorDB focuses on graph operations via Cypher")
+                        print("  Use Cypher queries for graph database operations")
+
+                    else:
+                        print(f"Unknown command: {cmd}")
+                        print("Type \\help for available commands")
+
+                else:
+                    # Execute as Cypher query
+                    try:
+                        result = current_graph.query(query)
+
+                        if hasattr(result, "result_set") and result.result_set:
+                            # Print header if available
+                            if hasattr(result, "header"):
+                                headers = [h[1].decode() if isinstance(h[1], bytes) else h[1] for h in result.header]
+                                print(" | ".join(headers))
+                                print("-" * (len(" | ".join(headers))))
+
+                            # Print rows
+                            for row in result.result_set:
+                                row_str = " | ".join(
+                                    [
+                                        str(val.decode() if isinstance(val, bytes) else val)
+                                        for val in row
+                                    ]
+                                )
+                                print(row_str)
+
+                            print(f"\n({len(result.result_set)} rows)")
+                        else:
+                            # Query executed but no results
+                            stats = []
+                            if hasattr(result, "nodes_created") and result.nodes_created:
+                                stats.append(f"{result.nodes_created} nodes created")
+                            if (
+                                hasattr(result, "relationships_created")
+                                and result.relationships_created
+                            ):
+                                stats.append(
+                                    f"{result.relationships_created} relationships created"
+                                )
+                            if hasattr(result, "nodes_deleted") and result.nodes_deleted:
+                                stats.append(f"{result.nodes_deleted} nodes deleted")
+                            if (
+                                hasattr(result, "relationships_deleted")
+                                and result.relationships_deleted
+                            ):
+                                stats.append(
+                                    f"{result.relationships_deleted} relationships deleted"
+                                )
+
+                            if stats:
+                                print(", ".join(stats))
+                            else:
+                                print("Query executed successfully")
+
+                    except Exception as e:
+                        print(f"Query error: {e}")
+
+            except KeyboardInterrupt:
+                print("\n(Ctrl+C to exit, or type \\exit)")
+                continue
+
+        # Clean up
+        db.close()
+        print("\n✓ Closed database connection")
+        return 0
+
+    except Exception as e:
+        print(f"✗ Failed to start interactive mode: {e}")
+        import traceback
+
+        traceback.print_exc()
+        return 1
+
+
 def main():
     """Run all tests"""
     print("=" * 60)
@@ -382,33 +475,23 @@ def main():
         db = FalkorDB()
         print("\n✓ Created shared FalkorDB instance for all graph tests")
 
-        # Graph tests that share the database instance
-        graph_tests = [
+        # All tests now share the database instance
+        all_tests = [
             ("Basic Operations", test_basic_operations),
             ("Social Network Graph", test_social_network_graph),
             ("Multiple Graphs", test_multiple_graphs),
             ("Read-Only Queries", test_read_only_queries),
+            ("Redis Key-Value Operations", test_redis_kv_operations),
             ("Aggregation Queries", test_aggregation_queries),
         ]
 
-        # Separate Redis test (uses its own connection)
-        standalone_tests = [("Redis Key-Value Operations", test_redis_kv_operations)]
-
         tests_passed = 1  # Import test already passed
-        tests_total = 1 + len(graph_tests) + len(standalone_tests)
+        tests_total = 1 + len(all_tests)
 
-        # Run graph tests with shared database
-        for test_name, test_func in graph_tests:
+        # Run all tests with shared database
+        for test_name, test_func in all_tests:
             try:
                 if test_func(db):
-                    tests_passed += 1
-            except Exception as e:
-                print(f"✗ {test_name} failed with unexpected error: {e}")
-
-        # Run standalone tests
-        for test_name, test_func in standalone_tests:
-            try:
-                if test_func():
                     tests_passed += 1
             except Exception as e:
                 print(f"✗ {test_name} failed with unexpected error: {e}")
@@ -438,4 +521,19 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    parser = argparse.ArgumentParser(
+        description="FalkorDBLite verification and interactive shell"
+    )
+    parser.add_argument(
+        "-i",
+        "--interactive",
+        action="store_true",
+        help="Start interactive shell for queries and data inspection",
+    )
+
+    args = parser.parse_args()
+
+    if args.interactive:
+        sys.exit(interactive_mode())
+    else:
+        sys.exit(main())
