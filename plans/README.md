@@ -1,7 +1,7 @@
 Graphiti DSPy Pipeline Plan
 ===========================
 
-This directory now houses a staged implementation plan for the custom Graphiti knowledge-graph pipeline. Each phase is isolated so the work can be validated independently, and every phase includes a dedicated Gradio checkpoint that mirrors the exploratory UI patterns in `gradio_app.py`. Start at Phase 01 and work downward.
+This directory now houses a staged implementation plan for the custom Graphiti knowledge-graph pipeline. Each phase is isolated so the work can be validated independently, and every phase includes a dedicated Gradio checkpoint that mirrors the exploratory UI patterns in `gradio_app.py`. Start at Phase 01 and work downward. When refining any phase, cross-reference the background material under `research/` (e.g., FalkorDB driver notes, embedding integration) and inspect the installed Graphiti packages inside `.venv` to validate assumptions against live code.
 
 - `phase-01-foundations.md` – establish architecture guardrails, tooling, and a baseline Gradio harness.
 - `phase-02-core-extraction.md` – stand up the DSPy-driven extraction loop with FalkorDB persistence via the embedded `falkordblite` runtime.

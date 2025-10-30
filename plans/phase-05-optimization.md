@@ -5,6 +5,7 @@ Phase 05 – Optimization & Hardening
 
 Implementation Steps
 --------------------
+Align the optimization plan with prior experiments documented in `research/` and validate instrumentation details against the live `.venv` Graphiti/DSPy packages before executing each step.
 1. **Evaluation Dataset**
    - Curate gold-standard episodes spanning core, edge, and corner cases.
    - Store expected entities, relationships, temporal spans, and attributes for automated scoring.

@@ -5,6 +5,7 @@ Phase 04 – Temporal & Contextual Enrichment
 
 Implementation Steps
 --------------------
+Review temporal handling and attribute experiments in `research/` (e.g., graph backend and reranking notes) and audit the `.venv` Graphiti models/utilities to mirror the current API surface before making changes.
 1. **Temporal Extraction**
    - Implement `ExtractTemporalModule` to infer `valid_at`, `invalid_at`, and `expired_at` for edges.
    - Propagate episode reference times as defaults and capture ambiguity flags for downstream review.

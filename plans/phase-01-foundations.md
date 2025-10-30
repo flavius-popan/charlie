@@ -6,6 +6,8 @@ Phase 01 – Foundations & Guardrails
 Key Activities
 --------------
 1. Inventory the existing Graphiti assets (models, FalkorDB driver, bulk utilities) and capture any version pinning or MLX constraints.
+   - Include a manual sweep of the local `.venv` installation (e.g., `graphiti_core`, FalkorDB drivers) to align the plan with shipped code.
+   - Reconcile findings with the technical briefs in `research/` (FalkorDB backend, embeddings, reranking) so investigations stay grounded in prior work.
 2. Review the embedded `falkordblite` runtime (see `falkordblite-evaluation.md`) and document how its lifecycle maps onto our adapters.
 3. Document the end-to-end episode → graph flow, focusing on where we will hand off to DSPy modules instead of Graphiti prompts.
 4. Produce a small set of canonical test episodes plus expected entities/edges for sanity checks across phases.

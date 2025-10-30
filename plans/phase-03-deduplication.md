@@ -5,6 +5,7 @@ Phase 03 – Deduplication & Resolution
 
 Implementation Steps
 --------------------
+Cross-reference the deduplication and graph driver notes in `research/06-falkordb-backend.md` (and companion docs) and inspect the active `.venv` Graphiti modules before implementing each step so heuristics stay aligned with existing behavior.
 1. **Embedding Search Integration**
    - Finalize similarity queries against `name_embedding` to fetch candidate matches using FalkorDBLite’s embedded vector indexes.
    - Normalize embeddings before comparison and cache lookups to limit round-trips.

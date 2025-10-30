@@ -5,6 +5,7 @@ Phase 02 – Core Extraction Loop
 
 Implementation Steps
 --------------------
+Consult the FalkorDB and embedding notes under `research/` (particularly `research/06-falkordb-backend.md` and `research/09-embedding-integration.md`) and review the active `.venv` packages to align API usage with shipped Graphiti code before coding each step.
 1. **FalkorDBLite Orchestration & Indexes**
    - Spin up a managed `falkordblite` instance, capturing database file placement, socket paths, and lifecycle hooks.
    - Ensure Graphiti adapters can reuse the embedded server or spawn isolated instances for tests.
