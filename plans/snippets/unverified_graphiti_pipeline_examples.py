@@ -1,245 +1,14 @@
-# Graphiti-Core Integration Plan: Custom DSPy Pipeline with FalkorDB
 
-## 1. Executive Summary
+"""Unverified reference snippets extracted from plans/graphiti-models.md.
 
-### Overview of Graphiti-Core Architecture
+NOTE: These are pending review and should not be treated as production-ready
+implementations. They remain here solely for exploratory purposes.
+"""
 
-Graphiti-core is a knowledge graph extraction system that processes **episodes** (messages, text, or JSON) into a graph of **entities** (EntityNode) and **relationships** (EntityEdge). The system uses:
+# Each snippet retains its original context heading for traceability.
 
-- **EpisodicNode**: Raw input data with temporal metadata
-- **EntityNode**: Extracted entities with embeddings, summaries, and attributes
-- **EntityEdge**: Relationships between entities with temporal bounds and facts
-- **EpisodicEdge**: MENTIONS relationships linking episodes to entities
-- **CommunityNode/Edge**: Optional hierarchical entity groupings
-
-The default pipeline uses OpenAI-style LLM clients with prompt templates to orchestrate extraction, deduplication, attribute extraction, and temporal reasoning.
-
-### Custom Pipeline Goals
-
-Our goal is to create a **custom knowledge graph extraction pipeline** that:
-
-1. **Bypasses graphiti's automated episode processing** to gain full control over extraction steps
-2. **Replaces all LLM operations with DSPy modules** using MLX + Outlines for constrained generation
-3. **Uses Qwen3-Embedding-4B-4bit-DWQ for embeddings** (local, MLX-optimized)
-4. **Uses Qwen3-Reranker-0.6B-seq-cls for reranking** (local, lightweight)
-5. **Reuses graphiti's Pydantic models** (EntityNode, EntityEdge, etc.) for data representation
-6. **Uses FalkorDB as the graph backend** instead of Neo4j/Neptune
-7. **Maintains compatibility** with graphiti's graph query patterns and bulk operations
-
-This approach gives us:
-- **Type-safe extraction** through Outlines constrained generation
-- **Complete local inference** via MLX on Apple Silicon (LLM + embeddings + reranking)
-- **No API dependencies** for any part of the pipeline
-- **Optimization capability** through DSPy's MIPRO
-- **Full pipeline control** while leveraging battle-tested data models
-
-### Integration Approach
-
-**Strategy: Custom Pipeline with Graphiti Models + DSPy LLMClient Wrapper**
-
-We will create a **custom ingestion pipeline** that:
-- Uses graphiti's data models (EntityNode, EntityEdge, EpisodicNode) directly
-- Implements DSPy modules for all extraction operations
-- Wraps DSPy modules in a custom LLMClient for seamless integration
-- Uses graphiti's bulk save utilities for FalkorDB persistence
-- Bypasses `add_episode()` automation for granular control
-
-This hybrid approach allows us to:
-- Reuse graphiti's robust data models and database operations
-- Replace LLM operations with optimized DSPy modules
-- Maintain flexibility to add custom processing steps
-- Gradually migrate functionality without forking graphiti
-
----
-
-## 2. Data Flow Architecture
-
-### Complete Flow: Episode → FalkorDB
-
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│ INPUT: Raw Episode Data                                                  │
-│   - episode_body: str (message, text, or JSON)                           │
-│   - reference_time: datetime (temporal anchor)                           │
-│   - source: EpisodeType (message|text|json)                              │
-└─────────────────────────────────────────────────────────────────────────┘
-                                    │
-                                    ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│ STEP 1: Episode Context Retrieval                                        │
-│   - Retrieve previous N episodes (default N=3, EPISODE_WINDOW_LEN)       │
-│   - Provides context for entity extraction and deduplication             │
-│   - Uses FalkorDB queries via GraphDriver                                │
-└─────────────────────────────────────────────────────────────────────────┘
-                                    │
-                                    ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│ STEP 2: EpisodicNode Creation                                            │
-│   - Create EpisodicNode object with metadata                             │
-│   - Fields: uuid, name, content, source, valid_at, group_id              │
-│   - Not saved yet - used as input to extraction                          │
-└─────────────────────────────────────────────────────────────────────────┘
-                                    │
-                                    ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│ STEP 3: Entity Extraction (DSPy Module)                                  │
-│   INPUT:                                                                  │
-│     - Current episode content                                             │
-│     - Previous episodes (for context)                                     │
-│     - Entity types (optional classification schema)                       │
-│   DSPy MODULE: ExtractEntitiesModule                                      │
-│   OUTPUT:                                                                 │
-│     - List[EntityNode] with name, labels, uuid, group_id                  │
-│     - No embeddings yet, no summary                                       │
-└─────────────────────────────────────────────────────────────────────────┘
-                                    │
-                                    ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│ STEP 4: Entity Deduplication (DSPy Module)                               │
-│   INPUT:                                                                  │
-│     - Extracted entities from Step 3                                      │
-│     - Previous episodes for context                                       │
-│     - Existing entities in graph (via embedding search)                   │
-│   DSPy MODULE: DedupeNodesModule                                          │
-│   OUTPUT:                                                                 │
-│     - deduplicated_nodes: List[EntityNode]                                │
-│     - uuid_map: Dict[str, str] (maps extracted → resolved UUIDs)          │
-│   PROCESS:                                                                │
-│     1. For each extracted entity, search existing graph                   │
-│     2. LLM determines if match exists                                     │
-│     3. If duplicate: merge and map UUID                                   │
-│     4. If new: keep original UUID                                         │
-└─────────────────────────────────────────────────────────────────────────┘
-                                    │
-                                    ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│ STEP 5: Relationship Extraction (DSPy Module)                            │
-│   INPUT:                                                                  │
-│     - Episode content                                                     │
-│     - Deduplicated entities (with resolved UUIDs)                         │
-│     - Reference time (for temporal reasoning)                             │
-│     - Edge types (optional relationship schema)                           │
-│   DSPy MODULE: ExtractRelationshipsModule                                 │
-│   OUTPUT:                                                                 │
-│     - List[EntityEdge] with:                                              │
-│       - source_node_uuid, target_node_uuid                                │
-│       - name (relationship type)                                          │
-│       - fact (textual description)                                        │
-│       - valid_at, invalid_at (temporal bounds)                            │
-│       - No embeddings yet                                                 │
-└─────────────────────────────────────────────────────────────────────────┘
-                                    │
-                                    ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│ STEP 6: Relationship Deduplication (DSPy Module)                         │
-│   INPUT:                                                                  │
-│     - Extracted edges                                                     │
-│     - Existing edges between same entity pairs                            │
-│   DSPy MODULE: DedupeEdgesModule                                          │
-│   OUTPUT:                                                                 │
-│     - resolved_edges: List[EntityEdge] (new or updated)                   │
-│     - invalidated_edges: List[EntityEdge] (contradicted facts)            │
-│   PROCESS:                                                                │
-│     1. Compare new facts to existing facts                                │
-│     2. Detect contradictions                                              │
-│     3. Set invalid_at for contradicted edges                              │
-│     4. Merge duplicate facts                                              │
-└─────────────────────────────────────────────────────────────────────────┘
-                                    │
-                                    ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│ STEP 7: Attribute Extraction (DSPy Module - Optional)                    │
-│   INPUT:                                                                  │
-│     - Deduplicated entities                                               │
-│     - Episode content                                                     │
-│     - Entity type schemas (with attribute definitions)                    │
-│   DSPy MODULE: ExtractAttributesModule                                    │
-│   OUTPUT:                                                                 │
-│     - Entities with populated attributes dict                             │
-│   EXAMPLE:                                                                │
-│     EntityNode(name="John", labels=["Person"],                            │
-│                attributes={"age": 30, "occupation": "Engineer"})          │
-└─────────────────────────────────────────────────────────────────────────┘
-                                    │
-                                    ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│ STEP 8: Embedding Generation                                             │
-│   - Generate name_embedding for each EntityNode                           │
-│   - Generate fact_embedding for each EntityEdge                           │
-│   - Uses Qwen3-Embedding-4B-4bit-DWQ via MLX (custom EmbedderClient)     │
-│   - Output dimension: configured for FalkorDB vector indexes              │
-└─────────────────────────────────────────────────────────────────────────┘
-                                    │
-                                    ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│ STEP 9: Episodic Edge Creation                                           │
-│   - Create EpisodicEdge (MENTIONS relationship)                           │
-│   - Links EpisodicNode → EntityNode for each extracted entity             │
-│   - Tracks which episode mentioned which entity                           │
-└─────────────────────────────────────────────────────────────────────────┘
-                                    │
-                                    ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│ STEP 10: Bulk Save to FalkorDB                                           │
-│   FUNCTION: add_nodes_and_edges_bulk(driver, ...)                         │
-│   SAVES:                                                                  │
-│     - EpisodicNode (with content, metadata)                               │
-│     - EntityNode[] (with embeddings, attributes)                          │
-│     - EpisodicEdge[] (MENTIONS relationships)                             │
-│     - EntityEdge[] (RELATES_TO relationships)                             │
-│   DATABASE OPERATIONS:                                                    │
-│     1. Episode save query                                                 │
-│     2. Entity merge queries (upsert by UUID)                              │
-│     3. Edge merge queries (upsert by UUID)                                │
-└─────────────────────────────────────────────────────────────────────────┘
-                                    │
-                                    ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│ OUTPUT: FalkorDB Graph                                                    │
-│   - Episodic nodes with temporal metadata                                │
-│   - Entity nodes with embeddings and attributes                          │
-│   - MENTIONS edges (episode → entity)                                    │
-│   - RELATES_TO edges (entity → entity)                                   │
-└─────────────────────────────────────────────────────────────────────────┘
-```
-
-### Intermediate Processing Steps
-
-**Context Retrieval** (before extraction):
-- Query: `MATCH (e:Episodic {group_id: $group_id}) RETURN e ORDER BY e.valid_at DESC LIMIT 3`
-- Provides previous episodes as context for extraction and deduplication
-
-**UUID Mapping** (between extraction and edge creation):
-- Maps temporary extraction UUIDs to resolved entity UUIDs
-- Critical for referential integrity when entities are merged
-
-**Embedding Search** (during deduplication):
-- Query existing entities by embedding similarity
-- Find potential duplicates for LLM comparison
-- Uses vector search on name_embedding field
-
-### Where DSPy Modules Replace Graphiti Prompts
-
-| Graphiti Prompt | DSPy Module | Purpose |
-|-----------------|-------------|---------|
-| `extract_nodes.extract_message` | `ExtractEntitiesModule` | Extract entities from conversations |
-| `extract_nodes.extract_text` | `ExtractEntitiesModule` | Extract entities from documents |
-| `extract_nodes.extract_json` | `ExtractEntitiesModule` | Extract entities from JSON |
-| `dedupe_nodes.nodes` | `DedupeNodesModule` | Batch entity deduplication |
-| `extract_edges.edge` | `ExtractRelationshipsModule` | Extract relationships |
-| `dedupe_edges.edge` | `DedupeEdgesModule` | Edge deduplication |
-| `invalidate_edges.v2` | `InvalidateEdgesModule` | Detect contradictions |
-| `extract_attributes` | `ExtractAttributesModule` | Extract typed attributes |
-| `extract_edge_dates` | `ExtractTemporalModule` | Extract temporal bounds |
-
----
-
-## 3. Pydantic Models to Reuse
-
-### Graphiti Models We Use Directly
-
-#### EntityNode (graphiti_core/nodes.py:435-441)
-```python
+# --- Snippet 1 (lines 243-253; context: Inherited from Node:) ---
+# NOTE: Unverified and pending further review.
 class EntityNode(Node):
     name_embedding: list[float] | None = None
     summary: str = ""
@@ -251,12 +20,9 @@ class EntityNode(Node):
     group_id: str
     labels: list[str]
     created_at: datetime
-```
 
-**Usage**: Main entity representation. Our DSPy modules output these directly.
-
-#### EntityEdge (graphiti_core/edges.py:221-240)
-```python
+# --- Snippet 2 (lines 260-275; context: Inherited from Edge:) ---
+# NOTE: Unverified and pending further review.
 class EntityEdge(Edge):
     name: str  # Relationship type
     fact: str  # Textual description
@@ -273,52 +39,32 @@ class EntityEdge(Edge):
     source_node_uuid: str
     target_node_uuid: str
     created_at: datetime
-```
 
-**Usage**: Relationship representation. Our DSPy modules output these.
-
-#### EpisodicNode (graphiti_core/nodes.py:295-299)
-```python
+# --- Snippet 3 (lines 282-287; context: Inherited from Edge: > EpisodicNode (graphiti_core/nodes.py:295-299)) ---
+# NOTE: Unverified and pending further review.
 class EpisodicNode(Node):
     source: EpisodeType  # message, text, or json
     source_description: str
     content: str  # Raw episode data
     valid_at: datetime  # When original document was created
     entity_edges: list[str] = []  # UUIDs of entity edges
-```
 
-**Usage**: We create these to represent input episodes.
-
-#### EpisodicEdge (graphiti_core/edges.py:131-144)
-```python
+# --- Snippet 4 (lines 294-297; context: target_node_uuid: entity UUID) ---
+# NOTE: Unverified and pending further review.
 class EpisodicEdge(Edge):
     # MENTIONS relationship from episode to entity
     # source_node_uuid: episode UUID
     # target_node_uuid: entity UUID
-```
 
-**Usage**: Generated automatically from extracted entities.
-
-### Mappings Between kg_extraction.py and Graphiti Models
-
-Our current `/Users/flavius/repos/charlie/dspy_outlines/kg_extraction.py`:
-
-| Our Model | Graphiti Model | Mapping Strategy |
-|-----------|----------------|------------------|
-| `Node` | `EntityNode` | Replace with EntityNode |
-| `Edge` | `EntityEdge` | Replace with EntityEdge |
-| `KnowledgeGraph` | N/A (wrapper) | Use List[EntityNode], List[EntityEdge] instead |
-
-**Current kg_extraction.py Node**:
-```python
+# --- Snippet 5 (lines 314-317; context: target_node_uuid: entity UUID > Mappings Between kg_extraction.py and Graphiti Models) ---
+# NOTE: Unverified and pending further review.
 class Node(BaseModel):
     id: int
     label: str  # Entity name
     properties: dict
-```
 
-**Mapped to EntityNode**:
-```python
+# --- Snippet 6 (lines 322-329; context: target_node_uuid: entity UUID > Mappings Between kg_extraction.py and Graphiti Models) ---
+# NOTE: Unverified and pending further review.
 EntityNode(
     uuid=str(uuid4()),  # Generate proper UUID
     name=node.label,    # Map label → name
@@ -327,19 +73,17 @@ EntityNode(
     attributes=node.properties,  # Map properties → attributes
     created_at=utc_now()
 )
-```
 
-**Current kg_extraction.py Edge**:
-```python
+# --- Snippet 7 (lines 334-338; context: target_node_uuid: entity UUID > Mappings Between kg_extraction.py and Graphiti Models) ---
+# NOTE: Unverified and pending further review.
 class Edge(BaseModel):
     source: int  # Node ID
     target: int  # Node ID
     label: str   # Relationship type
     properties: dict
-```
 
-**Mapped to EntityEdge**:
-```python
+# --- Snippet 8 (lines 343-352; context: target_node_uuid: entity UUID > Mappings Between kg_extraction.py and Graphiti Models) ---
+# NOTE: Unverified and pending further review.
 EntityEdge(
     uuid=str(uuid4()),
     source_node_uuid=uuid_map[edge.source],  # Resolve ID → UUID
@@ -350,35 +94,9 @@ EntityEdge(
     created_at=utc_now(),
     attributes=edge.properties
 )
-```
 
-### Required Model Adaptations
-
-**1. ID Resolution**
-- Our models use integer IDs, graphiti uses UUID strings
-- Need UUID mapping: `Dict[int, str]` during conversion
-
-**2. Fact Generation**
-- Graphiti EntityEdge requires a `fact` field (textual description)
-- Generate from: `"{source.name} {edge.name} {target.name}"`
-- Or extract from text via DSPy
-
-**3. Temporal Information**
-- Add `valid_at`, `invalid_at` extraction
-- Use episode reference_time as default
-
-**4. Entity Type Classification**
-- Our `Node.label` is entity name
-- Graphiti `EntityNode.labels` is type classification (e.g., ["Person"], ["Organization"])
-- Add entity type classification step
-
----
-
-## 4. Custom Pipeline Design
-
-### Step-by-Step Custom Ingestion Flow
-
-```python
+# --- Snippet 9 (lines 382-609; context: ============================================================) ---
+# NOTE: Unverified and pending further review.
 from graphiti_core.nodes import EntityNode, EpisodicNode, EpisodeType
 from graphiti_core.edges import EntityEdge, EpisodicEdge
 from graphiti_core.utils.bulk_utils import add_nodes_and_edges_bulk
@@ -607,27 +325,9 @@ async def custom_ingestion_pipeline(
         "edges": resolved_edges,
         "invalidated_edges": invalidated_edges
     }
-```
 
-### Control Points for Each Step
-
-**1. Entity Extraction Control**
-- Override entity type schema
-- Filter extracted entities before deduplication
-- Add custom entity classification logic
-
-**2. Embedding Creation Control**
-- Choose embedder (BGE, OpenAI, custom)
-- Batch embedding generation
-- Skip embeddings for testing
-
-**3. Deduplication Control**
-- Adjust similarity thresholds
-- Override LLM deduplication decisions
-- Implement custom merge strategies
-
-**4. Custom Processing Hooks**
-```python
+# --- Snippet 10 (lines 631-648; context: ... etc) ---
+# NOTE: Unverified and pending further review.
 # Add custom processing at any step
 async def custom_ingestion_with_hooks(
     episode_body: str,
@@ -646,36 +346,16 @@ async def custom_ingestion_with_hooks(
         resolved_nodes = await hooks['post_deduplication'](resolved_nodes)
 
     # ... etc
-```
 
-### How to Bypass Automated Episode Processing
-
-**Don't call `graphiti.add_episode()`**. Instead:
-
-1. **Import graphiti utilities** (not the Graphiti class):
-```python
+# --- Snippet 11 (lines 657-660; context: ... etc > How to Bypass Automated Episode Processing) ---
+# NOTE: Unverified and pending further review.
 from graphiti_core.nodes import EntityNode, EpisodicNode
 from graphiti_core.edges import EntityEdge, EpisodicEdge
 from graphiti_core.utils.bulk_utils import add_nodes_and_edges_bulk
 from graphiti_core.driver.falkordb_driver import FalkorDriver
-```
 
-2. **Create your own pipeline function** (as shown above)
-
-3. **Call DSPy modules directly** instead of using LLMClient
-
-4. **Use graphiti's save utilities** for database operations
-
-This approach gives you:
-- Full control over extraction order
-- Ability to skip steps (e.g., no communities)
-- Custom deduplication logic
-- Direct access to intermediate results
-
-### How to Use Graphiti Models with DSPy Modules
-
-**Pattern 1: Output Graphiti Models Directly**
-```python
+# --- Snippet 12 (lines 679-687; context: Output graphiti model directly) ---
+# NOTE: Unverified and pending further review.
 from graphiti_core.nodes import EntityNode
 
 class ExtractEntitiesSignature(dspy.Signature):
@@ -685,10 +365,9 @@ class ExtractEntitiesSignature(dspy.Signature):
 
     # Output graphiti model directly
     entities: list[EntityNode] = dspy.OutputField()
-```
 
-**Pattern 2: Use Intermediate Models + Conversion**
-```python
+# --- Snippet 13 (lines 692-714; context: Convert after extraction) ---
+# NOTE: Unverified and pending further review.
 class ExtractedEntity(BaseModel):
     """Intermediate model for extraction."""
     name: str
@@ -712,19 +391,9 @@ def convert_to_graphiti(entities: list[ExtractedEntity], group_id: str) -> list[
         )
         for e in entities
     ]
-```
 
-**Recommendation**: Use Pattern 2 for cleaner DSPy module design, then convert to graphiti models in the pipeline.
-
----
-
-## 5. DSPy Integration Plan
-
-### Detailed LLMClient Wrapper Implementation
-
-The LLMClient wrapper allows graphiti code to call DSPy modules transparently.
-
-```python
+# --- Snippet 14 (lines 728-962; context: Try to construct expected model from DSPy output) ---
+# NOTE: Unverified and pending further review.
 from graphiti_core.llm_client import LLMClient, LLMConfig
 from graphiti_core.prompts.models import Message
 from pydantic import BaseModel
@@ -960,13 +629,9 @@ class DSPyLLMClient(LLMClient):
             raise ValueError(
                 f"Could not convert DSPy result to {expected_model.__name__}: {e}"
             )
-```
 
-### DSPy Module Specifications
-
-#### 1. ExtractEntitiesModule
-
-```python
+# --- Snippet 15 (lines 970-1010; context: Try to construct expected model from DSPy output > DSPy Module Specifications > 1. ExtractEntitiesModule) ---
+# NOTE: Unverified and pending further review.
 from pydantic import BaseModel, Field
 import dspy
 
@@ -1008,11 +673,9 @@ class ExtractEntitiesModule(dspy.Module):
             previous_episodes=previous_episodes or [],
             entity_types=entity_types or []
         )
-```
 
-#### 2. DedupeNodesModule
-
-```python
+# --- Snippet 16 (lines 1016-1049; context: Try to construct expected model from DSPy output > DSPy Module Specifications > 2. DedupeNodesModule) ---
+# NOTE: Unverified and pending further review.
 class NodeDuplicateResult(BaseModel):
     is_duplicate: bool = Field(description="Whether entities are duplicates")
     confidence: float = Field(description="Confidence score 0-1")
@@ -1047,11 +710,9 @@ class DedupeNodesModule(dspy.Module):
             existing_entities=existing_entities,
             context=context
         )
-```
 
-#### 3. ExtractRelationshipsModule
-
-```python
+# --- Snippet 17 (lines 1055-1096; context: Try to construct expected model from DSPy output > DSPy Module Specifications > 3. ExtractRelationshipsModule) ---
+# NOTE: Unverified and pending further review.
 class ExtractedEdge(BaseModel):
     source_uuid: str
     target_uuid: str
@@ -1094,11 +755,9 @@ class ExtractRelationshipsModule(dspy.Module):
             reference_time=reference_time,
             edge_types=edge_types or []
         )
-```
 
-#### 4. DedupeEdgesModule
-
-```python
+# --- Snippet 18 (lines 1102-1128; context: Try to construct expected model from DSPy output > DSPy Module Specifications > 4. DedupeEdgesModule) ---
+# NOTE: Unverified and pending further review.
 class EdgeDeduplicateResult(BaseModel):
     is_duplicate: bool
     is_contradiction: bool
@@ -1126,30 +785,9 @@ class DedupeEdgesModule(dspy.Module):
             existing_facts=existing_facts,
             context=context
         )
-```
 
-### Context Extraction and Response Formatting
-
-**Context Extraction** happens in `DSPyLLMClient._parse_context()`:
-- Graphiti passes context as formatted text in Message objects
-- Usually uses XML-like tags: `<CURRENT MESSAGE>...</CURRENT MESSAGE>`
-- Parser extracts structured data for DSPy signatures
-
-**Response Formatting** happens in `DSPyLLMClient._format_response()`:
-- Converts DSPy output to graphiti's expected Pydantic model
-- Handles model_dump() conversion
-- Validates schema compatibility
-
-### Optimization Strategy
-
-**When to Run MIPRO**:
-
-1. **After initial implementation** - Optimize all modules together
-2. **Per-module optimization** - Fine-tune specific operations
-3. **Domain adaptation** - When switching to new data domains
-
-**MIPRO Setup**:
-```python
+# --- Snippet 19 (lines 1153-1183; context: Save optimized prompts) ---
+# NOTE: Unverified and pending further review.
 import dspy
 from dspy.teleprompt import MIPRO
 
@@ -1181,10 +819,9 @@ optimized_module = teleprompter.compile(
 
 # Save optimized prompts
 optimized_module.save("optimized_prompts/extract_entities.json")
-```
 
-**Evaluation Metrics**:
-```python
+# --- Snippet 20 (lines 1188-1214; context: F1 score) ---
+# NOTE: Unverified and pending further review.
 def entity_extraction_metric(example, prediction, trace=None):
     """
     Metric for entity extraction quality.
@@ -1212,15 +849,9 @@ def entity_extraction_metric(example, prediction, trace=None):
 
     f1 = 2 * (precision * recall) / (precision + recall)
     return f1
-```
 
----
-
-## 6. FalkorDB Integration
-
-### Database Connection Setup
-
-```python
+# --- Snippet 21 (lines 1224-1238; context: - Provider-specific query syntax) ---
+# NOTE: Unverified and pending further review.
 from graphiti_core.driver.falkordb_driver import FalkorDriver
 from graphiti_core.driver import GraphProvider
 
@@ -1236,18 +867,9 @@ driver = FalkorDriver(
 # - Query execution
 # - Transaction management
 # - Provider-specific query syntax
-```
 
-**Connection String Formats**:
-- Local: `falkordb://localhost:6379`
-- Remote: `falkordb://host:port?password=xxx`
-- With database: `falkordb://localhost:6379/dbname`
-
-### Query Patterns for FalkorDB
-
-Graphiti uses provider-aware query execution:
-
-```python
+# --- Snippet 22 (lines 1251-1262; context: Execute query with FalkorDB-specific syntax) ---
+# NOTE: Unverified and pending further review.
 # Execute query with FalkorDB-specific syntax
 records, summary, keys = await driver.execute_query(
     """
@@ -1260,12 +882,9 @@ records, summary, keys = await driver.execute_query(
     search_term="John",
     limit=10
 )
-```
 
-**Common Query Patterns**:
-
-1. **Node Creation/Merge**:
-```python
+# --- Snippet 23 (lines 1269-1286; context: ... etc) ---
+# NOTE: Unverified and pending further review.
 await driver.execute_query(
     """
     MERGE (n:Entity {uuid: $uuid})
@@ -1284,10 +903,9 @@ await driver.execute_query(
     name=node.name,
     # ... etc
 )
-```
 
-2. **Edge Creation**:
-```python
+# --- Snippet 24 (lines 1291-1306; context: ... etc) ---
+# NOTE: Unverified and pending further review.
 await driver.execute_query(
     """
     MATCH (source:Entity {uuid: $source_uuid})
@@ -1304,10 +922,9 @@ await driver.execute_query(
     target_uuid=edge.target_node_uuid,
     # ... etc
 )
-```
 
-3. **Embedding Search** (FalkorDB vector indexing):
-```python
+# --- Snippet 25 (lines 1311-1339; context: Search by embedding) ---
+# NOTE: Unverified and pending further review.
 # Create vector index (once)
 await driver.execute_query(
     """
@@ -1337,12 +954,9 @@ await driver.execute_query(
     top_k=5,
     group_id=group_id
 )
-```
 
-### Index Management
-
-**Create Indexes on Startup**:
-```python
+# --- Snippet 26 (lines 1346-1388; context: Vector indexes for similarity search) ---
+# NOTE: Unverified and pending further review.
 async def setup_indexes(driver: FalkorDriver):
     """Create indexes for efficient querying."""
 
@@ -1386,13 +1000,9 @@ async def setup_indexes(driver: FalkorDriver):
         )
         """
     )
-```
 
-### Transaction Handling
-
-Graphiti uses driver sessions for transaction management:
-
-```python
+# --- Snippet 27 (lines 1396-1404; context: Manual transaction (multiple queries)) ---
+# NOTE: Unverified and pending further review.
 # Automatic transaction (single query)
 await driver.execute_query(query, **params)
 
@@ -1402,46 +1012,9 @@ async with driver.session() as session:
         await tx.run(query1, **params1)
         await tx.run(query2, **params2)
         await tx.commit()
-```
 
-**Bulk Operations** (handled by graphiti's `add_nodes_and_edges_bulk`):
-- Batches all inserts into single transaction
-- Handles embedding generation before save
-- Uses MERGE queries for upsert behavior
-
----
-
-## 6.5. Embedding and Reranking Integration
-
-### Qwen3-Embedding-4B-4bit-DWQ for Embeddings
-
-**Model Details:**
-- **HuggingFace**: `mlx-community/Qwen3-Embedding-4B-4bit-DWQ`
-- **Parameters**: 4B parameters, 4-bit quantized
-- **Optimization**: MLX-optimized for Apple Silicon
-- **Output Dimension**: 768 or 1024 (configurable, check model config)
-- **Purpose**: Semantic similarity for entity/fact deduplication and search
-
-**Where Embeddings Are Used:**
-
-1. **Entity Name Embeddings** (`EntityNode.name_embedding`):
-   - Semantic search for entity deduplication
-   - Finding similar entities during extraction
-   - Stored in FalkorDB vector indexes
-
-2. **Fact Embeddings** (`EntityEdge.fact_embedding`):
-   - Semantic search for relationship deduplication
-   - Finding similar facts during extraction
-   - Query-time semantic search for facts
-   - Stored in FalkorDB vector indexes
-
-3. **Query Embeddings**:
-   - Real-time embedding of user queries
-   - Cosine similarity search against stored embeddings
-
-**EmbedderClient Implementation:**
-
-```python
+# --- Snippet 28 (lines 1445-1535; context: Average) ---
+# NOTE: Unverified and pending further review.
 from graphiti_core.embedder.client import EmbedderClient
 import mlx.core as mx
 from transformers import AutoTokenizer
@@ -1533,13 +1106,9 @@ class Qwen3EmbedderClient(EmbedderClient):
 
         # Average
         return sum_embeddings / sum_mask
-```
 
-**Embedding Dimension Configuration:**
-
-When creating FalkorDB vector indexes, dimension must match embedder:
-
-```python
+# --- Snippet 29 (lines 1543-1565; context: Create vector index in FalkorDB) ---
+# NOTE: Unverified and pending further review.
 # Get embedding dimension from embedder
 embedding_dim = embedder.embedding_dim  # e.g., 1024 for Qwen3-Embedding-4B
 
@@ -1563,42 +1132,9 @@ await driver.execute_query(f"""
         'COSINE'
     )
 """)
-```
 
-### Qwen3-Reranker-0.6B-seq-cls for Reranking
-
-**Model Details:**
-- **HuggingFace**: `tomaarsen/Qwen3-Reranker-0.6B-seq-cls`
-- **Parameters**: 0.6B parameters (lightweight, fast)
-- **Architecture**: Sequence classification model
-- **Purpose**: Post-retrieval reranking for improved search precision
-
-**When Reranking Is Used:**
-
-Cross-encoder reranking is a **critical post-processing step** in the search pipeline:
-
-```
-User Query
-    ↓
-1. Initial Retrieval (Hybrid Search)
-    ├─ BM25 (keyword matching)
-    └─ Cosine Similarity (semantic embedding search)
-    ↓
-2. Reciprocal Rank Fusion (RRF)
-    - Combines BM25 and semantic results
-    - Produces top K candidates (e.g., K=50)
-    ↓
-3. Cross-Encoder Reranking  ← THIS STEP
-    - Rescore top K candidates
-    - More expensive but more accurate
-    - Produces final ranked list (e.g., top 10)
-    ↓
-Final Results (sorted by cross-encoder scores)
-```
-
-**CrossEncoderClient Implementation:**
-
-```python
+# --- Snippet 30 (lines 1602-1651; context: Create (passage, score) tuples and sort) ---
+# NOTE: Unverified and pending further review.
 from graphiti_core.cross_encoder.client import CrossEncoderClient
 from sentence_transformers import CrossEncoder
 import asyncio
@@ -1649,13 +1185,9 @@ class Qwen3RerankerClient(CrossEncoderClient):
         results.sort(key=lambda x: x[1], reverse=True)
 
         return results
-```
 
-**Search Configuration:**
-
-Enable cross-encoder reranking in search config:
-
-```python
+# --- Snippet 31 (lines 1659-1675; context: Search with reranking) ---
+# NOTE: Unverified and pending further review.
 from graphiti_core.search.search_config import SearchConfig, EdgeSearchConfig
 from graphiti_core.search.search_config import EdgeSearchMethod, EdgeReranker
 
@@ -1673,13 +1205,9 @@ config = SearchConfig(
 
 # Search with reranking
 results = await graphiti.search_("user query", config=config)
-```
 
-### Integration Pattern
-
-**Complete Graphiti Initialization with All Three Custom Components:**
-
-```python
+# --- Snippet 32 (lines 1683-1712; context: ✓ Optimized for Apple Silicon) ---
+# NOTE: Unverified and pending further review.
 from graphiti_core import Graphiti
 from graphiti_core.driver.falkordb_driver import FalkorDriver
 from your_module import (
@@ -1710,139 +1238,9 @@ graphiti = Graphiti(
 # ✓ Complete local inference
 # ✓ No API dependencies
 # ✓ Optimized for Apple Silicon
-```
 
-### Performance Considerations
-
-**Batch Sizes:**
-- **Embeddings**: Batch size 16-32 for 4-bit models on MLX
-- **Reranking**: Process top 20-50 candidates (not all results)
-
-**MLX Optimization:**
-- Unified memory for efficient CPU-GPU data transfer
-- 4-bit quantization for speed
-- Batching for throughput
-
-**Caching:**
-- ✓ Cache embeddings (stored in FalkorDB, query-independent)
-- ✗ Don't cache cross-encoder scores (query-dependent)
-
-**Typical Settings:**
-- Initial retrieval: 50-100 results
-- Reranking: Top 20-50 of those
-- Final return: Top 10-20
-
----
-
-## 7. Implementation Roadmap
-
-### Phase 1: Core Extraction (Entities, Relationships, Embeddings, Reranking)
-
-**Goal**: Basic entity and relationship extraction with FalkorDB persistence, embeddings, and reranking
-
-**Tasks**:
-1. ✅ Set up FalkorDB driver and connection
-2. ✅ Create database indexes (including vector indexes)
-3. ✅ Implement `Qwen3EmbedderClient` for embeddings
-4. ✅ Implement `Qwen3RerankerClient` for reranking
-5. ✅ Implement `ExtractEntitiesModule` DSPy signature
-6. ✅ Implement `ExtractRelationshipsModule` DSPy signature
-7. ✅ Create basic custom pipeline function with embeddings
-8. ✅ Test extraction with simple episodes
-9. ✅ Test embedding generation
-10. ✅ Test reranking with search queries
-11. ✅ Verify FalkorDB persistence (nodes, edges, embeddings)
-
-**Deliverables**:
-- Working entity extraction (no deduplication)
-- Working relationship extraction
-- Qwen3 embedder generating embeddings
-- Qwen3 reranker working in search pipeline
-- Successful FalkorDB saves with embeddings
-- Basic integration test
-
-**Success Metrics**:
-- Extract 90%+ of entities from test episodes
-- Extract 80%+ of relationships
-- Embeddings generated for all entities/facts
-- Reranking improves search precision
-- No database errors
-
-### Phase 2: Deduplication and Resolution
-
-**Goal**: Entity and edge deduplication with UUID mapping
-
-**Tasks**:
-1. ✅ Implement `DedupeNodesModule` DSPy signature
-2. ✅ Implement `DedupeEdgesModule` DSPy signature
-3. ✅ Add embedding search for entity matching
-4. ✅ Implement UUID mapping logic
-5. ✅ Test deduplication across multiple episodes
-6. ✅ Verify merge behavior in FalkorDB
-
-**Deliverables**:
-- Entity deduplication working
-- Edge deduplication with contradiction detection
-- Proper UUID mapping
-- Multi-episode integration test
-
-**Success Metrics**:
-- <5% duplicate entities in graph
-- Correctly identify 90%+ of contradictions
-- No broken UUID references
-
-### Phase 3: Advanced Features (Temporal, Communities)
-
-**Goal**: Temporal reasoning and community detection
-
-**Tasks**:
-1. ✅ Implement `ExtractTemporalModule` for valid_at/invalid_at
-2. ✅ Implement temporal invalidation logic
-3. ✅ Add community detection (optional)
-4. ✅ Implement `ExtractAttributesModule` for typed attributes
-5. ✅ Test temporal queries (facts at specific time)
-
-**Deliverables**:
-- Temporal edge extraction
-- Time-aware queries
-- Optional community grouping
-- Typed attribute extraction
-
-**Success Metrics**:
-- Correct temporal bounds on 85%+ of edges
-- Time-travel queries return correct facts
-- Communities detected for dense subgraphs
-
-### Phase 4: Optimization and Fine-Tuning
-
-**Goal**: Optimize DSPy modules with MIPRO
-
-**Tasks**:
-1. ✅ Create evaluation dataset (gold-standard extractions)
-2. ✅ Define metrics for each module
-3. ✅ Run MIPRO optimization
-4. ✅ Compare optimized vs baseline performance
-5. ✅ Save optimized prompts
-6. ✅ Benchmark end-to-end pipeline
-
-**Deliverables**:
-- Optimized DSPy modules
-- Performance benchmarks
-- Saved prompt artifacts
-- Documentation of improvements
-
-**Success Metrics**:
-- 10-20% improvement in extraction metrics
-- Faster inference time (MLX optimization)
-- Reproducible optimization process
-
----
-
-## 8. Code Examples
-
-### Complete Example: Custom Pipeline Using Graphiti Models + DSPy
-
-```python
+# --- Snippet 33 (lines 1846-2135; context: 4. Process an episode) ---
+# NOTE: Unverified and pending further review.
 """
 Complete custom knowledge graph ingestion pipeline.
 
@@ -2133,11 +1531,9 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-```
 
-### Processing One Episode End-to-End
-
-```python
+# --- Snippet 34 (lines 2141-2186; context: Results) ---
+# NOTE: Unverified and pending further review.
 """
 Minimal example: Process one episode from start to finish.
 """
@@ -2184,11 +1580,9 @@ async def process_episode_example():
     print(f"✓ Saved to FalkorDB (episode UUID: {result['episode'].uuid})")
 
 asyncio.run(process_episode_example())
-```
 
-### Complete Example with All Three Qwen3 Components
-
-```python
+# --- Snippet 35 (lines 2192-2303; context: 6. Summary) ---
+# NOTE: Unverified and pending further review.
 """
 Complete Graphiti initialization with Qwen3 for all three subsystems:
 - LLM operations (DSPy + Qwen2.5-7B-Instruct-4bit)
@@ -2301,47 +1695,9 @@ async def complete_qwen3_pipeline_example():
 
 if __name__ == "__main__":
     asyncio.run(complete_qwen3_pipeline_example())
-```
 
-**Expected Output**:
-```
-Initializing Qwen3 subsystems...
-✓ Embedder loaded (dim=1024)
-✓ Reranker loaded
-✓ DSPy LLM client configured
-✓ FalkorDB driver connected
-✓ Graphiti initialized with Qwen3 subsystems
-
-Processing episode...
-✓ Episode processed and saved
-
-Searching with reranking...
-✓ Search complete: 8 results
-  1. Alice leads the machine learning project
-  2. Bob works on the machine learning project
-  3. Alice met with Bob
-  4. The project uses TensorFlow
-  5. The project deadline is next quarter
-
-============================================================
-COMPLETE LOCAL INFERENCE PIPELINE
-============================================================
-✓ LLM operations:  Qwen2.5-7B-Instruct-4bit (via DSPy)
-✓ Embeddings:      Qwen3-Embedding-4B-4bit-DWQ
-✓ Reranking:       Qwen3-Reranker-0.6B-seq-cls
-✓ Graph storage:   FalkorDB
-✓ Platform:        MLX (Apple Silicon optimized)
-✓ API calls:       ZERO (completely local)
-============================================================
-```
-
----
-
-## 9. Testing Strategy
-
-### Unit Tests for DSPy Modules
-
-```python
+# --- Snippet 36 (lines 2345-2476; context: Check most relevant passage is first) ---
+# NOTE: Unverified and pending further review.
 """
 Unit tests for DSPy extraction modules.
 """
@@ -2474,11 +1830,9 @@ def test_qwen3_reranker(configure_dspy):
     # Check most relevant passage is first
     assert "Alice" in results[0][0]
     assert "research scientist" in results[0][0]
-```
 
-### Integration Tests with FalkorDB
-
-```python
+# --- Snippet 37 (lines 2482-2631; context: Just verify the pipeline works without errors) ---
+# NOTE: Unverified and pending further review.
 """
 Integration tests for full pipeline with FalkorDB.
 """
@@ -2629,11 +1983,9 @@ async def test_search_with_embedder_and_reranker():
 
     # Reranking may change order or scores
     # Just verify the pipeline works without errors
-```
 
-### Performance Benchmarks
-
-```python
+# --- Snippet 38 (lines 2637-2699; context: Benchmark queries) ---
+# NOTE: Unverified and pending further review.
 """
 Performance benchmarks for pipeline.
 """
@@ -2697,75 +2049,4 @@ async def benchmark_query_performance(pipeline, num_queries=1000):
     print(f"Queries executed: {num_queries}")
     print(f"Average time: {mean(times)*1000:.2f}ms")
     print(f"Throughput: {num_queries / sum(times):.0f} queries/sec")
-```
 
-**Run Benchmarks**:
-```bash
-pytest tests/test_performance.py --benchmark
-```
-
-**Expected Performance** (Qwen2.5-7B on M1 Max):
-- Entity extraction: ~2-5 seconds/episode
-- Relationship extraction: ~3-6 seconds/episode
-- Database save: ~100-200ms/episode
-- Total throughput: ~0.1-0.2 episodes/sec
-- Query performance: ~5-10ms/query (with indexes)
-
----
-
-## Summary
-
-This integration plan provides a comprehensive roadmap for building a custom knowledge graph extraction pipeline that:
-
-1. **Reuses graphiti-core's battle-tested Pydantic models** (EntityNode, EntityEdge, etc.)
-2. **Replaces all LLM operations with DSPy modules** for type-safe, optimizable extraction
-3. **Uses Qwen3-Embedding-4B-4bit-DWQ for embeddings** (local, MLX-optimized)
-4. **Uses Qwen3-Reranker-0.6B-seq-cls for reranking** (local, lightweight)
-5. **Uses FalkorDB as the graph backend** with full compatibility
-6. **Maintains granular control** over each pipeline step
-7. **Supports optimization** through DSPy's MIPRO framework
-
-The custom pipeline bypasses graphiti's automated `add_episode()` workflow, giving us complete control while leveraging the robust data models and database utilities that graphiti provides.
-
-### Key Advantages
-
-**Complete Local Inference:**
-- **LLM operations**: Qwen2.5-7B-Instruct-4bit via DSPy + Outlines
-- **Embeddings**: Qwen3-Embedding-4B-4bit-DWQ via MLX
-- **Reranking**: Qwen3-Reranker-0.6B-seq-cls via MLX
-- **Platform**: MLX on Apple Silicon for all three subsystems
-- **API calls**: ZERO (completely local, no dependencies)
-
-**Technical Benefits:**
-- **Type safety**: Outlines constrained generation ensures valid outputs
-- **Local inference**: MLX on Apple Silicon for fast, private inference
-- **Optimization**: DSPy's MIPRO for continuous improvement
-- **Flexibility**: Add custom processing steps anywhere in the pipeline
-- **Compatibility**: Drop-in replacement for graphiti's default LLM operations
-- **Performance**: All models quantized to 4-bit for speed
-
-### Three Critical Subsystems
-
-1. **LLM Subsystem** (Extraction & Deduplication):
-   - DSPy modules with Outlines constrained generation
-   - Qwen2.5-7B-Instruct-4bit for instruction following
-   - Used for: entity extraction, relationship extraction, deduplication, temporal reasoning
-
-2. **Embedding Subsystem** (Semantic Search):
-   - Qwen3-Embedding-4B-4bit-DWQ for embeddings
-   - Used for: entity name embeddings, fact embeddings, query embeddings
-   - Stored in FalkorDB vector indexes for cosine similarity search
-
-3. **Reranking Subsystem** (Search Precision):
-   - Qwen3-Reranker-0.6B-seq-cls for cross-encoder reranking
-   - Used for: post-retrieval reranking to improve search precision
-   - Processes top K candidates after initial retrieval (BM25 + semantic search)
-
-### Next Steps
-
-1. **Implement Phase 1** (core extraction + embeddings + reranking)
-2. **Test Qwen3 models** separately for quality benchmarking
-3. **Test with FalkorDB** including vector indexes
-4. **Add deduplication** (Phase 2)
-5. **Benchmark performance** on Apple Silicon
-6. **Optimize with MIPRO** (Phase 4)
