@@ -10,6 +10,7 @@ This directory now houses a staged implementation plan for the custom Graphiti k
 - `phase-05-optimization.md` – optimize, benchmark, and harden the end-to-end system.
 
 - `falkordblite-evaluation.md` – deep dive on the embedded FalkorDBLite library, constraints, and how it affects our adapters.
+- `distilbert-ner-notes` (see `research/10-distilbert-ner-integration.md`) – captures how the ONNX NER helper accelerates entity discovery and how we plan to fuse its hints into DSPy modules.
 - `graphiti-models-archive.md` – archived, unvetted legacy plan; reference specific sections only to avoid context bloat.
 
 All unverified prototype code that previously lived in `graphiti-models.md` was moved to `snippets/unverified_graphiti_pipeline_examples.py`. Treat those snippets as exploratory only—they intentionally do **not** prescribe the production implementation.

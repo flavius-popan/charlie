@@ -94,6 +94,16 @@ llm_response = await llm_client.generate_response(
 
 **Advantage**: No modification to graphiti code needed
 
+### NER-Orchestrated Context
+
+We must accommodate multiple roles for the local DistilBERT ONNX model (`distilbert_ner.py`) when replacing Graphiti prompts. When `llm_client.generate_response()` is invoked for entity or edge extraction prompts, the wrapper should:
+
+1. Support configurable modes: NER-only (DistilBERT produces entities directly), hybrid (NER detections plus DSPy validation/augmentation), and DSPy-only with optional hints.
+2. Run `distilbert_ner.predict_entities()` when the selected mode requires it (respecting stride/max length limits) and normalize results to the expected response models.
+3. Expose runtime flags/telemetry so we can benchmark each mode (latency, recall, disagreement rates) and switch strategies without code changes.
+
+This flexibility lets us use DistilBERT as a steering signal or as the primary extractor depending on quality targets, aligning with the existing Gradio fusion experience (`gradio_app.py`).
+
 Create a custom `LLMClient` that intercepts `generate_response()` and routes to DSPy:
 
 ```python

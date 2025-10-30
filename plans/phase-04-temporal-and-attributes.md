@@ -15,6 +15,7 @@ Review temporal handling and attribute experiments in `research/` (e.g., graph b
    - Implement `ExtractAttributesModule` with schema-aware rules per entity type.
    - Enforce type hints and validation before persisting attribute dictionaries.
    - Support partial updates so new attributes can merge without clobbering prior values.
+   - Reuse DistilBERT NER outputs when running in NER-only or hybrid modes to seed attribute defaults (e.g., `labels=["Person"]`) and flag low-confidence entities for manual review, while preserving DSPy-derived attributes when NER is disabled.
 
 3. **Community & Higher-Order Signals**
    - Add optional community detection or grouping heuristics (e.g., label propagation).
@@ -30,6 +31,7 @@ Testing Strategy
 ----------------
 - Create fixtures that cover overlapping time ranges, contradictory facts, and missing timestamps.
 - Add regression tests for attribute validation (happy path, type mismatch, merge semantics).
+- Verify DistilBERT-derived labels feed into attribute/type assignments across all extraction modes while preserving override pathways.
 - Measure community detection performance on synthetic dense graphs to avoid regressions.
 - Verify API/query helpers return correct results for time-bounded and attribute-filtered requests against FalkorDBLite.
 

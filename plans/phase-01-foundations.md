@@ -11,8 +11,9 @@ Key Activities
 2. Review the embedded `falkordblite` runtime (see `falkordblite-evaluation.md`) and document how its lifecycle maps onto our adapters.
 3. Document the end-to-end episode → graph flow, focusing on where we will hand off to DSPy modules instead of Graphiti prompts.
 4. Produce a small set of canonical test episodes plus expected entities/edges for sanity checks across phases.
-5. Establish a shared configuration surface (env vars or `.env` overrides) for FalkorDBLite database files, model paths, and DSPy adapters.
-6. Validate thread-safety assumptions for any shared adapters or embeddings, annotating locking expectations inline (per repository guidelines).
+5. Evaluate the existing `distilbert_ner.py` + ONNX runtime (see repository root) to catalogue capabilities, latency, and how NER outputs can drive multiple extraction modes (NER-only, hybrid, hints).
+6. Establish a shared configuration surface (env vars or `.env` overrides) for FalkorDBLite database files, model paths (Qwen + DistilBERT ONNX), and DSPy adapters.
+7. Validate thread-safety assumptions for any shared adapters or embeddings, annotating locking expectations inline (per repository guidelines).
 
 Graphiti Integration Notes
 --------------------------
@@ -26,6 +27,13 @@ Embedded Falkor Runtime
 - Adopt `falkordblite` to host FalkorDB locally; capture database path conventions and how to share the embedded server across processes.
 - Note that FalkorDBLite exposes Redis-compatible sockets (default Unix socket plus optional TCP); plan adapter hooks accordingly.
 - Record startup/shutdown expectations so we can manage lifecycle explicitly during tests, CLI scripts, and Gradio sessions.
+
+NER Acceleration Baseline
+-------------------------
+- Audit `distilbert_ner.py` and the `distilbert-ner-uncased-onnx/` assets to document model inputs, batching limits, and ONNX runtime requirements.
+- Record how the existing Gradio demo fuses DistilBERT NER outputs with LLM extraction (entity hints, toggle behaviors).
+- Outline hypotheses for using DistilBERT as: (a) the primary entity source, (b) a blended source, or (c) a steering hint provider; ensure later phases can toggle among them.
+- Decide on baseline caching, stride settings, and confidence thresholds so later phases can reuse consistent heuristics.
 
 Data Flow Checkpoints
 ---------------------
@@ -50,6 +58,7 @@ Gradio Checkpoint
 Dependencies & Deliverables
 ---------------------------
 - Confirm MLX builds and weights for Qwen models are locally available before the next phase.
+- Verify the DistilBERT ONNX bundle is downloaded/accessible (or document download automation) and record expected checksum/size.
 - Produce a short README section detailing how to run the foundation Gradio app and any required environment setup.
 - Capture a decision log for FalkorDB indexes and transaction strategy to unblock Phase 02 work.
 

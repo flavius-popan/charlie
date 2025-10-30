@@ -12,9 +12,10 @@ Cross-reference the deduplication and graph driver notes in `research/06-falkord
    - Surface confidence thresholds (configurable) for merge decisions.
 
 2. **Entity Deduplication**
-   - Implement `DedupeNodesModule` to decide match/merge/new entity outcomes.
+   - Implement `DedupeNodesModule` to decide match/merge/new entity outcomes across all extraction modes (NER-only, hybrid, DSPy-only).
    - Maintain a `uuid_map` for provisional → resolved entity IDs so downstream steps remain stable.
-   - Record provenance (source episode IDs, reasoning text) for auditing conflict decisions.
+   - Record provenance (source episode IDs, reasoning text, extraction mode) for auditing conflict decisions.
+   - Incorporate DistilBERT NER spans/confidences as features when available, while preserving graceful degradation when only DSPy output exists.
 
 3. **Relationship Resolution**
    - Implement `DedupeEdgesModule` and `InvalidateEdgesModule` to merge facts, detect contradictions, and set `invalid_at`.
@@ -32,6 +33,7 @@ Testing Strategy
 - Add multi-episode regression cases verifying UUID stability and edge reconciliation.
 - Validate error handling when FalkorDBLite returns conflicting records or concurrent modifications.
 - Ensure pytest fixtures cover both high-confidence and ambiguous dedupe scenarios.
+- Add unit tests that confirm dedupe logic behaves correctly for each extraction mode and when the ONNX runtime is unavailable.
 
 Gradio Checkpoint
 -----------------

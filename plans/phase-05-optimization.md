@@ -10,11 +10,13 @@ Align the optimization plan with prior experiments documented in `research/` and
    - Curate gold-standard episodes spanning core, edge, and corner cases.
    - Store expected entities, relationships, temporal spans, and attributes for automated scoring.
    - Version the dataset so future optimizations can reference historical baselines.
+   - Capture DistilBERT NER outputs alongside ground truth for each extraction mode (NER-only, hybrid, DSPy-only) so we can track quality across model/version changes.
 
 2. **Metric Definition**
    - Establish quantitative metrics per module (entity recall/precision, edge accuracy, temporal correctness).
    - Define latency and throughput budgets for each pipeline stage.
    - Capture qualitative review guidelines for UI-based acceptance testing.
+   - Add dedicated metrics comparing extraction modes (NER-only latency/quality, hybrid agreement rates, DSPy-only baselines) plus ONNX inference telemetry.
 
 3. **MIPRO Optimization**
    - Run MIPRO against the evaluation dataset with clear stopping criteria.
@@ -32,6 +34,7 @@ Testing Strategy
 - Automate performance tests (pytest markers or separate scripts) to run on demand.
 - Validate that optimized prompts can be reloaded without code changes (integration tests with serialized artifacts).
 - Conduct chaos-style tests for FalkorDBLite (forced process restarts, file corruption simulations, resource pressure) to ensure retries work.
+- Add load tests that stress DistilBERT NER batching/stride settings under each extraction mode to detect throughput regressions.
 
 Gradio Checkpoint
 -----------------
