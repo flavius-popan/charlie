@@ -8,8 +8,6 @@ Usage:
 """
 
 import sys
-import tempfile
-import os
 import argparse
 
 
@@ -220,19 +218,6 @@ def test_read_only_queries(db):
         return False
 
 
-def test_redis_kv_operations(db):
-    """Test traditional Redis key-value operations using FalkorDB's underlying Redis
-
-    Note: FalkorDB client focuses on graph operations via Cypher queries.
-    Redis key-value operations can be accessed via the interactive shell using \\redis command.
-    """
-    print("\nTesting Redis key-value operations...")
-    print("ℹ FalkorDB client is optimized for graph operations")
-    print("✓ Redis operations available in interactive mode (use -i flag)")
-    print("✓ Use \\redis <command> in interactive shell for Redis commands")
-    return True
-
-
 def test_aggregation_queries(db):
     """Test aggregation and analytical queries"""
     print("\nTesting aggregation queries...")
@@ -317,7 +302,6 @@ def interactive_mode():
         print("  \\graphs              - List all graphs")
         print("  \\use <graph_name>    - Switch to a different graph")
         print("  \\current             - Show current graph")
-        print("  \\redis <command>     - Execute Redis command")
         print("  \\exit or \\quit       - Exit shell")
         print("  <Cypher query>       - Execute Cypher query on current graph")
         print()
@@ -352,7 +336,6 @@ def interactive_mode():
                         print("  \\graphs              - List all graphs")
                         print("  \\use <graph_name>    - Switch to a different graph")
                         print("  \\current             - Show current graph")
-                        print("  \\redis <command>     - Execute Redis command")
                         print("  \\exit or \\quit       - Exit shell")
                         print("  <Cypher query>       - Execute Cypher query")
 
@@ -375,11 +358,6 @@ def interactive_mode():
                             current_graph = db.select_graph(current_graph_name)
                             print(f"Switched to graph: {current_graph_name}")
 
-                    elif cmd == "\\redis":
-                        print("ℹ Redis command support coming soon")
-                        print("  FalkorDB focuses on graph operations via Cypher")
-                        print("  Use Cypher queries for graph database operations")
-
                     else:
                         print(f"Unknown command: {cmd}")
                         print("Type \\help for available commands")
@@ -392,7 +370,10 @@ def interactive_mode():
                         if hasattr(result, "result_set") and result.result_set:
                             # Print header if available
                             if hasattr(result, "header"):
-                                headers = [h[1].decode() if isinstance(h[1], bytes) else h[1] for h in result.header]
+                                headers = [
+                                    h[1].decode() if isinstance(h[1], bytes) else h[1]
+                                    for h in result.header
+                                ]
                                 print(" | ".join(headers))
                                 print("-" * (len(" | ".join(headers))))
 
@@ -400,7 +381,11 @@ def interactive_mode():
                             for row in result.result_set:
                                 row_str = " | ".join(
                                     [
-                                        str(val.decode() if isinstance(val, bytes) else val)
+                                        str(
+                                            val.decode()
+                                            if isinstance(val, bytes)
+                                            else val
+                                        )
                                         for val in row
                                     ]
                                 )
@@ -410,7 +395,10 @@ def interactive_mode():
                         else:
                             # Query executed but no results
                             stats = []
-                            if hasattr(result, "nodes_created") and result.nodes_created:
+                            if (
+                                hasattr(result, "nodes_created")
+                                and result.nodes_created
+                            ):
                                 stats.append(f"{result.nodes_created} nodes created")
                             if (
                                 hasattr(result, "relationships_created")
@@ -419,7 +407,10 @@ def interactive_mode():
                                 stats.append(
                                     f"{result.relationships_created} relationships created"
                                 )
-                            if hasattr(result, "nodes_deleted") and result.nodes_deleted:
+                            if (
+                                hasattr(result, "nodes_deleted")
+                                and result.nodes_deleted
+                            ):
                                 stats.append(f"{result.nodes_deleted} nodes deleted")
                             if (
                                 hasattr(result, "relationships_deleted")
@@ -481,7 +472,6 @@ def main():
             ("Social Network Graph", test_social_network_graph),
             ("Multiple Graphs", test_multiple_graphs),
             ("Read-Only Queries", test_read_only_queries),
-            ("Redis Key-Value Operations", test_redis_kv_operations),
             ("Aggregation Queries", test_aggregation_queries),
         ]
 
