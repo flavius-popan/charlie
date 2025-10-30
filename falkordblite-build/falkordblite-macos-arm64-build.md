@@ -1,27 +1,51 @@
 # FalkorDBLite on macOS arm64
 
-This note captures the exact steps required to build a native `falkordb.so` for Apple Silicon and wire it into the `falkordblite` Python package so that the embedded server works locally. Keep this file in sync with any future upstream changes.
-
-`falkordb.so` is currently backed up in `backup/` for safekeeping until a fix PR is submitted upstream.
+This note documents how we build and verify a native `falkordb.so` for Apple Silicon, then drop it into the `falkordblite` virtualenv. Everything lives in `falkordblite-build/`.
 
 ## Prerequisites
 
-- Xcode Command Line Tools installed: `xcode-select --install`
-- Homebrew `make` (provides `gmake`) already available at `/opt/homebrew/opt/make/libexec/gnubin`
-- Homebrew toolchain already provides a working `clang`/`clang++` at `/usr/bin/clang{,++}`
-- Repo layout assumed to be checked out at `research/FalkorDB` under this project root.
+- Xcode Command Line Tools installed (`xcode-select --install`)
+- Homebrew `make` (`/opt/homebrew/opt/make/libexec/gnubin/gmake`)
+- System clang/clang++ (via Xcode CLT)
+- `uv pip install falkordblite` has already been run in the active environment
 
-## One-time build system tweaks
+## Automated build
 
-The stock VectorSimilarity CMake builds treat variable-length arrays as errors under clang. We added a clang-specific relaxation so the code compiles cleanly on macOS arm64:
+Run the helper script from this directory:
 
-- `deps/RediSearch/deps/VectorSimilarity/src/VecSim/CMakeLists.txt`  
+```bash
+./build_falkordb_macos_arm64.sh
+```
+
+The script will:
+
+1. Clone `FalkorDB` into a temporary workspace.
+2. Apply clang-specific CMake guards to tolerate VLAs in VectorSimilarity.
+3. Build with `gmake OSNICK=sonoma CLANG=1 CC=clang CXX=clang++`.
+4. Copy the resulting `falkordb.so` to:
+   - `falkordblite-build/falkordb.so` (local backup)
+   - `.venv/lib/python3.13/site-packages/redislite/bin/falkordb.so`
+5. Run `python test_falkordblite.py`.
+6. Clean up the temporary workspace.
+
+The script exits on any failure, so a successful run means the embedded server is ready to use.
+
+## Manual reference (if needed)
+
+If the automation ever breaks, these are the key manual steps.
+
+### Apply clang CMake guards
+
+- `deps/RediSearch/deps/VectorSimilarity/src/VecSim/CMakeLists.txt`
+
   ```cmake
   if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
       target_compile_options(VectorSimilarity PRIVATE -Wno-vla-cxx-extension)
   endif()
   ```
-- `deps/RediSearch/deps/VectorSimilarity/src/VecSim/spaces/CMakeLists.txt`  
+
+- `deps/RediSearch/deps/VectorSimilarity/src/VecSim/spaces/CMakeLists.txt`
+
   ```cmake
   if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
       target_compile_options(VectorSimilaritySpaces_no_optimization PRIVATE -Wno-vla-cxx-extension)
@@ -29,65 +53,40 @@ The stock VectorSimilarity CMake builds treat variable-length arrays as errors u
   endif()
   ```
 
-These guards are already checked in. No further edits are required unless upstream changes the build.
+These blocks are what the script injects before compiling.
 
-## Building `falkordb.so`
-
-From the project root (`/Users/flavius/repos/charlie`):
+### Build the module manually
 
 ```bash
-cd research/FalkorDB
+git clone https://github.com/FalkorDB/FalkorDB.git
+cd FalkorDB
+# ensure the guards above exist if upstream removed them
 rm -rf bin
 PATH=/opt/homebrew/opt/make/libexec/gnubin:$PATH \
   gmake OSNICK=sonoma CLANG=1 CC=clang CXX=clang++
 ```
 
-On success, the arm64 Mach-O shared object is emitted at:
+The Mach-O appears at `FalkorDB/bin/macos-arm64v8-release/src/falkordb.so`.
 
-```
-research/FalkorDB/bin/macos-arm64v8-release/src/falkordb.so
-```
-
-Keep this file around; upstream wheels currently ship Linux/x86_64 binaries.
-
-## Installing `falkordblite` and swapping in the native module
+### Install the module
 
 ```bash
-# Install from local source (ensures we control the wheel contents)
-uv pip install ./research/falkordblite
-
-# Overwrite the packaged module with the freshly built Mach-O (keep permissions executable)
-cp research/FalkorDB/bin/macos-arm64v8-release/src/falkordb.so \
-   .venv/lib/python3.13/site-packages/redislite/bin/falkordb.so
-chmod 755 .venv/lib/python3.13/site-packages/redislite/bin/falkordb.so
+cp FalkorDB/bin/macos-arm64v8-release/src/falkordb.so \
+   ../.venv/lib/python3.13/site-packages/redislite/bin/falkordb.so
+chmod 755 ../.venv/lib/python3.13/site-packages/redislite/bin/falkordb.so
 ```
 
-> `redislite/bin/redis-server` produced by the install is already a Mach-O arm64 binary, so no extra work is needed on the server side.
-
-## Verification
-
-Run the smoke test we keep in the repo:
+### Verify
 
 ```bash
+cd ../falkordblite-build
 python test_falkordblite.py
 ```
 
-Expected output:
+Expect to see `✓ All tests passed (2/2)`.
 
-```
-==================================================
-FalkorDBLite Installation Verification
-==================================================
-...
-✓ All tests passed (2/2)
-==================================================
-```
+## Upstream follow-up
 
-Once this passes, `falkordblite` is able to start the embedded Redis + FalkorDB module on macOS arm64.
-
-## Next steps / hygiene
-
-- When preparing a PR upstream, include the CMake `-Wno-vla-cxx-extension` guards plus a note about building with `gmake OSNICK=sonoma CLANG=1 CC=clang CXX=clang++` on Apple Silicon. These changes live in `deps/RediSearch/deps/VectorSimilarity/src/VecSim/{CMakeLists.txt,spaces/CMakeLists.txt}` and can be cherry-picked into a personal fork before opening the upstream PR.
-- Archive `bin/macos-arm64v8-release/src/falkordb.so` somewhere stable (artifact storage, release tarball, etc.) until the upstream wheel publishes arm64 binaries.
-- Whenever we refresh `falkordblite`, rerun the build + copy sequence to keep the module in sync.
-- Keep an eye on upstream CMake changes; re-apply the `-Wno-vla-cxx-extension` workaround if their build system is reset.
+- When sending a PR upstream, carry the `-Wno-vla-cxx-extension` guards and mention the `gmake OSNICK=sonoma CLANG=1 CC=clang CXX=clang++` invocation for Apple Silicon.
+- Keep `falkordblite-build/falkordb.so` backed up until the official wheel ships an arm64 binary.
+- Rerun the script whenever `falkordblite` or `FalkorDB` updates.
