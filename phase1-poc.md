@@ -69,6 +69,11 @@ New Gradio UI exposing each pipeline stage as **separate components** so data ca
   - Lines 15-19: Client initialization (`FalkorDB(dbfilename='/path/to/db')`)
   - Lines 29-33: Adapter wiring (expose socket/port to driver)
   - Lines 38-43: Performance notes (startup latency ~100-300ms)
+- **`falkordblite-build/test_falkordblite.py`** (working examples):
+  - Line 18: Import pattern `from redislite.falkordb_client import FalkorDB`
+  - Line 466: Initialization `db = FalkorDB()` or `FalkorDB(dbfilename="path")`
+  - Lines 33-46: Graph selection and query pattern
+  - Lines 436, 507: Critical cleanup with `db.close()`
 
 ### NER Integration
 - **`distilbert_ner.py`**:
@@ -106,43 +111,140 @@ class RelationshipSignature(dspy.Signature):
     relationships: list[Relationship] = dspy.OutputField()  # Pydantic: source, target, label, fact
 ```
 
+## FalkorDBLite Initialization
+
+```python
+# In graphiti-poc.py, at module level before Gradio app definition
+
+from pathlib import Path
+from redislite.falkordb_client import FalkorDB
+import atexit
+
+# Create data directory
+DB_PATH = Path("data/graphiti-poc.db")
+DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+# Initialize embedded database (spawns Redis process)
+db = FalkorDB(dbfilename=str(DB_PATH))
+
+# Select the graph to use (creates if doesn't exist)
+GRAPH_NAME = "phase1_poc"
+graph = db.select_graph(GRAPH_NAME)
+
+# Register cleanup handler for proper shutdown
+def cleanup_db():
+    """Clean shutdown of FalkorDB - CRITICAL before exit."""
+    try:
+        db.close()
+        print("✓ FalkorDB closed successfully")
+    except Exception as e:
+        print(f"⚠ Warning: Failed to close FalkorDB: {e}")
+
+atexit.register(cleanup_db)
+
+def get_db_stats():
+    """Query database statistics for UI display."""
+    # Count nodes
+    result = graph.query("MATCH (n) RETURN count(n) as node_count")
+    node_count = result.result_set[0][0] if result.result_set else 0
+
+    # Count edges
+    result = graph.query("MATCH ()-[r]->() RETURN count(r) as edge_count")
+    edge_count = result.result_set[0][0] if result.result_set else 0
+
+    return {"nodes": node_count, "edges": edge_count}
+
+def reset_database():
+    """Clear all graph data (DESTRUCTIVE - no confirmation in Phase 1)."""
+    graph.query("MATCH (n) DETACH DELETE n")
+    return "Database cleared successfully"
+```
+
+**Critical Notes**:
+- Import from `redislite.falkordb_client`, not `falkordblite`
+- FalkorDBLite methods are **synchronous**, not async
+- **MUST call `db.close()`** before app exit (use `atexit.register()` for Gradio)
+- Select graph with `db.select_graph()` before running queries
+- Query with `graph.query()`, not `driver.execute_query()`
+
 ## FalkorDB Write Pattern (No Transactions)
 
 FalkorDB has **no multi-query transactions** (see research/06:612-643). Use idempotent writes:
 
 ```python
-# 1. Create nodes (one query with UNWIND)
-node_query = """
-UNWIND $nodes AS node
-MERGE (n:Entity {uuid: node.uuid})
-SET n.name = node.name,
-    n.created_at = node.created_at
-RETURN n.uuid AS uuid
-"""
+from datetime import datetime
+from uuid import uuid4
 
-# 2. Create edges (one query with UNWIND)
-edge_query = """
-UNWIND $edges AS edge
-MATCH (source:Entity {uuid: edge.source_uuid})
-MATCH (target:Entity {uuid: edge.target_uuid})
-MERGE (source)-[r:RELATES_TO {uuid: edge.uuid}]->(target)
-SET r.name = edge.name,
-    r.fact = edge.fact,
-    r.created_at = edge.created_at
-RETURN r.uuid AS uuid
-"""
+# Example: Write EntityNodes and EntityEdges to FalkorDB
+def write_entities_and_edges(entity_nodes, entity_edges):
+    """Write entities and relationships to FalkorDB."""
+
+    # 1. Convert EntityNode objects to Cypher-compatible dicts
+    node_dicts = []
+    for node in entity_nodes:
+        node_dicts.append({
+            "uuid": str(node.uuid),
+            "name": node.name,
+            "group_id": "phase1-poc",
+            "created_at": node.created_at.isoformat()  # Convert datetime to ISO string
+        })
+
+    # 2. Write nodes (one query with UNWIND)
+    if node_dicts:
+        node_query = """
+        UNWIND $nodes AS node
+        MERGE (n:Entity {uuid: node.uuid})
+        SET n.name = node.name,
+            n.group_id = node.group_id,
+            n.created_at = node.created_at
+        RETURN n.uuid AS uuid
+        """
+        result = graph.query(node_query, {"nodes": node_dicts})
+        print(f"Created {len(result.result_set)} nodes")
+
+    # 3. Convert EntityEdge objects to Cypher-compatible dicts
+    edge_dicts = []
+    for edge in entity_edges:
+        edge_dicts.append({
+            "uuid": str(edge.uuid),
+            "source_uuid": str(edge.source_node_uuid),
+            "target_uuid": str(edge.target_node_uuid),
+            "name": edge.name,
+            "fact": edge.fact,
+            "group_id": "phase1-poc",
+            "created_at": edge.created_at.isoformat()
+        })
+
+    # 4. Write edges (one query with UNWIND)
+    if edge_dicts:
+        edge_query = """
+        UNWIND $edges AS edge
+        MATCH (source:Entity {uuid: edge.source_uuid})
+        MATCH (target:Entity {uuid: edge.target_uuid})
+        MERGE (source)-[r:RELATES_TO {uuid: edge.uuid}]->(target)
+        SET r.name = edge.name,
+            r.fact = edge.fact,
+            r.group_id = edge.group_id,
+            r.created_at = edge.created_at
+        RETURN r.uuid AS uuid
+        """
+        result = graph.query(edge_query, {"edges": edge_dicts})
+        print(f"Created {len(result.result_set)} edges")
+
+    return {
+        "nodes_created": len(node_dicts),
+        "edges_created": len(edge_dicts),
+        "node_uuids": [n["uuid"] for n in node_dicts],
+        "edge_uuids": [e["uuid"] for e in edge_dicts]
+    }
 ```
 
-Each query is atomic; partial failures require re-running (MERGE makes idempotent).
-
-### Database Reset Pattern
-
-```python
-# Clear all graph data (for "Reset Database" button)
-driver.execute_query("MATCH (n) DETACH DELETE n")
-```
-
-FalkorDBLite persists data to disk; deletion is immediate and permanent.
+**Key Patterns**:
+- Use `graph.query(cypher_string, params_dict)` for parameterized queries
+- Convert datetimes to ISO strings **before** passing to FalkorDB
+- MERGE makes queries idempotent (safe to re-run)
+- Each query is atomic; no multi-query transactions
+- FalkorDBLite persists to disk automatically
 
 ## Deferred to Later Phases
 
