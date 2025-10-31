@@ -25,7 +25,7 @@ Input Text (fits in single context window)
     ↓
 5. FalkorDBLite Write (bulk save, no transactions)
     ↓
-6. Query & Explore (Cypher queries, graph visualization)
+6. Graphviz Preview (visualize in-memory EntityNode/EntityEdge objects; no DB query)
 ```
 
 ## Implementation: `graphiti-poc.py`
@@ -33,17 +33,28 @@ Input Text (fits in single context window)
 New Gradio UI exposing each pipeline stage as **separate components** so data can be inspected at each step:
 
 1. **Input Panel**: Text box for journal entry
-2. **Stage 1 Output**: NER entities (JSON with labels/confidence from `distilbert_ner.py`)
-3. **Stage 2 Output**: Extracted facts (DSPy signature output)
-4. **Stage 3 Output**: Inferred relationships (DSPy signature output with source/target/label)
+2. **Stage 1 Output**: NER entity names (list[str] derived via `distilbert_ner.py`; UI may show raw metadata but only names flow downstream)
+3. **Stage 2 Output**: Extracted facts (reuse DSPy signatures from `dspy_outlines/`)
+4. **Stage 3 Output**: Inferred relationships (reuse DSPy signatures from `dspy_outlines/`; output carries source/target/name/context)
 5. **Stage 4 Output**: Graphiti objects (EntityNode/EntityEdge JSON representations)
 6. **Stage 5 Output**: FalkorDBLite write confirmation (UUIDs, counts)
-7. **Stage 6 Output**: Query results + graph visualization (Graphviz rendering)
+7. **Stage 6 Output**: Graphviz preview of in-memory EntityNode/EntityEdge objects (no FalkorDB queries)
+
+**Stage Execution**:
+- Stage 1 auto-refreshes every ~1s, running NER and caching the latest entity name list.
+- Only the entity text is cached; discard model-assigned labels (PER/ORG/etc.) and confidence scores before passing to Stage 2.
+- Stages 2-5 run only when the user clicks their respective buttons, consuming cached outputs from the prior stage.
+- Stage 6 reuses the most recent EntityNode/EntityEdge objects already held in memory; it never issues Cypher queries.
 
 **UI Controls**: Phase 1 extraction parameters exposed as Gradio sliders/checkboxes:
 - NER confidence threshold
 - Relationship inference temperature
 - Enable/disable entity type filters
+- Stage run buttons: `Run Facts`, `Run Relationships`, `Build Graphiti`, `Write to Falkor` to step through the pipeline manually
+
+**DSPy/Outlines Integration**:
+- Reuse the existing LM/adapter stack from `dspy_outlines.lm` and `dspy_outlines.adapter` (no new configuration layers).
+- Import and call the signatures/modules in `dspy_outlines/` for fact and relationship extraction; only add stopgap logic inside `graphiti-poc.py` when something is missing, then plan to upstream it later.
 
 **Database Management**: On Gradio init:
 - Load existing FalkorDBLite database from `data/graphiti-poc.db` (create if doesn't exist)
@@ -186,6 +197,9 @@ for ner_entity in ner_entities:
 unique_entities = list(seen.values())
 # Result: [{"text": "Alice", ...}, {"text": "Microsoft", "confidence": 0.96}]
 
+# Only pass the entity text downstream
+entity_names = [entity["text"] for entity in unique_entities]
+
 # Stage 3: DSPy Relationships Output
 relationships = Relationships(items=[
     Relationship(
@@ -244,11 +258,14 @@ for rel in relationships.items:
 
 **Key Patterns**:
 - **Deduplication**: Case-insensitive by entity name, keep highest confidence
+- **Metadata Drop**: After deduplication, pass only the entity text to Stage 2
 - **UUID Generation**: Automatic via EntityNode/EntityEdge constructors
 - **Lookup Map**: Build `entity_name.lower() → EntityNode` for relationship resolution
 - **Validation**: Skip relationships if source or target entity not found
 
-## DSPy Signatures to Create
+## DSPy Signatures (reuse `dspy_outlines`)
+
+The LM, adapter, and baseline signatures live under `dspy_outlines/`. Import from there instead of rebuilding configuration. Temporary PoC-only glue can live in `graphiti-poc.py` and later be upstreamed.
 
 ### Signature 1: Fact Extraction
 ```python
@@ -269,6 +286,8 @@ class RelationshipSignature(dspy.Signature):
     relationships: Relationships = dspy.OutputField(desc="Relationships between entities")
 ```
 
+> If any of these signatures are missing from `dspy_outlines/`, define them in `graphiti-poc.py` for the PoC and schedule a follow-up task to upstream them.
+
 **Usage Pattern**:
 ```python
 # Stage 2: Extract facts
@@ -282,6 +301,18 @@ relationships = rel_predictor(
     facts=facts,
     entities=entity_names
 ).relationships
+```
+
+Configure DSPy once at startup using the shared components:
+
+```python
+from dspy_outlines.adapter import OutlinesAdapter
+from dspy_outlines.lm import OutlinesLM
+
+dspy.settings.configure(
+    adapter=OutlinesAdapter(),
+    lm=OutlinesLM(),
+)
 ```
 
 ## FalkorDBLite Initialization
@@ -428,4 +459,3 @@ def write_entities_and_edges(entity_nodes, entity_edges):
 - Community detection
 - Hybrid search (BM25 + semantic)
 - Cross-encoder reranking
-
