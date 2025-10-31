@@ -87,28 +87,201 @@ New Gradio UI exposing each pipeline stage as **separate components** so data ca
   - Lines 49-109: Graph rendering with Graphviz
 
 ### Graphiti Models
-- **`.venv/lib/python3.13/site-packages/graphiti_core/models/`**:
-  - `nodes/entity_node.py`: EntityNode schema (uuid, name, labels, created_at)
-  - `edges/entity_edge.py`: EntityEdge schema (uuid, source_uuid, target_uuid, name, fact, created_at)
-  - Note: Skip embedding fields (name_embedding, fact_embedding) in Phase 1
+- **File locations**:
+  - `.venv/lib/python3.13/site-packages/graphiti_core/nodes.py` (lines 435-589: EntityNode)
+  - `.venv/lib/python3.13/site-packages/graphiti_core/edges.py` (lines 221-478: EntityEdge)
+
+- **Import paths**:
+  ```python
+  from graphiti_core.nodes import EntityNode
+  from graphiti_core.edges import EntityEdge
+  from graphiti_core.utils.datetime_utils import utc_now
+  ```
+
+- **EntityNode** (nodes.py:435-440):
+  ```python
+  uuid: str  # Auto-generated via uuid4()
+  name: str  # Entity name from NER
+  group_id: str  # REQUIRED - use "phase1-poc"
+  labels: list[str]  # Cypher labels (empty [] for Phase 1)
+  created_at: datetime  # Use utc_now()
+  name_embedding: list[float] | None  # None for Phase 1
+  summary: str  # Empty "" for Phase 1
+  attributes: dict  # Empty {} for Phase 1
+  ```
+
+- **EntityEdge** (edges.py:221-240):
+  ```python
+  uuid: str  # Auto-generated via uuid4()
+  source_node_uuid: str  # UUID of source EntityNode
+  target_node_uuid: str  # UUID of target EntityNode
+  name: str  # Relationship type
+  fact: str  # Supporting fact text
+  group_id: str  # REQUIRED - "phase1-poc"
+  created_at: datetime  # Use utc_now()
+  fact_embedding: list[float] | None  # None for Phase 1
+  episodes: list[str]  # Empty [] for Phase 1
+  expired_at: datetime | None  # None
+  valid_at: datetime | None  # None
+  invalid_at: datetime | None  # None
+  attributes: dict  # Empty {} for Phase 1
+  ```
+
+**Note**: Both have async `.save(driver: GraphDriver)` methods. Phase 1 won't use these—we'll write directly to FalkorDBLite with custom queries (see Write Pattern).
+
+## Pydantic Models for DSPy
+
+### Fact Model
+```python
+from pydantic import BaseModel, Field
+
+class Fact(BaseModel):
+    """A factual statement about an entity."""
+    entity: str = Field(description="Entity name this fact is about")
+    text: str = Field(description="The factual statement")
+
+class Facts(BaseModel):
+    """Collection wrapper for DSPy output."""
+    items: list[Fact]
+```
+
+### Relationship Model
+```python
+class Relationship(BaseModel):
+    """A relationship between two entities."""
+    source: str = Field(description="Source entity name")
+    target: str = Field(description="Target entity name")
+    relation: str = Field(description="Relationship type (e.g., works_at, knows)")
+    context: str = Field(description="Supporting fact/context for this relationship")
+
+class Relationships(BaseModel):
+    """Collection wrapper for DSPy output."""
+    items: list[Relationship]
+```
+
+## NER → EntityNode Mapping Pattern
+
+### Stage 1 to Stage 4 Transformation
+
+```python
+from graphiti_core.nodes import EntityNode
+from graphiti_core.edges import EntityEdge
+from graphiti_core.utils.datetime_utils import utc_now
+
+# Stage 1: NER Output
+ner_entities = [
+    {"text": "Alice", "label": "PER", "confidence": 0.99},
+    {"text": "Microsoft", "label": "ORG", "confidence": 0.95},
+    {"text": "Microsoft", "label": "ORG", "confidence": 0.96},  # Duplicate
+]
+
+# Stage 2: Filter and deduplicate
+# Deduplicate by lowercase entity text (case-insensitive matching)
+seen = {}
+for ner_entity in ner_entities:
+    key = ner_entity["text"].lower()
+    if key not in seen or ner_entity["confidence"] > seen[key]["confidence"]:
+        seen[key] = ner_entity  # Keep highest confidence version
+
+unique_entities = list(seen.values())
+# Result: [{"text": "Alice", ...}, {"text": "Microsoft", "confidence": 0.96}]
+
+# Stage 3: DSPy Relationships Output
+relationships = Relationships(items=[
+    Relationship(
+        source="Alice",
+        target="Microsoft",
+        relation="works_at",
+        context="Alice works at Microsoft as a software engineer"
+    )
+])
+
+# Stage 4: Build EntityNode and EntityEdge objects
+entity_nodes = []
+entity_map = {}  # Map entity_name -> EntityNode (for UUID lookup)
+
+for entity in unique_entities:
+    node = EntityNode(
+        name=entity["text"],  # Keep original casing
+        group_id="phase1-poc",
+        labels=[],  # Empty for Phase 1
+        name_embedding=None,
+        summary="",
+        attributes={},
+        created_at=utc_now()
+    )
+    entity_nodes.append(node)
+    entity_map[entity["text"].lower()] = node  # Index by lowercase for lookup
+
+entity_edges = []
+for rel in relationships.items:
+    # Look up EntityNodes by name (case-insensitive)
+    source_node = entity_map.get(rel.source.lower())
+    target_node = entity_map.get(rel.target.lower())
+
+    if not source_node or not target_node:
+        print(f"Warning: Skipping relationship {rel.source} -> {rel.target} (entity not found)")
+        continue
+
+    edge = EntityEdge(
+        source_node_uuid=source_node.uuid,
+        target_node_uuid=target_node.uuid,
+        name=rel.relation,
+        fact=rel.context,
+        group_id="phase1-poc",
+        created_at=utc_now(),
+        fact_embedding=None,
+        episodes=[],
+        expired_at=None,
+        valid_at=None,
+        invalid_at=None,
+        attributes={}
+    )
+    entity_edges.append(edge)
+
+# Now entity_nodes and entity_edges are ready for Stage 5 (FalkorDB write)
+```
+
+**Key Patterns**:
+- **Deduplication**: Case-insensitive by entity name, keep highest confidence
+- **UUID Generation**: Automatic via EntityNode/EntityEdge constructors
+- **Lookup Map**: Build `entity_name.lower() → EntityNode` for relationship resolution
+- **Validation**: Skip relationships if source or target entity not found
 
 ## DSPy Signatures to Create
 
 ### Signature 1: Fact Extraction
 ```python
 class FactExtractionSignature(dspy.Signature):
-    """Extract facts about entities from text."""
-    text: str = dspy.InputField()
-    entities: list[str] = dspy.InputField(desc="NER-detected entities")
-    facts: list[Fact] = dspy.OutputField()  # Pydantic: entity, fact_text
+    """Extract factual statements about entities from text."""
+    text: str = dspy.InputField(desc="The input text to analyze")
+    entities: list[str] = dspy.InputField(desc="NER-detected entity names")
+    facts: Facts = dspy.OutputField(desc="Facts about entities")
 ```
 
 ### Signature 2: Relationship Inference
 ```python
 class RelationshipSignature(dspy.Signature):
-    """Infer relationships between entities from facts."""
-    facts: list[Fact] = dspy.InputField()
-    relationships: list[Relationship] = dspy.OutputField()  # Pydantic: source, target, label, fact
+    """Infer relationships between entities based on facts."""
+    text: str = dspy.InputField(desc="Original input text")
+    facts: Facts = dspy.InputField(desc="Extracted facts about entities")
+    entities: list[str] = dspy.InputField(desc="Entity names to constrain relationships")
+    relationships: Relationships = dspy.OutputField(desc="Relationships between entities")
+```
+
+**Usage Pattern**:
+```python
+# Stage 2: Extract facts
+fact_predictor = dspy.Predict(FactExtractionSignature)
+facts = fact_predictor(text=input_text, entities=entity_names).facts
+
+# Stage 3: Infer relationships
+rel_predictor = dspy.Predict(RelationshipSignature)
+relationships = rel_predictor(
+    text=input_text,
+    facts=facts,
+    entities=entity_names
+).relationships
 ```
 
 ## FalkorDBLite Initialization
