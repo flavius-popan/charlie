@@ -33,23 +33,22 @@ Input Text (fits in single context window)
 New Gradio UI exposing each pipeline stage as **separate components** so data can be inspected at each step:
 
 1. **Input Panel**: Text box for journal entry
-2. **Stage 1 Output**: NER entity names (list[str] derived via `distilbert_ner.py`; UI may show raw metadata but only names flow downstream)
+2. **Stage 1 Output**: NER entity names (ordered `list[str]` derived via `distilbert_ner.py`; UI can optionally display the raw metadata for reference, but only the names flow downstream)
 3. **Stage 2 Output**: Extracted facts (reuse DSPy signatures from `dspy_outlines/`)
 4. **Stage 3 Output**: Inferred relationships (reuse DSPy signatures from `dspy_outlines/`; output carries source/target/name/context)
-5. **Stage 4 Output**: Graphiti objects (EntityNode/EntityEdge JSON representations)
-6. **Stage 5 Output**: FalkorDBLite write confirmation (UUIDs, counts)
-7. **Stage 6 Output**: Graphviz preview of in-memory EntityNode/EntityEdge objects (no FalkorDB queries)
+5. **Stage 4 Output**: Graphiti objects (retain live `EntityNode`/`EntityEdge` instances in app state and render `.model_dump()` JSON for inspection)
+6. **Stage 5 Output**: FalkorDBLite write confirmation (UUIDs, counts) or surfaced error details
+7. **Stage 6 Output**: Graphviz preview of entities/edges fetched from FalkorDBLite via Cypher (targets the UUIDs held in app state)
 
 **Stage Execution**:
-- Stage 1 auto-refreshes every ~1s, running NER and caching the latest entity name list.
-- Only the entity text is cached; discard model-assigned labels (PER/ORG/etc.) and confidence scores before passing to Stage 2.
-- Stages 2-5 run only when the user clicks their respective buttons, consuming cached outputs from the prior stage.
-- Stage 6 reuses the most recent EntityNode/EntityEdge objects already held in memory; it never issues Cypher queries.
+- Stage 1 auto-refreshes every ~1s, running NER and caching the latest ordered list of entity names (case-insensitive dedupe). The cache mirrors Graphiti’s downstream expectations of node names.
+- Stages 2-4 run only when the user clicks their respective buttons, consuming cached outputs from the prior stage.
+- Stage 5 writes to FalkorDBLite when `Write to Falkor` is pressed; success returns a JSON summary, while failures render the exception details in the UI and log to console.
+- Stage 6 runs automatically after a successful Stage 5 write, querying FalkorDBLite via Cypher for the newly written UUIDs and refreshing the Graphviz preview.
 
 **UI Controls**: Phase 1 extraction parameters exposed as Gradio sliders/checkboxes:
-- NER confidence threshold
 - Relationship inference temperature
-- Enable/disable entity type filters
+- Enable/disable entity type filters (operates on the Stage 1 name list; UI display of raw model metadata is optional)
 - Stage run buttons: `Run Facts`, `Run Relationships`, `Build Graphiti`, `Write to Falkor` to step through the pipeline manually
 
 **DSPy/Outlines Integration**:
@@ -88,7 +87,7 @@ New Gradio UI exposing each pipeline stage as **separate components** so data ca
 
 ### NER Integration
 - **`distilbert_ner.py`**:
-  - Line 534-620: `predict_entities(text)` function (returns list[dict] with text/label/confidence)
+  - Line 534-620: `predict_entities(text)` function (returns list[dict] with raw metadata; Stage 1 extracts just the `text` field)
   - Line 722-761: `format_entities()` for display formatting
 
 ### Current Pattern Reference
@@ -179,26 +178,24 @@ from graphiti_core.nodes import EntityNode
 from graphiti_core.edges import EntityEdge
 from graphiti_core.utils.datetime_utils import utc_now
 
-# Stage 1: NER Output
-ner_entities = [
-    {"text": "Alice", "label": "PER", "confidence": 0.99},
-    {"text": "Microsoft", "label": "ORG", "confidence": 0.95},
-    {"text": "Microsoft", "label": "ORG", "confidence": 0.96},  # Duplicate
+# Stage 1: NER Output (UI may show metadata, cache only names)
+entity_candidates = [
+    "Alice",
+    "Microsoft",
+    "Microsoft",  # Duplicate
 ]
 
 # Stage 2: Filter and deduplicate
-# Deduplicate by lowercase entity text (case-insensitive matching)
-seen = {}
-for ner_entity in ner_entities:
-    key = ner_entity["text"].lower()
-    if key not in seen or ner_entity["confidence"] > seen[key]["confidence"]:
-        seen[key] = ner_entity  # Keep highest confidence version
-
-unique_entities = list(seen.values())
-# Result: [{"text": "Alice", ...}, {"text": "Microsoft", "confidence": 0.96}]
-
-# Only pass the entity text downstream
-entity_names = [entity["text"] for entity in unique_entities]
+# Deduplicate by lowercase entity text (case-insensitive matching, keep first occurrence)
+unique_entity_names = []
+seen = set()
+for name in entity_candidates:
+    key = name.lower()
+    if key in seen:
+        continue
+    seen.add(key)
+    unique_entity_names.append(name)
+# Result: ["Alice", "Microsoft"]
 
 # Stage 3: DSPy Relationships Output
 relationships = Relationships(items=[
@@ -212,11 +209,11 @@ relationships = Relationships(items=[
 
 # Stage 4: Build EntityNode and EntityEdge objects
 entity_nodes = []
-entity_map = {}  # Map entity_name -> EntityNode (for UUID lookup)
+entity_map = {}  # Map entity_name.lower() -> EntityNode (for UUID lookup)
 
-for entity in unique_entities:
+for name in unique_entity_names:
     node = EntityNode(
-        name=entity["text"],  # Keep original casing
+        name=name,  # Keep original casing
         group_id="phase1-poc",
         labels=[],  # Empty for Phase 1
         name_embedding=None,
@@ -225,7 +222,7 @@ for entity in unique_entities:
         created_at=utc_now()
     )
     entity_nodes.append(node)
-    entity_map[entity["text"].lower()] = node  # Index by lowercase for lookup
+    entity_map[name.lower()] = node  # Index by lowercase for lookup
 
 entity_edges = []
 for rel in relationships.items:
@@ -257,8 +254,8 @@ for rel in relationships.items:
 ```
 
 **Key Patterns**:
-- **Deduplication**: Case-insensitive by entity name, keep highest confidence
-- **Metadata Drop**: After deduplication, pass only the entity text to Stage 2
+- **Deduplication**: Case-insensitive, keep the first occurrence to mirror Graphiti’s canonical name handling
+- **Entity Cache**: Maintain Stage 1 output as an ordered `list[str]` for reuse across DSPy stages
 - **UUID Generation**: Automatic via EntityNode/EntityEdge constructors
 - **Lookup Map**: Build `entity_name.lower() → EntityNode` for relationship resolution
 - **Validation**: Skip relationships if source or target entity not found
@@ -448,7 +445,42 @@ def write_entities_and_edges(entity_nodes, entity_edges):
 - Convert datetimes to ISO strings **before** passing to FalkorDB
 - MERGE makes queries idempotent (safe to re-run)
 - Each query is atomic; no multi-query transactions
+- Wrap write operations in try/except; log exceptions and return error payloads to the Gradio UI
 - FalkorDBLite persists to disk automatically
+
+## Graphviz Verification Query
+
+Stage 6 runs automatically after a successful write to confirm persistence before visualization. It uses the UUIDs returned by `write_entities_and_edges` to fetch the corresponding nodes and edges from FalkorDBLite:
+
+```python
+import logging
+
+def load_written_entities(node_uuids: list[str], edge_uuids: list[str]) -> dict[str, Any]:
+    try:
+        node_query = """
+        UNWIND $uuids AS uuid
+        MATCH (n:Entity {uuid: uuid})
+        RETURN n.uuid AS uuid, n.name AS name
+        """
+        node_result = graph.query(node_query, {"uuids": node_uuids})
+
+        edge_query = """
+        UNWIND $uuids AS uuid
+        MATCH (source:Entity)-[r:RELATES_TO {uuid: uuid}]->(target:Entity)
+        RETURN r.uuid AS uuid, source.uuid AS source_uuid, target.uuid AS target_uuid, r.name AS name
+        """
+        edge_result = graph.query(edge_query, {"uuids": edge_uuids})
+
+        return {
+            "nodes": node_result.result_set or [],
+            "edges": edge_result.result_set or [],
+        }
+    except Exception as exc:
+        logging.exception("Failed to verify FalkorDBLite write")
+        return {"error": str(exc)}
+```
+
+When `{"error": ...}` is returned, the Graphviz panel should render the error message instead of a graph.
 
 ## Deferred to Later Phases
 
