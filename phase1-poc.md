@@ -95,23 +95,12 @@ write_result_state = gr.State(None)     # Write confirmation with UUIDs
 - Entity type filter: Reuse the "Persons only" checkbox pattern from gradio_app.py:258-262 (filters Stage 1 entity list to PER type only)
 - Stage run buttons: `Run Facts`, `Run Relationships`, `Build Graphiti`, `Write to Falkor` to step through the pipeline manually
 
-**Model Parameter Configuration** (module-level, edit and restart to change):
+**Model Parameter Configuration** (centralized in `settings.py`):
 
-Assumes `parameter_control_feature.md` has been implemented, enabling `OutlinesLM(generation_config=dict)`.
-
-```python
-# Module-level configuration (edit these values and restart to tune extraction quality)
-MODEL_CONFIG = {
-    "temp": 0.7,              # Sampling temperature (0.0=deterministic, 1.0=creative)
-    "top_p": 0.9,             # Nucleus sampling threshold
-    "repetition_penalty": 1.1, # Penalty for repeating tokens
-}
-
-# Apply to OutlinesLM initialization (see DSPy Configuration section below)
-```
+Assumes `parameter_control_feature.md` has been implemented, enabling `OutlinesLM(generation_config=dict)`. Tune values in `settings.MODEL_CONFIG`.
 
 **Parameter Tuning Workflow**:
-1. Edit `MODEL_CONFIG` values in `graphiti-poc.py`
+1. Edit `MODEL_CONFIG` values in `settings.py`
 2. Restart Gradio app
 3. Test extraction with same input text
 4. Compare fact/relationship quality
@@ -132,7 +121,7 @@ MODEL_CONFIG = {
 - UI button: "Reset Database" (clear all nodes/edges for clean testing)
 - Display current DB stats (node count, edge count)
 
-**Settings Module**: Create `settings.py` for project-wide config:
+**Settings Module**: Create `settings.py` for project-wide config (single source of truth for MODEL_CONFIG):
 
 ```python
 """Configuration for graphiti-poc.py"""
@@ -223,9 +212,9 @@ Without this feature: Remove `generation_config=MODEL_CONFIG` from DSPy configur
   uuid: str  # Auto-generated via uuid4()
   name: str  # Entity name from NER
   group_id: str  # REQUIRED - use "phase1-poc"
-  labels: list[str]  # Cypher labels (empty [] for Phase 1)
+  labels: list[str]  # Cypher labels (include "Entity" for Phase 1)
   created_at: datetime  # Use utc_now()
-  name_embedding: list[float] | None  # None for Phase 1
+  name_embedding: list[float]  # Empty [] for Phase 1 (vecf32([]) is allowed; see falkordblite-build/test_falkordblite.py::test_vecf32_empty_embedding)
   summary: str  # Empty "" for Phase 1
   attributes: dict  # Empty {} for Phase 1
   ```
@@ -239,7 +228,7 @@ Without this feature: Remove `generation_config=MODEL_CONFIG` from DSPy configur
   fact: str  # Supporting fact text
   group_id: str  # REQUIRED - "phase1-poc"
   created_at: datetime  # Use utc_now()
-  fact_embedding: list[float] | None  # None for Phase 1
+  fact_embedding: list[float]  # Empty [] for Phase 1 (vecf32([]) is allowed; see falkordblite-build/test_falkordblite.py::test_vecf32_empty_embedding)
   episodes: list[str]  # Empty [] for Phase 1
   expired_at: datetime | None  # None
   valid_at: datetime | None  # None
@@ -333,8 +322,8 @@ for name in unique_entity_names:
     node = EntityNode(
         name=name,  # Keep original casing
         group_id="phase1-poc",
-        labels=[],  # Empty for Phase 1
-        name_embedding=None,
+        labels=["Entity"],  # Graphiti requires :Entity label
+        name_embedding=[],  # Empty list so vecf32([]) succeeds
         summary="",
         attributes={},
         created_at=utc_now()
@@ -359,7 +348,7 @@ for rel in relationships.items:
         fact=rel.context,
         group_id="phase1-poc",
         created_at=utc_now(),
-        fact_embedding=None,
+        fact_embedding=[],
         episodes=[],
         expired_at=None,
         valid_at=None,
@@ -510,7 +499,7 @@ FalkorDB has **no multi-query transactions** (see research/06:612-643). Use idem
 - Node label: `:Entity` (research/06:506)
 - Edge type: `:RELATES_TO` (research/06:559, 576) - ALL entity edges use this static type
 - Relationship semantic name stored in `r.name` property (e.g., "works_at", "knows")
-- Vector fields use `vecf32()` wrapper (research/06:509, 561)
+- Vector fields use `vecf32()` wrapper (research/06:509, 561); empty lists are valid and covered by `test_vecf32_empty_embedding`
 - Datetime fields as ISO strings (research/06:112-131)
 
 ```python
@@ -527,7 +516,11 @@ def write_entities_and_edges(entity_nodes, entity_edges):
             "uuid": node.uuid,
             "name": node.name,
             "group_id": "phase1-poc",
-            "created_at": node.created_at  # Will be converted below
+            "created_at": node.created_at,
+            "labels": node.labels or ["Entity"],
+            "name_embedding": node.name_embedding or [],
+            "summary": node.summary,
+            "attributes": node.attributes or {},
         }
         # Use Graphiti's utility to convert datetimes to ISO strings
         node_dicts.append(convert_datetimes_to_strings(node_dict))
@@ -538,9 +531,14 @@ def write_entities_and_edges(entity_nodes, entity_edges):
         node_query = """
         UNWIND $nodes AS node
         MERGE (n:Entity {uuid: node.uuid})
+        SET n:Entity
         SET n.name = node.name,
             n.group_id = node.group_id,
-            n.created_at = node.created_at
+            n.created_at = node.created_at,
+            n.labels = node.labels,
+            n.summary = node.summary,
+            n.attributes = node.attributes
+        SET n.name_embedding = vecf32(node.name_embedding)
         RETURN n.uuid AS uuid
         """
         result = graph.query(node_query, {"nodes": node_dicts})
@@ -556,7 +554,13 @@ def write_entities_and_edges(entity_nodes, entity_edges):
             "name": edge.name,
             "fact": edge.fact,
             "group_id": "phase1-poc",
-            "created_at": edge.created_at  # Will be converted below
+            "created_at": edge.created_at,
+            "fact_embedding": edge.fact_embedding or [],
+            "episodes": edge.episodes or [],
+            "expired_at": edge.expired_at,
+            "valid_at": edge.valid_at,
+            "invalid_at": edge.invalid_at,
+            "attributes": edge.attributes or {},
         }
         # Use Graphiti's utility to convert datetimes to ISO strings
         edge_dicts.append(convert_datetimes_to_strings(edge_dict))
@@ -573,7 +577,13 @@ def write_entities_and_edges(entity_nodes, entity_edges):
         SET r.name = edge.name,
             r.fact = edge.fact,
             r.group_id = edge.group_id,
-            r.created_at = edge.created_at
+            r.created_at = edge.created_at,
+            r.episodes = edge.episodes,
+            r.expired_at = edge.expired_at,
+            r.valid_at = edge.valid_at,
+            r.invalid_at = edge.invalid_at,
+            r.attributes = edge.attributes
+        SET r.fact_embedding = vecf32(edge.fact_embedding)
         RETURN r.uuid AS uuid
         """
         result = graph.query(edge_query, {"edges": edge_dicts})

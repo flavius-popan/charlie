@@ -103,15 +103,13 @@ dspy.settings.configure(
 )
 ```
 
-**New pattern with config**:
+**New pattern with config (single source of truth in `settings.py`)**:
 ```python
-# Module-level configuration
-MODEL_CONFIG = {
-    "temp": 0.7,
-    "top_p": 0.9,
-    "repetition_penalty": 1.1,
-}
+# settings.py
+MODEL_CONFIG = {...}
 
+# graphiti-poc.py
+from settings import MODEL_CONFIG
 dspy.settings.configure(
     adapter=OutlinesAdapter(),
     lm=OutlinesLM(generation_config=MODEL_CONFIG),
@@ -187,19 +185,15 @@ After implementing this feature, the PoC can:
 
 1. **Configure at startup**:
 ```python
-# In graphiti-poc.py module level
-FACT_EXTRACTION_CONFIG = {
-    "temp": 0.3,  # Lower temp for factual extraction
+# settings.py
+MODEL_CONFIG = {
+    "temp": 0.7,
     "top_p": 0.9,
+    "repetition_penalty": 1.1,
 }
 
-RELATIONSHIP_CONFIG = {
-    "temp": 0.7,  # Higher temp for relationship inference
-    "top_p": 0.95,
-}
-
-# For Phase 1: Use single config for simplicity
-MODEL_CONFIG = FACT_EXTRACTION_CONFIG
+# graphiti-poc.py
+from settings import MODEL_CONFIG
 ```
 
 2. **Pass to OutlinesLM**:
@@ -211,7 +205,7 @@ dspy.settings.configure(
 ```
 
 3. **Experiment by editing and restarting**:
-   - Edit `MODEL_CONFIG` values in graphiti-poc.py
+   - Edit `MODEL_CONFIG` values in `settings.py`
    - Restart Gradio app
    - Test extraction quality with different parameters
 
@@ -243,7 +237,7 @@ python -c "import mlx_lm; print(mlx_lm.__version__)"
 - [ ] Add logging for applied config
 - [ ] Write tests in `tests/test_parameter_control.py`
 - [ ] Run tests: `pytest tests/test_parameter_control.py -v`
-- [ ] Update `dspy_outlines/README.md` with usage examples
+- [ ] Update `dspy_outlines/README.md` with usage examples pointing to `settings.MODEL_CONFIG`
 - [ ] Verify in Phase 1 PoC by testing different temperature values
 
 ---

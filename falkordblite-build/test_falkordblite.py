@@ -280,6 +280,70 @@ def test_aggregation_queries(db):
         return False
 
 
+def test_vecf32_empty_embedding(db):
+    """Ensure vecf32() accepts empty lists and stores an empty vector."""
+    print("\nTesting vecf32 empty embedding writes...")
+    graph_name = "vecf32_empty_embedding"
+    cleanup_done = False
+    g = None
+
+    try:
+        g = db.select_graph(graph_name)
+        print(f"✓ Created {graph_name} graph")
+
+        g.query("MATCH (n) DETACH DELETE n")
+        print("✓ Cleared existing data")
+
+        result = g.query(
+            """
+            CREATE (n:Entity {uuid: 'vecf32-empty', embedding: vecf32([])})
+            RETURN n.embedding
+            """
+        )
+
+        if not result.result_set:
+            print("✗ Creation query returned no results")
+            return False
+
+        stored_embedding = result.result_set[0][0]
+        print(f"✓ Created node with embedding payload: {stored_embedding}")
+
+        verification = g.query(
+            """
+            MATCH (n:Entity {uuid: 'vecf32-empty'})
+            RETURN n.embedding = [] AS is_empty
+            """
+        )
+
+        is_empty = bool(verification.result_set and verification.result_set[0][0])
+        if not is_empty:
+            print("✗ Stored embedding is not an empty list")
+            return False
+
+        print("✓ vecf32 accepted empty list and persisted value as []")
+
+        g.delete()
+        cleanup_done = True
+        print("✓ Cleaned up vecf32 test graph")
+
+        return True
+
+    except Exception as e:
+        print(f"✗ vecf32 empty embedding test failed: {e}")
+        import traceback
+
+        traceback.print_exc()
+        return False
+
+    finally:
+        if g is not None and not cleanup_done:
+            try:
+                g.delete()
+                print("✓ Cleaned up vecf32 test graph")
+            except Exception as cleanup_error:
+                print(f"⚠ Warning: Failed to clean up vecf32 test graph: {cleanup_error}")
+
+
 def interactive_mode():
     """Interactive shell for FalkorDB queries and inspection"""
     print("=" * 60)
@@ -473,6 +537,7 @@ def main():
             ("Multiple Graphs", test_multiple_graphs),
             ("Read-Only Queries", test_read_only_queries),
             ("Aggregation Queries", test_aggregation_queries),
+            ("vecf32 Empty Embedding", test_vecf32_empty_embedding),
         ]
 
         tests_passed = 1  # Import test already passed
