@@ -2,58 +2,130 @@
 
 **Goal**: Prove unstructured text can flow through the pipeline to create queryable graph data in FalkorDBLite. No chunking, no embeddings, no transactions—serial and simple for testing.
 
+## CRITICAL: Graphiti Compatibility Requirement
+
+**This PoC MUST demonstrate that a custom ingestion pipeline can be built atop stock Graphiti.**
+
+All data written to FalkorDBLite must follow Graphiti's conventions EXACTLY:
+- Use Graphiti's `EntityNode` and `EntityEdge` models as the source of truth
+- Match all field names, data types, and structure from `graphiti_core`
+- Follow Graphiti's Cypher patterns (see `research/06-falkordb-backend.md`)
+- Ensure compatibility with Graphiti's search and data operations
+
+**Why this matters**: The PoC proves we can bypass Graphiti's ingestion (NER, chunking, etc.) while remaining fully compatible with Graphiti's query layer. Any deviation from Graphiti's data model breaks this compatibility.
+
+**Verification**: After writing to FalkorDB, the data must be queryable using Graphiti's existing patterns (entity search, relationship traversal, etc.).
+
 ## Scope Clarifications
 
 - **Episode definition**: Daily journal entry
 - **Context window**: Single-window examples only (defer chunking strategy)
 - **Extraction**: NER (fast entity detection) → Fact generation → Relationship inference
-- **Persistence**: EntityNode + EntityEdge writes to FalkorDBLite (no embeddings)
-- **Graphiti bypass**: Skip Graphiti's entity extraction, use only fact/relationship logic
+- **Persistence**: EntityNode + EntityEdge writes to FalkorDBLite (no embeddings for Phase 1)
+- **Graphiti integration strategy**:
+  - **Bypass**: Graphiti's ingestion pipeline (entity extraction, episode chunking)
+  - **Use**: Graphiti's data models (EntityNode, EntityEdge) and Cypher conventions EXACTLY
+  - **Goal**: Prove custom ingestion can write Graphiti-compatible data for search/query operations
 
 ## Data Flow
 
+**Stage numbering is 0-indexed** (Stage 0 = Input, Stage 1 = NER, etc.)
+
 ```
-Input Text (fits in single context window)
+Stage 0: Input Text (fits in single context window)
     ↓
-1. NER (DistilBERT) → Entities [PER, ORG, LOC, MISC]
+Stage 1: NER (DistilBERT) → Entities [PER, ORG, LOC, MISC]
     ↓
-2. DSPy Fact Extraction (entities + text → facts)
+Stage 2: DSPy Fact Extraction (entities + text → facts)
     ↓
-3. DSPy Relationship Inference (facts → edges with source/target/label)
+Stage 3: DSPy Relationship Inference (facts → edges with source/target/label)
     ↓
-4. Build Graphiti Objects (EntityNode, EntityEdge)
+Stage 4: Build Graphiti Objects (EntityNode, EntityEdge)
     ↓
-5. FalkorDBLite Write (bulk save, no transactions)
+Stage 5: FalkorDBLite Write (bulk save, no transactions)
     ↓
-6. Graphviz Preview (visualize in-memory EntityNode/EntityEdge objects; no DB query)
+Stage 6: Graphviz Preview (query FalkorDBLite using UUIDs from Stage 5 to verify persistence)
 ```
 
 ## Implementation: `graphiti-poc.py`
 
 New Gradio UI exposing each pipeline stage as **separate components** so data can be inspected at each step:
 
-1. **Input Panel**: Text box for journal entry
-2. **Stage 1 Output**: NER entity names (ordered `list[str]` derived via `distilbert_ner.py`; UI can optionally display the raw metadata for reference, but only the names flow downstream)
-3. **Stage 2 Output**: Extracted facts (reuse DSPy signatures from `dspy_outlines/`)
-4. **Stage 3 Output**: Inferred relationships (reuse DSPy signatures from `dspy_outlines/`; output carries source/target/name/context)
-5. **Stage 4 Output**: Graphiti objects (retain live `EntityNode`/`EntityEdge` instances in app state and render `.model_dump()` JSON for inspection)
-6. **Stage 5 Output**: FalkorDBLite write confirmation (UUIDs, counts) or surfaced error details
-7. **Stage 6 Output**: Graphviz preview of entities/edges fetched from FalkorDBLite via Cypher (targets the UUIDs held in app state)
+0. **Stage 0 (Input Panel)**: Text box for journal entry
+1. **Stage 1 Output**: NER entity names (ordered `list[str]` derived via `distilbert_ner.py`; UI can optionally display the raw metadata for reference, but only the names flow downstream)
+   ```python
+   # Example NER output extraction:
+   from distilbert_ner import predict_entities
+
+   raw_entities = predict_entities(text)
+   # raw_entities = [
+   #     {"text": "Alice", "label": "PER", "confidence": 0.95, ...},
+   #     {"text": "Microsoft", "label": "ORG", "confidence": 0.92, ...},
+   # ]
+
+   entity_names = [entity["text"] for entity in raw_entities]
+   # entity_names = ["Alice", "Microsoft"]
+   ```
+2. **Stage 2 Output**: Extracted facts (reuse DSPy signatures from `dspy_outlines/`)
+3. **Stage 3 Output**: Inferred relationships (reuse DSPy signatures from `dspy_outlines/`; output carries source/target/name/context)
+4. **Stage 4 Output**: Graphiti objects (retain live `EntityNode`/`EntityEdge` instances in app state and render `.model_dump()` JSON for inspection)
+5. **Stage 5 Output**: FalkorDBLite write confirmation (UUIDs, counts) or surfaced error details
+6. **Stage 6 Output**: Graphviz preview of entities/edges fetched from FalkorDBLite via Cypher (queries using the UUIDs returned from Stage 5)
 
 **Stage Execution**:
-- Stage 1 auto-refreshes every ~1s, running NER and caching the latest ordered list of entity names (case-insensitive dedupe). The cache mirrors Graphiti’s downstream expectations of node names.
+- Stage 1: Reuse the NER trigger pattern from gradio_app.py:278-290 (automatic on text change with debouncing via `trigger_mode="always_last"`). Caches the ordered list of entity names (case-insensitive dedupe).
 - Stages 2-4 run only when the user clicks their respective buttons, consuming cached outputs from the prior stage.
-- Stage 5 writes to FalkorDBLite when `Write to Falkor` is pressed; success returns a JSON summary, while failures render the exception details in the UI and log to console.
-- Stage 6 runs automatically after a successful Stage 5 write, querying FalkorDBLite via Cypher for the newly written UUIDs and refreshing the Graphviz preview.
+- Stage 5 writes to FalkorDBLite when `Write to Falkor` is pressed; success returns a JSON summary with node/edge UUIDs, while failures render the exception details in the UI and log to console.
+- Stage 6 runs automatically after a successful Stage 5 write, querying FalkorDBLite via Cypher using the UUIDs returned from Stage 5 to verify the data was persisted, then renders the Graphviz preview.
 
-**UI Controls**: Phase 1 extraction parameters exposed as Gradio sliders/checkboxes:
-- Relationship inference temperature
-- Enable/disable entity type filters (operates on the Stage 1 name list; UI display of raw model metadata is optional)
+**State Management** (reuse gradio_app.py:244 pattern):
+Use `gr.State()` for session-specific intermediate data:
+```python
+# Inside Gradio Blocks:
+ner_raw_state = gr.State(None)          # Raw NER output (list[dict])
+entity_names_state = gr.State([])       # Filtered entity names (list[str])
+facts_state = gr.State(None)            # Facts object
+relationships_state = gr.State(None)    # Relationships object
+entity_nodes_state = gr.State([])       # EntityNode instances
+entity_edges_state = gr.State([])       # EntityEdge instances
+write_result_state = gr.State(None)     # Write confirmation with UUIDs
+```
+
+**UI Controls**:
+- Entity type filter: Reuse the "Persons only" checkbox pattern from gradio_app.py:258-262 (filters Stage 1 entity list to PER type only)
 - Stage run buttons: `Run Facts`, `Run Relationships`, `Build Graphiti`, `Write to Falkor` to step through the pipeline manually
+
+**Model Parameter Configuration** (module-level, edit and restart to change):
+
+Assumes `parameter_control_feature.md` has been implemented, enabling `OutlinesLM(generation_config=dict)`.
+
+```python
+# Module-level configuration (edit these values and restart to tune extraction quality)
+MODEL_CONFIG = {
+    "temp": 0.7,              # Sampling temperature (0.0=deterministic, 1.0=creative)
+    "top_p": 0.9,             # Nucleus sampling threshold
+    "repetition_penalty": 1.1, # Penalty for repeating tokens
+}
+
+# Apply to OutlinesLM initialization (see DSPy Configuration section below)
+```
+
+**Parameter Tuning Workflow**:
+1. Edit `MODEL_CONFIG` values in `graphiti-poc.py`
+2. Restart Gradio app
+3. Test extraction with same input text
+4. Compare fact/relationship quality
+5. Iterate to find optimal parameters
 
 **DSPy/Outlines Integration**:
 - Reuse the existing LM/adapter stack from `dspy_outlines.lm` and `dspy_outlines.adapter` (no new configuration layers).
 - Import and call the signatures/modules in `dspy_outlines/` for fact and relationship extraction; only add stopgap logic inside `graphiti-poc.py` when something is missing, then plan to upstream it later.
+
+**Graphiti Utilities to Reuse** (CRITICAL: Use Graphiti's utilities instead of writing custom code):
+- `graphiti_core.utils.datetime_utils.utc_now()` - Generate UTC timestamps for EntityNode/EntityEdge creation
+- `graphiti_core.utils.datetime_utils.convert_datetimes_to_strings()` - Convert datetime objects to ISO strings for Cypher queries
+- `graphiti_core.utils.maintenance.dedup_helpers._normalize_string_exact()` - Normalize entity names for deduplication (lowercase + collapse whitespace)
+- EntityNode/EntityEdge models from `graphiti_core.nodes` and `graphiti_core.edges` - Use as-is, do not create custom models
 
 **Database Management**: On Gradio init:
 - Load existing FalkorDBLite database from `data/graphiti-poc.db` (create if doesn't exist)
@@ -61,9 +133,39 @@ New Gradio UI exposing each pipeline stage as **separate components** so data ca
 - Display current DB stats (node count, edge count)
 
 **Settings Module**: Create `settings.py` for project-wide config:
-- FalkorDBLite DB path: `data/graphiti-poc.db` (create `data/` dir if needed)
-- Model paths (Qwen, DistilBERT ONNX)
-- Phase-specific variables controlled via Gradio UI
+
+```python
+"""Configuration for graphiti-poc.py"""
+from pathlib import Path
+
+# Database
+DB_PATH = Path("data/graphiti-poc.db")
+GRAPH_NAME = "phase1_poc"
+
+# Models (not needed - dspy_outlines handles this)
+# DEFAULT_MODEL_PATH already in dspy_outlines/mlx_loader.py
+
+# Phase 1 identifiers
+GROUP_ID = "phase1-poc"
+
+# Model generation parameters (edit and restart to change)
+MODEL_CONFIG = {
+    "temp": 0.7,
+    "top_p": 0.9,
+    "repetition_penalty": 1.1,
+}
+```
+
+Import in graphiti-poc.py:
+```python
+from settings import DB_PATH, GRAPH_NAME, GROUP_ID, MODEL_CONFIG
+```
+
+## Prerequisites
+
+**Parameter Control Feature**: Before implementing this PoC, complete the feature specified in `parameter_control_feature.md` (estimated 30 minutes). This adds `generation_config` parameter support to `OutlinesLM`.
+
+Without this feature: Remove `generation_config=MODEL_CONFIG` from DSPy configuration and use OutlinesLM defaults.
 
 ## Key Documents for Implementation
 
@@ -87,7 +189,15 @@ New Gradio UI exposing each pipeline stage as **separate components** so data ca
 
 ### NER Integration
 - **`distilbert_ner.py`**:
-  - Line 534-620: `predict_entities(text)` function (returns list[dict] with raw metadata; Stage 1 extracts just the `text` field)
+  - Line 534-620: `predict_entities(text)` function returns `list[dict]` where each dict contains:
+    - `"text"`: Entity name with original capitalization (e.g., "Alice")
+    - `"label"`: Entity type - one of ["PER", "ORG", "LOC", "MISC"]
+    - `"start_char"`, `"end_char"`: Character positions in original text
+    - `"start_token"`, `"end_token"`: Token positions
+    - `"tokens"`: List of tokens (tokenized form)
+    - `"confidence"`: Float confidence score
+    - `"chunk_idx"`: Chunk index for long texts
+  - Stage 1 extracts only the `"text"` field to build the entity name list
   - Line 722-761: `format_entities()` for display formatting
 
 ### Current Pattern Reference
@@ -179,23 +289,31 @@ from graphiti_core.edges import EntityEdge
 from graphiti_core.utils.datetime_utils import utc_now
 
 # Stage 1: NER Output (UI may show metadata, cache only names)
+# After deduplication using Graphiti's normalization
+from graphiti_core.utils.maintenance.dedup_helpers import _normalize_string_exact
+
+# Alias for clarity in this context
+def normalize_entity_name(name: str) -> str:
+    """Use Graphiti's exact normalization: lowercase + collapse whitespace."""
+    return _normalize_string_exact(name)
+
 entity_candidates = [
     "Alice",
     "Microsoft",
-    "Microsoft",  # Duplicate
+    "Microsoft",  # Duplicate - will be removed
 ]
 
-# Stage 2: Filter and deduplicate
-# Deduplicate by lowercase entity text (case-insensitive matching, keep first occurrence)
 unique_entity_names = []
 seen = set()
 for name in entity_candidates:
-    key = name.lower()
+    key = normalize_entity_name(name)  # Use Graphiti's normalization
     if key in seen:
         continue
     seen.add(key)
-    unique_entity_names.append(name)
+    unique_entity_names.append(name)  # Keep original casing
 # Result: ["Alice", "Microsoft"]
+
+# Stage 2: DSPy Facts Output (omitted for brevity)
 
 # Stage 3: DSPy Relationships Output
 relationships = Relationships(items=[
@@ -209,7 +327,7 @@ relationships = Relationships(items=[
 
 # Stage 4: Build EntityNode and EntityEdge objects
 entity_nodes = []
-entity_map = {}  # Map entity_name.lower() -> EntityNode (for UUID lookup)
+entity_map = {}  # Map normalized_name -> EntityNode (for UUID lookup)
 
 for name in unique_entity_names:
     node = EntityNode(
@@ -222,13 +340,13 @@ for name in unique_entity_names:
         created_at=utc_now()
     )
     entity_nodes.append(node)
-    entity_map[name.lower()] = node  # Index by lowercase for lookup
+    entity_map[normalize_entity_name(name)] = node  # Index by normalized name for lookup
 
 entity_edges = []
 for rel in relationships.items:
-    # Look up EntityNodes by name (case-insensitive)
-    source_node = entity_map.get(rel.source.lower())
-    target_node = entity_map.get(rel.target.lower())
+    # Look up EntityNodes by normalized name (Graphiti-compatible)
+    source_node = entity_map.get(normalize_entity_name(rel.source))
+    target_node = entity_map.get(normalize_entity_name(rel.target))
 
     if not source_node or not target_node:
         print(f"Warning: Skipping relationship {rel.source} -> {rel.target} (entity not found)")
@@ -254,10 +372,11 @@ for rel in relationships.items:
 ```
 
 **Key Patterns**:
-- **Deduplication**: Case-insensitive, keep the first occurrence to mirror Graphiti’s canonical name handling
+- **Deduplication**: Uses Graphiti's normalization (`dedup_helpers.py:39-42`): lowercase + collapse whitespace
+- **Casing**: Original casing from NER is preserved in EntityNode.name (only normalized for matching)
 - **Entity Cache**: Maintain Stage 1 output as an ordered `list[str]` for reuse across DSPy stages
 - **UUID Generation**: Automatic via EntityNode/EntityEdge constructors
-- **Lookup Map**: Build `entity_name.lower() → EntityNode` for relationship resolution
+- **Lookup Map**: Build `normalized_name → EntityNode` for relationship resolution
 - **Validation**: Skip relationships if source or target entity not found
 
 ## DSPy Signatures (reuse `dspy_outlines`)
@@ -285,7 +404,24 @@ class RelationshipSignature(dspy.Signature):
 
 > If any of these signatures are missing from `dspy_outlines/`, define them in `graphiti-poc.py` for the PoC and schedule a follow-up task to upstream them.
 
-**Usage Pattern**:
+**DSPy Configuration** (call at module level, before Gradio interface definition):
+
+```python
+import dspy
+from dspy_outlines.adapter import OutlinesAdapter
+from dspy_outlines.lm import OutlinesLM
+
+# Configure DSPy once at module level - models load immediately
+# Pass MODEL_CONFIG (defined above) to control generation parameters
+dspy.settings.configure(
+    adapter=OutlinesAdapter(),
+    lm=OutlinesLM(generation_config=MODEL_CONFIG),
+)
+```
+
+**Note**: Requires `parameter_control_feature.md` implementation. Without it, remove `generation_config` parameter and use defaults.
+
+**Usage Pattern** (within Gradio event handlers):
 ```python
 # Stage 2: Extract facts
 fact_predictor = dspy.Predict(FactExtractionSignature)
@@ -298,18 +434,6 @@ relationships = rel_predictor(
     facts=facts,
     entities=entity_names
 ).relationships
-```
-
-Configure DSPy once at startup using the shared components:
-
-```python
-from dspy_outlines.adapter import OutlinesAdapter
-from dspy_outlines.lm import OutlinesLM
-
-dspy.settings.configure(
-    adapter=OutlinesAdapter(),
-    lm=OutlinesLM(),
-)
 ```
 
 ## FalkorDBLite Initialization
@@ -344,7 +468,11 @@ def cleanup_db():
 atexit.register(cleanup_db)
 
 def get_db_stats():
-    """Query database statistics for UI display."""
+    """
+    Query database statistics for UI display.
+
+    Error handling: Exceptions propagate to caller (fail-fast).
+    """
     # Count nodes
     result = graph.query("MATCH (n) RETURN count(n) as node_count")
     node_count = result.result_set[0][0] if result.result_set else 0
@@ -356,7 +484,11 @@ def get_db_stats():
     return {"nodes": node_count, "edges": edge_count}
 
 def reset_database():
-    """Clear all graph data (DESTRUCTIVE - no confirmation in Phase 1)."""
+    """
+    Clear all graph data (DESTRUCTIVE - no confirmation in Phase 1).
+
+    Error handling: Exceptions propagate to caller (fail-fast).
+    """
     graph.query("MATCH (n) DETACH DELETE n")
     return "Database cleared successfully"
 ```
@@ -370,27 +502,38 @@ def reset_database():
 
 ## FalkorDB Write Pattern (No Transactions)
 
+**CRITICAL: This pattern follows Graphiti's exact conventions from `research/06-falkordb-backend.md`.**
+
 FalkorDB has **no multi-query transactions** (see research/06:612-643). Use idempotent writes:
 
+**Graphiti Conventions Used:**
+- Node label: `:Entity` (research/06:506)
+- Edge type: `:RELATES_TO` (research/06:559, 576) - ALL entity edges use this static type
+- Relationship semantic name stored in `r.name` property (e.g., "works_at", "knows")
+- Vector fields use `vecf32()` wrapper (research/06:509, 561)
+- Datetime fields as ISO strings (research/06:112-131)
+
 ```python
-from datetime import datetime
-from uuid import uuid4
+from graphiti_core.utils.datetime_utils import convert_datetimes_to_strings
 
 # Example: Write EntityNodes and EntityEdges to FalkorDB
 def write_entities_and_edges(entity_nodes, entity_edges):
-    """Write entities and relationships to FalkorDB."""
+    """Write entities and relationships to FalkorDB using Graphiti utilities."""
 
     # 1. Convert EntityNode objects to Cypher-compatible dicts
     node_dicts = []
     for node in entity_nodes:
-        node_dicts.append({
-            "uuid": str(node.uuid),
+        node_dict = {
+            "uuid": node.uuid,
             "name": node.name,
             "group_id": "phase1-poc",
-            "created_at": node.created_at.isoformat()  # Convert datetime to ISO string
-        })
+            "created_at": node.created_at  # Will be converted below
+        }
+        # Use Graphiti's utility to convert datetimes to ISO strings
+        node_dicts.append(convert_datetimes_to_strings(node_dict))
 
     # 2. Write nodes (one query with UNWIND)
+    # Pattern from research/06:524-538 (Graphiti's bulk entity node save)
     if node_dicts:
         node_query = """
         UNWIND $nodes AS node
@@ -406,17 +549,21 @@ def write_entities_and_edges(entity_nodes, entity_edges):
     # 3. Convert EntityEdge objects to Cypher-compatible dicts
     edge_dicts = []
     for edge in entity_edges:
-        edge_dicts.append({
-            "uuid": str(edge.uuid),
-            "source_uuid": str(edge.source_node_uuid),
-            "target_uuid": str(edge.target_node_uuid),
+        edge_dict = {
+            "uuid": edge.uuid,
+            "source_uuid": edge.source_node_uuid,
+            "target_uuid": edge.target_node_uuid,
             "name": edge.name,
             "fact": edge.fact,
             "group_id": "phase1-poc",
-            "created_at": edge.created_at.isoformat()
-        })
+            "created_at": edge.created_at  # Will be converted below
+        }
+        # Use Graphiti's utility to convert datetimes to ISO strings
+        edge_dicts.append(convert_datetimes_to_strings(edge_dict))
 
     # 4. Write edges (one query with UNWIND)
+    # Pattern from research/06:571-581 (Graphiti's bulk entity edge save)
+    # NOTE: ALL edges use :RELATES_TO type; semantic name stored in r.name property
     if edge_dicts:
         edge_query = """
         UNWIND $edges AS edge
@@ -442,20 +589,30 @@ def write_entities_and_edges(entity_nodes, entity_edges):
 
 **Key Patterns**:
 - Use `graph.query(cypher_string, params_dict)` for parameterized queries
-- Convert datetimes to ISO strings **before** passing to FalkorDB
+- Convert datetimes to ISO strings **before** passing to FalkorDB (use `convert_datetimes_to_strings()`)
 - MERGE makes queries idempotent (safe to re-run)
 - Each query is atomic; no multi-query transactions
-- Wrap write operations in try/except; log exceptions and return error payloads to the Gradio UI
 - FalkorDBLite persists to disk automatically
 
-## Graphviz Verification Query
+**Error Handling Philosophy**:
+- Let exceptions propagate (fail-fast approach)
+- Gradio will catch and display errors in UI
+- Prefer clear flow control over defensive programming
+- Only catch exceptions for cleanup operations (e.g., `db.close()` in atexit)
 
-Stage 6 runs automatically after a successful write to confirm persistence before visualization. It uses the UUIDs returned by `write_entities_and_edges` to fetch the corresponding nodes and edges from FalkorDBLite:
+## Graphviz Verification and Rendering
+
+Stage 6 runs automatically after a successful write to confirm persistence and visualize the graph. It uses the UUIDs returned by `write_entities_and_edges` to fetch the corresponding nodes and edges from FalkorDBLite:
 
 ```python
 import logging
+import tempfile
+import os
+from graphviz import Digraph
+from typing import Any
 
 def load_written_entities(node_uuids: list[str], edge_uuids: list[str]) -> dict[str, Any]:
+    """Query FalkorDBLite for nodes and edges by UUID."""
     try:
         node_query = """
         UNWIND $uuids AS uuid
@@ -472,15 +629,97 @@ def load_written_entities(node_uuids: list[str], edge_uuids: list[str]) -> dict[
         edge_result = graph.query(edge_query, {"uuids": edge_uuids})
 
         return {
-            "nodes": node_result.result_set or [],
-            "edges": edge_result.result_set or [],
+            "nodes": node_result.result_set or [],  # List[tuple]: [(uuid, name), ...]
+            "edges": edge_result.result_set or [],  # List[tuple]: [(uuid, src_uuid, tgt_uuid, name), ...]
         }
     except Exception as exc:
         logging.exception("Failed to verify FalkorDBLite write")
         return {"error": str(exc)}
+
+def render_graph_from_db(db_data: dict[str, Any]) -> str | None:
+    """
+    Render Graphviz graph from FalkorDB query results.
+
+    Returns: Path to PNG file, or None on error (errors logged to console).
+
+    Styling reused from gradio_app.py for consistency, but parameters
+    extracted to module-level constants for easy future customization.
+    """
+    # Check for query errors
+    if "error" in db_data:
+        logging.error(f"Cannot render graph: {db_data['error']}")
+        return None
+
+    try:
+        dot = Digraph(format="png")
+
+        # Graph layout settings (from gradio_app.py:52-60)
+        dot.attr("graph",
+                 rankdir="LR",
+                 splines="spline",
+                 pad="0.35",
+                 nodesep="0.7",
+                 ranksep="1.0",
+                 bgcolor="transparent")
+
+        # Node styling (from gradio_app.py:61-69)
+        dot.attr("node",
+                 shape="circle",
+                 style="filled",
+                 fontname="Helvetica",
+                 fontsize="11",
+                 color="transparent",
+                 fontcolor="#1f2937")
+
+        # Edge styling (from gradio_app.py:70-79)
+        dot.attr("edge",
+                 color="#60a5fa",
+                 penwidth="1.6",
+                 arrowsize="1.0",
+                 arrowhead="vee",
+                 fontname="Helvetica",
+                 fontcolor="#e2e8f0",
+                 fontsize="10")
+
+        # Add nodes from result_set: [(uuid, name), ...]
+        for row in db_data["nodes"]:
+            uuid, name = row
+            # Color logic from gradio_app.py:84-85
+            normalized = name.lower()
+            is_author = normalized in {"author", "i"}
+            fillcolor = "#facc15" if is_author else "#dbeafe"
+
+            dot.node(uuid,
+                    label=name,
+                    fillcolor=fillcolor,
+                    fontcolor="#1f2937",
+                    tooltip=name)
+
+        # Add edges from result_set: [(uuid, source_uuid, target_uuid, name), ...]
+        for row in db_data["edges"]:
+            edge_uuid, source_uuid, target_uuid, edge_name = row
+            edge_label = edge_name.replace("_", " ")
+
+            dot.edge(source_uuid,
+                    target_uuid,
+                    label=edge_label,
+                    color="#60a5fa",
+                    fontcolor="#e2e8f0",
+                    tooltip=edge_label)
+
+        # Render to temporary file
+        fd, tmp_png_path = tempfile.mkstemp(suffix=".png")
+        os.close(fd)
+        dot.render(tmp_png_path[:-4], format="png", cleanup=True)
+
+        return tmp_png_path
+
+    except Exception as exc:
+        logging.exception("Failed to render Graphviz graph")
+        return None
 ```
 
-When `{"error": ...}` is returned, the Graphviz panel should render the error message instead of a graph.
+**Future Customization**: To modify graph appearance, edit the `dot.attr()` parameters in `render_graph_from_db()`. Consider extracting these to a config dict or settings.py in later phases.
 
 ## Deferred to Later Phases
 
