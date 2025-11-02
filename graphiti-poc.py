@@ -4,7 +4,7 @@ import dspy
 from dspy_outlines.adapter import OutlinesAdapter
 from dspy_outlines.lm import OutlinesLM
 from settings import MODEL_CONFIG, DB_PATH
-from falkordb_utils import get_db_stats, reset_database
+from falkordb_utils import get_db_stats, reset_database, write_entities_and_edges
 from distilbert_ner import predict_entities
 from entity_utils import deduplicate_entities, build_entity_nodes, build_entity_edges
 from signatures import FactExtractionSignature, RelationshipSignature
@@ -136,6 +136,27 @@ def build_graphiti_objects(entity_names: list[str], relationships):
         return [], [], {"error": str(e)}
 
 
+# Stage 5: FalkorDB write function
+def write_to_falkordb(entity_nodes, entity_edges):
+    """
+    Stage 5: Write EntityNode and EntityEdge objects to FalkorDB.
+
+    Returns: Write result dict (with UUIDs)
+    """
+    if not entity_nodes:
+        return {"error": "No entities to write"}
+
+    try:
+        result = write_entities_and_edges(entity_nodes, entity_edges)
+        return result
+    except Exception as e:
+        import traceback
+        return {
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }
+
+
 # Build Gradio interface
 with gr.Blocks(title="Phase 1 PoC: Graphiti Pipeline") as app:
     gr.Markdown("# Phase 1 PoC: Text → Graph in FalkorDBLite")
@@ -247,6 +268,19 @@ with gr.Blocks(title="Phase 1 PoC: Graphiti Pipeline") as app:
         on_build_graphiti,
         inputs=[entity_names_state, relationships_state],
         outputs=[graphiti_output, entity_nodes_state, entity_edges_state]
+    )
+
+    # Stage 5: Write to FalkorDB
+    def on_write_falkor(entity_nodes, entity_edges):
+        result = write_to_falkordb(entity_nodes, entity_edges)
+        # Update database stats
+        new_stats = str(get_db_stats())
+        return result, result, new_stats
+
+    write_falkor_btn.click(
+        on_write_falkor,
+        inputs=[entity_nodes_state, entity_edges_state],
+        outputs=[write_output, write_result_state, db_stats_display]
     )
 
     def on_reset_db():
