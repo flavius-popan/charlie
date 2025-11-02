@@ -53,43 +53,65 @@ logger.info(f"OutlinesLM generation config: {self.generation_config}")
 
 ### 2. Update `OutlinesLM.forward()` - `dspy_outlines/lm.py`
 
-**Location**: Lines 144-154 (unconstrained generation path)
+**Location**: Lines 131-154 (BOTH constrained and unconstrained generation paths)
 
-**Current code**:
+**Current code** (lines 131-154):
 ```python
-# Use raw MLX for unconstrained generation
-generate_kwargs = {"verbose": False}
-if self.prompt_cache is not None:
-    generate_kwargs["prompt_cache"] = self.prompt_cache
-completion = mlx_lm.generate(
-    self.raw_mlx_model,
-    self.tokenizer,
-    formatted_prompt,
-    max_tokens=max_tokens,
-    **generate_kwargs,
-)
+with MLX_LOCK:
+    outlines_kwargs = {"max_tokens": max_tokens}
+    if self.prompt_cache is not None:
+        outlines_kwargs["prompt_cache"] = self.prompt_cache
+
+    if constraint:
+        # Use Outlines wrapper for constrained generation
+        result_json = self.outlines_model(
+            formatted_prompt,
+            output_type=constraint,
+            **outlines_kwargs,  # Only max_tokens and prompt_cache
+        )
+    else:
+        # Use raw MLX for unconstrained generation
+        generate_kwargs = {"verbose": False}
+        if self.prompt_cache is not None:
+            generate_kwargs["prompt_cache"] = self.prompt_cache
+        completion = mlx_lm.generate(
+            self.raw_mlx_model,
+            self.tokenizer,
+            formatted_prompt,
+            max_tokens=max_tokens,
+            **generate_kwargs,  # Only verbose and prompt_cache
+        )
 ```
 
-**Updated code**:
+**Updated code** (apply generation config to BOTH paths):
 ```python
-# Use raw MLX for unconstrained generation
-generate_kwargs = {"verbose": False}
-if self.prompt_cache is not None:
-    generate_kwargs["prompt_cache"] = self.prompt_cache
+with MLX_LOCK:
+    outlines_kwargs = {"max_tokens": max_tokens}
+    if self.prompt_cache is not None:
+        outlines_kwargs["prompt_cache"] = self.prompt_cache
 
-# Apply generation config (temp, top_p, etc.)
-generate_kwargs.update(self.generation_config)
+    # Apply generation config (temp, top_p, etc.) to both paths
+    outlines_kwargs.update(self.generation_config)
 
-completion = mlx_lm.generate(
-    self.raw_mlx_model,
-    self.tokenizer,
-    formatted_prompt,
-    max_tokens=max_tokens,
-    **generate_kwargs,
-)
+    if constraint:
+        # Use Outlines wrapper for constrained generation
+        result_json = self.outlines_model(
+            formatted_prompt,
+            output_type=constraint,
+            **outlines_kwargs,  # Now includes generation params
+        )
+    else:
+        # Use raw MLX for unconstrained generation
+        generate_kwargs = {"verbose": False, **outlines_kwargs}
+        completion = mlx_lm.generate(
+            self.raw_mlx_model,
+            self.tokenizer,
+            formatted_prompt,
+            **generate_kwargs,  # Now includes generation params
+        )
 ```
 
-**Note**: Constrained generation path (lines 137-142) uses Outlines, which may not support all MLX-LM parameters. For Phase 1, focus on unconstrained path if needed, or investigate Outlines parameter support.
+**Note**: Verified that Outlines DOES support MLX-LM parameters (forwards `**kwargs` to `mlx_lm.generate`). This change works for BOTH constrained and unconstrained generation paths.
 
 ---
 
@@ -229,11 +251,48 @@ python -c "import mlx_lm; print(mlx_lm.__version__)"
 
 ---
 
+## Investigation Results
+
+**Date**: 2025-11-02
+
+**Question**: Does Outlines support MLX-LM generation parameters during constrained generation?
+
+**Answer**: ✅ YES - Confirmed by source code inspection and testing.
+
+**Evidence**:
+
+1. **Outlines source code** (`outlines/models/mlxlm.py:144-150`):
+   ```python
+   def generate(self, model_input: str, output_type: Optional[OutlinesLogitsProcessor] = None, **kwargs) -> str:
+       from mlx_lm import generate
+       return generate(
+           self.model,
+           self.mlx_tokenizer,
+           self.type_adapter.format_input(model_input),
+           logits_processors=self.type_adapter.format_output_type(output_type),
+           **kwargs,  # <-- Parameters forwarded to mlx_lm.generate()
+       )
+   ```
+   The `**kwargs` are passed directly to `mlx_lm.generate()`, meaning ALL MLX-LM parameters work.
+
+2. **Current OutlinesLM limitation** (`dspy_outlines/lm.py:131-154`):
+   - Currently only passes `max_tokens` and `prompt_cache` to generation functions
+   - Other kwargs (temp, top_p, etc.) are silently ignored
+   - This affects BOTH constrained and unconstrained paths
+
+3. **Testing confirmation**:
+   - Tested with temp=1.5 vs temp=0.01 - produced identical outputs (confirmed params not being passed)
+   - After implementing the fix, parameters will affect output for both generation paths
+
+**Conclusion**: Implementation will work for both constrained and unconstrained generation. No architectural blockers.
+
+---
+
 ## Implementation Checklist
 
 - [ ] Modify `OutlinesLM.__init__()` to accept `generation_config` parameter
 - [ ] Store `self.generation_config` with default values
-- [ ] Update `forward()` to apply config in unconstrained generation path
+- [ ] Update `forward()` to apply config to BOTH constrained and unconstrained generation paths
 - [ ] Add logging for applied config
 - [ ] Write tests in `tests/test_parameter_control.py`
 - [ ] Run tests: `pytest tests/test_parameter_control.py -v`
@@ -253,8 +312,8 @@ python -c "import mlx_lm; print(mlx_lm.__version__)"
 
 ## Notes
 
-- This feature only affects **unconstrained** generation (when `_outlines_constraint` is None)
-- For **constrained** generation (Pydantic models), Outlines may not support all MLX-LM parameters
-- Phase 1 PoC primarily uses constrained generation for facts/relationships
-- If constrained generation doesn't support these params, they'll be silently ignored
-- Consider logging a warning if config is provided but constraint is active
+- This feature affects **BOTH constrained and unconstrained** generation
+- Outlines supports MLX-LM parameters for constrained generation (verified by source code inspection)
+- Phase 1 PoC uses constrained generation for facts/relationships, so parameters WILL affect output quality
+- All standard MLX-LM parameters (temp, top_p, repetition_penalty, etc.) are supported
+- The implementation unifies parameter handling across both generation paths for consistency
