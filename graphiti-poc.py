@@ -7,6 +7,7 @@ from settings import MODEL_CONFIG, DB_PATH
 from falkordb_utils import get_db_stats, reset_database
 from distilbert_ner import predict_entities
 from entity_utils import deduplicate_entities
+from signatures import FactExtractionSignature
 
 # Configure DSPy once at module level
 dspy.settings.configure(
@@ -42,6 +43,34 @@ def process_ner(text: str, persons_only: bool):
     display = "\n".join(unique_names) if unique_names else "(no entities found)"
 
     return unique_names, raw_entities, display
+
+
+# Stage 2: Fact extraction function
+def extract_facts(text: str, entity_names: list[str]):
+    """
+    Stage 2: Extract facts using DSPy.
+
+    Returns: (Facts object, JSON for display)
+    """
+    if not text.strip() or not entity_names:
+        return None, {"error": "Need text and entities"}
+
+    try:
+        fact_predictor = dspy.Predict(FactExtractionSignature)
+        facts = fact_predictor(text=text, entities=entity_names).facts
+
+        # Convert to JSON for display
+        facts_json = {
+            "items": [
+                {"entity": f.entity, "text": f.text}
+                for f in facts.items
+            ]
+        }
+
+        return facts, facts_json
+    except Exception as e:
+        return None, {"error": str(e)}
+
 
 # Build Gradio interface
 with gr.Blocks(title="Phase 1 PoC: Graphiti Pipeline") as app:
@@ -121,6 +150,17 @@ with gr.Blocks(title="Phase 1 PoC: Graphiti Pipeline") as app:
         on_text_change,
         inputs=[input_text, persons_only_filter],
         outputs=[ner_output, entity_names_state, ner_raw_state]
+    )
+
+    # Stage 2: Fact Extraction
+    def on_run_facts(text, entity_names):
+        facts, facts_json = extract_facts(text, entity_names)
+        return facts_json, facts
+
+    run_facts_btn.click(
+        on_run_facts,
+        inputs=[input_text, entity_names_state],
+        outputs=[facts_output, facts_state]
     )
 
     def on_reset_db():
