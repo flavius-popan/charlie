@@ -145,15 +145,16 @@ def write_entities_and_edges(
     nodes_created = 0
     if node_dicts:
         for node in node_dicts:
-            # Build property assignments with literal values
+            # FalkorDB only supports primitives and arrays of primitives
+            # Serialize dicts to JSON strings, keep lists of strings as-is
             props = {
                 'uuid': node['uuid'],
                 'name': node['name'],
                 'group_id': node['group_id'],
                 'created_at': node['created_at'],
-                'labels': node['labels'],
+                'labels': json.dumps(node['labels']),  # Serialize list to JSON string
                 'summary': node['summary'],
-                'attributes': node['attributes']
+                'attributes': json.dumps(node['attributes'])  # Serialize dict to JSON string
             }
 
             # Build SET clauses for properties
@@ -203,18 +204,19 @@ def write_entities_and_edges(
     edges_created = 0
     if edge_dicts:
         for edge in edge_dicts:
-            # Build property assignments with literal values
+            # FalkorDB only supports primitives and arrays of primitives
+            # Serialize dicts to JSON strings, keep lists of strings as-is
             props = {
                 'uuid': edge['uuid'],
                 'name': edge['name'],
                 'fact': edge['fact'],
                 'group_id': edge['group_id'],
                 'created_at': edge['created_at'],
-                'episodes': edge['episodes'],
+                'episodes': json.dumps(edge['episodes']),  # Serialize list to JSON string
                 'expired_at': edge['expired_at'],
                 'valid_at': edge['valid_at'],
                 'invalid_at': edge['invalid_at'],
-                'attributes': edge['attributes']
+                'attributes': json.dumps(edge['attributes'])  # Serialize dict to JSON string
             }
 
             # Build SET clauses for properties
