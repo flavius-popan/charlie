@@ -1,4 +1,35 @@
-"""FalkorDB initialization and utility functions."""
+"""FalkorDB initialization and utility functions.
+
+CRITICAL: FalkorDB Query Result Format
+=====================================
+
+FalkorDB's QueryResult object has a non-standard structure that differs from Neo4j/Cypher:
+
+1. **result_set** contains column METADATA, not data:
+   - Format: [[column_index, column_name_bytes], ...]
+   - Example: [[1, b'n.uuid'], [1, b'n.name']]
+
+2. **result.statistics** contains the actual DATA:
+   - Format: [[[type_code, value], [type_code, value], ...], ...]
+   - Each outer list element is a row
+   - Each inner list element is a column value pair [type_code, actual_value]
+   - Example: [[[2, b'uuid-123'], [2, b'Alice']], [[2, b'uuid-456'], [2, b'Bob']]]
+
+3. **Special case for count() queries:**
+   - result_set[0][0] happens to work because it extracts the count value from metadata
+   - Example: result_set = [[1, b'count(n)']] → result_set[0][0] = 1
+
+4. **Multi-column queries MUST use result.statistics:**
+   - Extract values from [type_code, value] pairs: row[col_index][1]
+   - Example: uuid = row[0][1], name = row[1][1]
+
+5. **FalkorDBLite (embedded) does NOT support:**
+   - Parameterized queries ($param syntax)
+   - Multi-query transactions
+   - Must use literal values in Cypher queries
+
+See graphviz_utils.py:load_written_entities() for working example.
+"""
 import atexit
 import json
 import logging

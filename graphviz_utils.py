@@ -1,4 +1,17 @@
-"""Graphviz visualization utilities."""
+"""Graphviz visualization utilities.
+
+NOTE: FalkorDB Query Results
+============================
+
+FalkorDB returns data in result.statistics, NOT result.result_set.
+See falkordb_utils.py module docstring for complete explanation.
+
+Key pattern for extracting data:
+    result = graph.query("MATCH (n) RETURN n.uuid, n.name")
+    for row in result.statistics:
+        uuid = row[0][1]  # [type_code, value] -> extract value
+        name = row[1][1]
+"""
 import logging
 import tempfile
 import os
