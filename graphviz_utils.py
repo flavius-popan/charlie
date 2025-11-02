@@ -103,6 +103,10 @@ def render_graph_from_db(db_data: dict[str, Any]) -> str | None:
         # Add nodes from result_set: [(uuid, name), ...]
         for row in db_data["nodes"]:
             uuid, name = row
+            # Convert to string (FalkorDB may return as int/bytes)
+            uuid = str(uuid)
+            name = str(name) if name else ""
+
             # Color logic: highlight "author" or "I"
             normalized = name.lower()
             is_author = normalized in {"author", "i"}
@@ -117,6 +121,11 @@ def render_graph_from_db(db_data: dict[str, Any]) -> str | None:
         # Add edges from result_set: [(uuid, source_uuid, target_uuid, name), ...]
         for row in db_data["edges"]:
             edge_uuid, source_uuid, target_uuid, edge_name = row
+            # Convert to strings (FalkorDB may return as int/bytes)
+            edge_uuid = str(edge_uuid)
+            source_uuid = str(source_uuid)
+            target_uuid = str(target_uuid)
+            edge_name = str(edge_name) if edge_name else ""
             edge_label = edge_name.replace("_", " ")
 
             dot.edge(source_uuid,
