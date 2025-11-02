@@ -136,15 +136,19 @@ def reset_database() -> str:
 
 
 def write_entities_and_edges(
+    episode,
     entity_nodes: list[EntityNode],
-    entity_edges: list[EntityEdge]
+    entity_edges: list[EntityEdge],
+    episodic_edges
 ) -> dict[str, Any]:
     """
-    Write entities and relationships to FalkorDB using Graphiti utilities.
+    Write episode, entities, and relationships to FalkorDB using Graphiti utilities.
 
     Args:
+        episode: EpisodicNode object
         entity_nodes: List of EntityNode objects
         entity_edges: List of EntityEdge objects
+        episodic_edges: List of EpisodicEdge objects
 
     Returns:
         dict with counts and UUIDs of created nodes/edges
@@ -156,7 +160,52 @@ def write_entities_and_edges(
         logging.warning("write_entities_and_edges called with empty entity_nodes list")
         return {"nodes_created": 0, "edges_created": 0, "node_uuids": [], "edge_uuids": []}
 
-    # 1. Convert EntityNode objects to Cypher-compatible dicts
+    # 1. Write EpisodicNode (mirrors bulk_utils.py:217)
+    episode_dict = {
+        "uuid": episode.uuid,
+        "name": episode.name,
+        "group_id": episode.group_id,
+        "source": episode.source.value,  # Convert enum to string
+        "source_description": episode.source_description,
+        "content": episode.content,
+        "valid_at": episode.valid_at,
+        "created_at": episode.created_at,
+        "entity_edges": episode.entity_edges,
+        "labels": episode.labels or [],
+    }
+    episode_dict = convert_datetimes_to_strings(episode_dict)
+
+    # Build episode node properties for Cypher
+    episode_props = {
+        'uuid': episode_dict['uuid'],
+        'name': episode_dict['name'],
+        'group_id': episode_dict['group_id'],
+        'source': episode_dict['source'],
+        'source_description': episode_dict['source_description'],
+        'content': episode_dict['content'],
+        'valid_at': episode_dict['valid_at'],
+        'created_at': episode_dict['created_at'],
+        'entity_edges': episode_dict['entity_edges'],
+        'labels': json.dumps(episode_dict['labels'])  # Serialize list to JSON string
+    }
+
+    # Build SET clauses for episode properties
+    episode_set_clause = ', '.join([
+        f"e.{key} = {to_cypher_literal(value)}"
+        for key, value in episode_props.items()
+    ])
+
+    episode_query = f"""
+    MERGE (e:Episodic {{uuid: {to_cypher_literal(episode_dict['uuid'])}}})
+    SET {episode_set_clause}
+    RETURN e.uuid AS uuid
+    """
+
+    result = graph.query(episode_query)
+    if result.result_set:
+        logging.info(f"Created episode node: {episode.uuid}")
+
+    # 2. Convert EntityNode objects to Cypher-compatible dicts
     node_dicts = []
     for node in entity_nodes:
         node_dict = {
@@ -172,7 +221,7 @@ def write_entities_and_edges(
         # Use Graphiti's utility to convert datetimes to ISO strings
         node_dicts.append(convert_datetimes_to_strings(node_dict))
 
-    # 2. Write nodes (individual queries - FalkorDBLite doesn't support parameters)
+    # 3. Write nodes (individual queries - FalkorDBLite doesn't support parameters)
     nodes_created = 0
     if node_dicts:
         for node in node_dicts:
@@ -210,7 +259,7 @@ def write_entities_and_edges(
 
         logging.info(f"Created {nodes_created} nodes")
 
-    # 3. Convert EntityEdge objects to Cypher-compatible dicts
+    # 4. Convert EntityEdge objects to Cypher-compatible dicts
     edge_dicts = []
     for edge in entity_edges:
         edge_dict = {
@@ -231,7 +280,7 @@ def write_entities_and_edges(
         # Use Graphiti's utility to convert datetimes to ISO strings
         edge_dicts.append(convert_datetimes_to_strings(edge_dict))
 
-    # 4. Write edges (individual queries - FalkorDBLite doesn't support parameters)
+    # 5. Write edges (individual queries - FalkorDBLite doesn't support parameters)
     edges_created = 0
     if edge_dicts:
         for edge in edge_dicts:
@@ -243,7 +292,7 @@ def write_entities_and_edges(
                 'fact': edge['fact'],
                 'group_id': edge['group_id'],
                 'created_at': edge['created_at'],
-                'episodes': json.dumps(edge['episodes']),  # Serialize list to JSON string
+                'episodes': edge['episodes'],  # Keep as native list
                 'expired_at': edge['expired_at'],
                 'valid_at': edge['valid_at'],
                 'invalid_at': edge['invalid_at'],
@@ -274,9 +323,54 @@ def write_entities_and_edges(
 
         logging.info(f"Created {edges_created} edges")
 
+    # 6. Write EpisodicEdges (MENTIONS) (mirrors bulk_utils.py:221)
+    episodic_edge_dicts = []
+    for edge in episodic_edges:
+        edge_dict = {
+            "uuid": edge.uuid,
+            "source_uuid": edge.source_node_uuid,  # Episode UUID
+            "target_uuid": edge.target_node_uuid,  # Entity UUID
+            "group_id": edge.group_id,
+            "created_at": edge.created_at,
+        }
+        episodic_edge_dicts.append(convert_datetimes_to_strings(edge_dict))
+
+    episodic_edges_created = 0
+    if episodic_edge_dicts:
+        for edge in episodic_edge_dicts:
+            # Build properties for MENTIONS edge
+            props = {
+                'uuid': edge['uuid'],
+                'group_id': edge['group_id'],
+                'created_at': edge['created_at']
+            }
+
+            # Build SET clauses for properties
+            set_clause = ', '.join([
+                f"r.{key} = {to_cypher_literal(value)}"
+                for key, value in props.items()
+            ])
+
+            mentions_query = f"""
+            MATCH (episode:Episodic {{uuid: {to_cypher_literal(edge['source_uuid'])}}})
+            MATCH (entity:Entity {{uuid: {to_cypher_literal(edge['target_uuid'])}}})
+            MERGE (episode)-[r:MENTIONS {{uuid: {to_cypher_literal(edge['uuid'])}}}]->(entity)
+            SET {set_clause}
+            RETURN r.uuid AS uuid
+            """
+
+            result = graph.query(mentions_query)
+            if result.result_set:
+                episodic_edges_created += 1
+
+        logging.info(f"Created {episodic_edges_created} MENTIONS edges")
+
     return {
+        "episode_uuid": episode.uuid,
         "nodes_created": len(node_dicts),
         "edges_created": len(edge_dicts),
+        "episodic_edges_created": len(episodic_edge_dicts),
         "node_uuids": [n["uuid"] for n in node_dicts],
-        "edge_uuids": [e["uuid"] for e in edge_dicts]
+        "edge_uuids": [e["uuid"] for e in edge_dicts],
+        "episodic_edge_uuids": [e["uuid"] for e in episodic_edge_dicts]
     }

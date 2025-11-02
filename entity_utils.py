@@ -1,9 +1,10 @@
 """Entity processing utilities using Graphiti conventions."""
 import logging
 from graphiti_core.utils.maintenance.dedup_helpers import _normalize_string_exact
-from graphiti_core.nodes import EntityNode
-from graphiti_core.edges import EntityEdge
+from graphiti_core.nodes import EntityNode, EpisodicNode, EpisodeType
+from graphiti_core.edges import EntityEdge, EpisodicEdge
 from graphiti_core.utils.datetime_utils import utc_now
+from datetime import datetime
 from models import Relationships
 from settings import GROUP_ID
 
@@ -67,7 +68,8 @@ def build_entity_nodes(entity_names: list[str]) -> tuple[list[EntityNode], dict[
 
 def build_entity_edges(
     relationships: Relationships,
-    entity_map: dict[str, EntityNode]
+    entity_map: dict[str, EntityNode],
+    episode_uuid: str
 ) -> list[EntityEdge]:
     """
     Build EntityEdge objects from relationships.
@@ -75,6 +77,7 @@ def build_entity_edges(
     Args:
         relationships: Relationships object from DSPy
         entity_map: Dict mapping normalized entity name -> EntityNode
+        episode_uuid: UUID of the originating episode (for provenance tracking)
 
     Returns:
         List of EntityEdge objects (relationships with missing entities are skipped)
@@ -93,12 +96,12 @@ def build_entity_edges(
         edge = EntityEdge(
             source_node_uuid=source_node.uuid,
             target_node_uuid=target_node.uuid,
-            name=rel.relation,
+            name=normalize_edge_name(rel.relation),
             fact=rel.context,
             group_id=GROUP_ID,
             created_at=utc_now(),
             fact_embedding=[],
-            episodes=[],
+            episodes=[episode_uuid],
             expired_at=None,
             valid_at=None,
             invalid_at=None,
@@ -107,3 +110,84 @@ def build_entity_edges(
         entity_edges.append(edge)
 
     return entity_edges
+
+
+def normalize_edge_name(name: str) -> str:
+    """
+    Normalize relationship name to SCREAMING_SNAKE_CASE.
+
+    Mirrors Graphiti's prompt-based convention (extract_edges.py:26, 120).
+
+    Examples:
+        "works at" → "WORKS_AT"
+        "knows" → "KNOWS"
+        "WorksAt" → "WORKS_AT"
+    """
+    # Remove extra whitespace
+    name = " ".join(name.split())
+    # Replace spaces with underscores
+    name = name.replace(" ", "_")
+    # Convert to uppercase
+    return name.upper()
+
+
+def build_episodic_node(
+    content: str,
+    reference_time: datetime,
+    group_id: str = "phase1-poc"
+) -> EpisodicNode:
+    """
+    Create EpisodicNode for a journal entry.
+
+    Mirrors graphiti.py:706-720 (EpisodicNode creation).
+
+    Args:
+        content: Raw journal entry text
+        reference_time: Timestamp when entry was created
+        group_id: Graph partition identifier
+
+    Returns:
+        EpisodicNode with entity_edges initially empty (populated after edge creation)
+    """
+    episode = EpisodicNode(
+        name=f"Journal Entry {reference_time.isoformat()}",
+        group_id=group_id,
+        source=EpisodeType.text,  # Journal entries are text type
+        source_description="Daily journal entry",
+        content=content,
+        valid_at=reference_time,
+        created_at=utc_now(),
+        labels=[],
+        entity_edges=[]  # Will be populated after EntityEdge creation
+    )
+    return episode
+
+
+def build_episodic_edges(
+    episode: EpisodicNode,
+    entity_nodes: list
+) -> list[EpisodicEdge]:
+    """
+    Create MENTIONS edges from episode to each entity.
+
+    Mirrors edge_operations.py:51-68 (build_episodic_edges).
+
+    Args:
+        episode: The EpisodicNode
+        entity_nodes: List of EntityNode objects extracted from episode
+
+    Returns:
+        List of EpisodicEdge objects (one per entity)
+    """
+    episodic_edges = []
+
+    for node in entity_nodes:
+        edge = EpisodicEdge(
+            source_node_uuid=episode.uuid,  # Episode mentions entity
+            target_node_uuid=node.uuid,
+            group_id=episode.group_id,
+            created_at=utc_now()
+        )
+        episodic_edges.append(edge)
+
+    return episodic_edges

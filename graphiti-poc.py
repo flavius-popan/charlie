@@ -11,7 +11,7 @@ from dspy_outlines.lm import OutlinesLM
 from settings import MODEL_CONFIG, DB_PATH
 from falkordb_utils import get_db_stats, reset_database, write_entities_and_edges
 from distilbert_ner import predict_entities
-from entity_utils import deduplicate_entities, build_entity_nodes, build_entity_edges
+from entity_utils import deduplicate_entities, build_entity_nodes, build_entity_edges, build_episodic_node, build_episodic_edges
 from signatures import FactExtractionSignature, RelationshipSignature
 from graphviz_utils import load_written_entities, render_graph_from_db
 
@@ -131,39 +131,65 @@ def infer_relationships(text: str, facts, entity_names: list[str]):
 
 
 # Stage 4: Graphiti object builder function
-def build_graphiti_objects(entity_names: list[str], relationships):
+def build_graphiti_objects(input_text, entity_names: list[str], relationships, reference_time):
     """
-    Stage 4: Build EntityNode and EntityEdge objects.
+    Stage 4: Build EpisodicNode, EntityNode, EntityEdge, and EpisodicEdge objects.
 
-    Returns: (entity_nodes, entity_edges, JSON for display)
+    Now mirrors graphiti.py:413-436 (_process_episode_data).
     """
     if not entity_names or not relationships:
-        return [], [], {"error": "Need entities and relationships"}
+        return None, [], [], [], {
+            "error": "Need entities and relationships"
+        }
 
     try:
-        # Build nodes and entity map
+        # 1. Create EpisodicNode (mirrors graphiti.py:706-720)
+        episode = build_episodic_node(
+            content=input_text,
+            reference_time=reference_time
+        )
+
+        # 2. Build EntityNodes
         entity_nodes, entity_map = build_entity_nodes(entity_names)
 
-        # Build edges
-        entity_edges = build_entity_edges(relationships, entity_map)
+        # 3. Build EntityEdges with episode UUID (mirrors edge_operations.py:220-230)
+        entity_edges = build_entity_edges(
+            relationships,
+            entity_map,
+            episode_uuid=episode.uuid  # Pass episode UUID
+        )
 
-        logger.info(f"Stage 4: Built {len(entity_nodes)} nodes and {len(entity_edges)} edges")
+        # 4. Link episode to entity edges (mirrors graphiti.py:422)
+        episode.entity_edges = [edge.uuid for edge in entity_edges]
+
+        # 5. Build EpisodicEdges (MENTIONS) (mirrors edge_operations.py:51-68)
+        episodic_edges = build_episodic_edges(episode, entity_nodes)
+
+        logger.info(
+            f"Stage 4: Built episode {episode.uuid}, "
+            f"{len(entity_nodes)} nodes, "
+            f"{len(entity_edges)} entity edges, "
+            f"{len(episodic_edges)} episodic edges"
+        )
 
         # Convert to JSON for display
         graphiti_json = {
+            "episode": episode.model_dump(),
             "nodes": [n.model_dump() for n in entity_nodes],
-            "edges": [e.model_dump() for e in entity_edges]
+            "entity_edges": [e.model_dump() for e in entity_edges],
+            "episodic_edges": [e.model_dump() for e in episodic_edges]
         }
 
-        return entity_nodes, entity_edges, graphiti_json
+        return episode, entity_nodes, entity_edges, episodic_edges, graphiti_json
+
     except Exception as e:
-        return [], [], {"error": str(e)}
+        return None, [], [], [], {"error": str(e)}
 
 
 # Stage 5: FalkorDB write function
-def write_to_falkordb(entity_nodes, entity_edges):
+def write_to_falkordb(episode, entity_nodes, entity_edges, episodic_edges):
     """
-    Stage 5: Write EntityNode and EntityEdge objects to FalkorDB.
+    Stage 5: Write EpisodicNode, EntityNode, EntityEdge, and EpisodicEdge objects to FalkorDB.
 
     Returns: Write result dict (with UUIDs)
     """
@@ -171,8 +197,8 @@ def write_to_falkordb(entity_nodes, entity_edges):
         return {"error": "No entities to write"}
 
     try:
-        logger.info(f"Stage 5: Writing {len(entity_nodes)} nodes and {len(entity_edges)} edges to FalkorDB")
-        result = write_entities_and_edges(entity_nodes, entity_edges)
+        logger.info(f"Stage 5: Writing episode {episode.uuid}, {len(entity_nodes)} nodes, {len(entity_edges)} entity edges, {len(episodic_edges)} episodic edges to FalkorDB")
+        result = write_entities_and_edges(episode, entity_nodes, entity_edges, episodic_edges)
         return result
     except Exception as e:
         import traceback
@@ -185,21 +211,22 @@ def write_to_falkordb(entity_nodes, entity_edges):
 # Stage 6: Graphviz rendering function
 def render_verification_graph(write_result):
     """
-    Stage 6: Verify FalkorDB write by querying and rendering graph.
+    Stage 6: Verify FalkorDB write by querying and rendering graph with episode.
 
     Returns: Path to PNG file, or None on error
     """
     if not write_result or "error" in write_result:
         return None
 
-    # Load entities from DB using UUIDs
+    # Load episode and entities from DB using UUIDs
+    episode_uuid = write_result.get("episode_uuid")
     node_uuids = write_result.get("node_uuids", [])
     edge_uuids = write_result.get("edge_uuids", [])
 
     if not node_uuids:
         return None
 
-    db_data = load_written_entities(node_uuids, edge_uuids)
+    db_data = load_written_entities(node_uuids, edge_uuids, episode_uuid)
     return render_graph_from_db(db_data)
 
 
@@ -268,8 +295,10 @@ with gr.Blocks(title="Phase 1 PoC: Graphiti Pipeline") as app:
     entity_names_state = gr.State([])
     facts_state = gr.State(None)
     relationships_state = gr.State(None)
+    episode_state = gr.State(None)             # EpisodicNode
     entity_nodes_state = gr.State([])
     entity_edges_state = gr.State([])
+    episodic_edges_state = gr.State([])        # EpisodicEdge list
     write_result_state = gr.State(None)
 
     # Event handlers
@@ -315,19 +344,33 @@ with gr.Blocks(title="Phase 1 PoC: Graphiti Pipeline") as app:
     )
 
     # Stage 4: Build Graphiti Objects
-    def on_build_graphiti(entity_names, relationships):
-        nodes, edges, graphiti_json = build_graphiti_objects(entity_names, relationships)
-        return graphiti_json, nodes, edges
+    def on_build_graphiti(text, entity_names, relationships):
+        from datetime import datetime
+        reference_time = datetime.now()
+
+        episode, nodes, entity_edges, episodic_edges, json_output = build_graphiti_objects(
+            input_text=text,
+            entity_names=entity_names,
+            relationships=relationships,
+            reference_time=reference_time
+        )
+        return json_output, episode, nodes, entity_edges, episodic_edges
 
     build_graphiti_btn.click(
         on_build_graphiti,
-        inputs=[entity_names_state, relationships_state],
-        outputs=[graphiti_output, entity_nodes_state, entity_edges_state]
+        inputs=[input_text, entity_names_state, relationships_state],
+        outputs=[
+            graphiti_output,
+            episode_state,           # New
+            entity_nodes_state,
+            entity_edges_state,
+            episodic_edges_state     # New
+        ]
     )
 
     # Stage 5: Write to FalkorDB (triggers Stage 6)
-    def on_write_falkor(entity_nodes, entity_edges):
-        result = write_to_falkordb(entity_nodes, entity_edges)
+    def on_write_falkor(episode, entity_nodes, entity_edges, episodic_edges):
+        result = write_to_falkordb(episode, entity_nodes, entity_edges, episodic_edges)
         # Update database stats
         new_stats = str(get_db_stats())
         # Render verification graph
@@ -336,7 +379,7 @@ with gr.Blocks(title="Phase 1 PoC: Graphiti Pipeline") as app:
 
     write_falkor_btn.click(
         on_write_falkor,
-        inputs=[entity_nodes_state, entity_edges_state],
+        inputs=[episode_state, entity_nodes_state, entity_edges_state, episodic_edges_state],
         outputs=[write_output, write_result_state, db_stats_display, graphviz_output]
     )
 
