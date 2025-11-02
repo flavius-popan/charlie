@@ -28,10 +28,19 @@ def load_written_entities(node_uuids: list[str], edge_uuids: list[str]) -> dict[
             node_query = f"""
             MATCH (n:Entity)
             WHERE n.uuid IN [{uuid_list}]
-            RETURN n.uuid AS uuid, n.name AS name
+            RETURN n.uuid, n.name
             """
             node_result = graph.query(node_query)
-            nodes = node_result.result_set or []
+            # FalkorDB returns data in result.statistics, not result_set
+            # Format: [[[type_code, value], [type_code, value]], ...] where each inner list is a row
+            if node_result.statistics:
+                for row in node_result.statistics:
+                    # Each row is [[type, uuid], [type, name]]
+                    # Extract the actual values (second element of each pair)
+                    uuid = row[0][1] if len(row) > 0 else None
+                    name = row[1][1] if len(row) > 1 else None
+                    if uuid is not None and name is not None:
+                        nodes.append((uuid, name))
 
         edges = []
         if edge_uuids:
@@ -40,10 +49,19 @@ def load_written_entities(node_uuids: list[str], edge_uuids: list[str]) -> dict[
             edge_query = f"""
             MATCH (source:Entity)-[r:RELATES_TO]->(target:Entity)
             WHERE r.uuid IN [{uuid_list}]
-            RETURN r.uuid AS uuid, source.uuid AS source_uuid, target.uuid AS target_uuid, r.name AS name
+            RETURN r.uuid, source.uuid, target.uuid, r.name
             """
             edge_result = graph.query(edge_query)
-            edges = edge_result.result_set or []
+            # FalkorDB returns data in result.statistics, not result_set
+            if edge_result.statistics:
+                for row in edge_result.statistics:
+                    # Each row is [[type, r.uuid], [type, source.uuid], [type, target.uuid], [type, r.name]]
+                    edge_uuid = row[0][1] if len(row) > 0 else None
+                    source_uuid = row[1][1] if len(row) > 1 else None
+                    target_uuid = row[2][1] if len(row) > 2 else None
+                    edge_name = row[3][1] if len(row) > 3 else None
+                    if all(v is not None for v in [edge_uuid, source_uuid, target_uuid, edge_name]):
+                        edges.append((edge_uuid, source_uuid, target_uuid, edge_name))
 
         return {
             "nodes": nodes,  # List[tuple]: [(uuid, name), ...]
