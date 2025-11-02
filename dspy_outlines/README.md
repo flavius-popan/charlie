@@ -80,6 +80,40 @@ print(result.answer.response)
 print(adapter.metrics)  # {'chat_success': 0, 'json_success': 1, ...}
 ```
 
+## Generation Parameters
+
+Control sampling behavior using the `generation_config` parameter:
+
+```python
+from dspy_outlines import OutlinesLM
+
+# Deterministic generation (default)
+lm = OutlinesLM(generation_config={"temp": 0.0})
+
+# Creative generation
+lm = OutlinesLM(generation_config={
+    "temp": 0.7,      # Higher = more random
+    "top_p": 0.9,     # Nucleus sampling
+    "min_p": 0.05,    # Minimum token probability
+})
+
+dspy.configure(lm=lm, adapter=OutlinesAdapter())
+```
+
+**Supported Parameters:**
+- `temp` (float): Sampling temperature (default: 0.0 for greedy decoding)
+- `top_p` (float): Nucleus sampling threshold (default: 1.0)
+- `min_p` (float): Minimum token probability (default: 0.0)
+- `min_tokens_to_keep` (int): Minimum tokens in sampling pool (default: 1)
+- `top_k` (int): Top-k sampling, 0 to disable (default: 0)
+
+**When to adjust:**
+- **temp=0.0**: Fully deterministic, best for reproducible pipelines
+- **temp=0.7-1.0**: Balanced creativity and coherence
+- **temp >1.0**: High variance, useful for testing robustness
+
+Parameters apply to **both** constrained and unconstrained generation paths.
+
 ## Direct Outlines Access
 
 For non-Pydantic constraints (multiple choice, regex), use direct model access:

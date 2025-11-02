@@ -97,7 +97,14 @@ write_result_state = gr.State(None)     # Write confirmation with UUIDs
 
 **Model Parameter Configuration** (centralized in `settings.py`):
 
-Assumes `parameter_control_feature.md` has been implemented, enabling `OutlinesLM(generation_config=dict)`. Tune values in `settings.MODEL_CONFIG`.
+The parameter control feature is now implemented in `OutlinesLM`, enabling `OutlinesLM(generation_config=dict)`. Tune values in `settings.MODEL_CONFIG`.
+
+**Supported Parameters** (passed to MLX-LM sampler):
+- `temp` (float): Sampling temperature (0.0 = greedy/deterministic, higher = more random)
+- `top_p` (float): Nucleus sampling threshold (0.0-1.0)
+- `min_p` (float): Minimum token probability threshold
+- `min_tokens_to_keep` (int): Minimum number of tokens to keep in sampling
+- `top_k` (int): Top-k sampling (0 = disabled)
 
 **Parameter Tuning Workflow**:
 1. Edit `MODEL_CONFIG` values in `settings.py`
@@ -105,6 +112,8 @@ Assumes `parameter_control_feature.md` has been implemented, enabling `OutlinesL
 3. Test extraction with same input text
 4. Compare fact/relationship quality
 5. Iterate to find optimal parameters
+
+**Note**: Default is `temp=0.0` for fully deterministic output. For the PoC, you may want to experiment with `temp=0.7` or higher to observe variance in extraction quality.
 
 **DSPy/Outlines Integration**:
 - Reuse the existing LM/adapter stack from `dspy_outlines.lm` and `dspy_outlines.adapter` (no new configuration layers).
@@ -138,10 +147,12 @@ GRAPH_NAME = "phase1_poc"
 GROUP_ID = "phase1-poc"
 
 # Model generation parameters (edit and restart to change)
+# Supported: temp, top_p, min_p, min_tokens_to_keep, top_k
+# Default (temp=0.0) is fully deterministic - use higher temp for more variance
 MODEL_CONFIG = {
-    "temp": 0.7,
-    "top_p": 0.9,
-    "repetition_penalty": 1.1,
+    "temp": 0.0,  # Start deterministic, increase to 0.7+ to experiment
+    "top_p": 1.0,
+    "min_p": 0.0,
 }
 ```
 
@@ -152,9 +163,9 @@ from settings import DB_PATH, GRAPH_NAME, GROUP_ID, MODEL_CONFIG
 
 ## Prerequisites
 
-**Parameter Control Feature**: Before implementing this PoC, complete the feature specified in `parameter_control_feature.md` (estimated 30 minutes). This adds `generation_config` parameter support to `OutlinesLM`.
+**Parameter Control Feature**: ✅ IMPLEMENTED - `OutlinesLM` now supports `generation_config` parameter for controlling sampling behavior (temp, top_p, min_p, top_k, min_tokens_to_keep).
 
-Without this feature: Remove `generation_config=MODEL_CONFIG` from DSPy configuration and use OutlinesLM defaults.
+See `dspy_outlines/lm.py:63-79` for implementation details and `tests/test_parameter_control.py` for usage examples.
 
 ## Key Documents for Implementation
 
@@ -401,14 +412,14 @@ from dspy_outlines.adapter import OutlinesAdapter
 from dspy_outlines.lm import OutlinesLM
 
 # Configure DSPy once at module level - models load immediately
-# Pass MODEL_CONFIG (defined above) to control generation parameters
+# Pass MODEL_CONFIG (defined in settings.py) to control generation parameters
 dspy.settings.configure(
     adapter=OutlinesAdapter(),
     lm=OutlinesLM(generation_config=MODEL_CONFIG),
 )
 ```
 
-**Note**: Requires `parameter_control_feature.md` implementation. Without it, remove `generation_config` parameter and use defaults.
+**Note**: The `generation_config` parameter controls sampling behavior. Default is deterministic (`temp=0.0`). Modify `settings.MODEL_CONFIG` and restart the app to experiment with different generation parameters.
 
 **Usage Pattern** (within Gradio event handlers):
 ```python

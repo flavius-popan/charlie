@@ -60,13 +60,22 @@ class OutlinesLM(dspy.BaseLM):
     - MLX's efficient local inference
     """
 
-    def __init__(self, model_path: str = None, *, enable_prompt_cache: bool = False):
+    def __init__(
+        self,
+        model_path: str = None,
+        *,
+        enable_prompt_cache: bool = False,
+        generation_config: dict = None
+    ):
         """
         Initialize hybrid LM.
 
         Args:
             model_path: Path to MLX model (uses default if None)
             enable_prompt_cache: Whether to build an MLX prompt cache (off by default)
+            generation_config: Dict of MLX-LM sampling parameters.
+                              Supported: temp, top_p, min_p, min_tokens_to_keep, top_k
+                              Defaults to deterministic settings (temp=0.0) if None.
         """
         # Import here to get default path
         from .mlx_loader import DEFAULT_MODEL_PATH
@@ -93,6 +102,15 @@ class OutlinesLM(dspy.BaseLM):
         else:
             logger.info("OutlinesLM initialized with prompt caching enabled")
         logger.info("OutlinesLM initialized with Outlines+MLX backend")
+
+        # Store generation config (defaults for deterministic extraction)
+        # Supported params: temp, top_p, min_p, min_tokens_to_keep, top_k
+        self.generation_config = generation_config or {
+            "temp": 0.0,  # Greedy decoding for full determinism
+            "top_p": 1.0,
+            "min_p": 0.0,
+        }
+        logger.info(f"OutlinesLM generation config: {self.generation_config}")
 
     def forward(self, prompt=None, messages=None, **kwargs):
         """
@@ -127,11 +145,25 @@ class OutlinesLM(dspy.BaseLM):
             f"cache_size={cache_size} tokens"
         )
 
+        # Create sampler from generation config (outside lock - can run concurrently)
+        from mlx_lm.sample_utils import make_sampler
+        sampler = make_sampler(
+            temp=self.generation_config.get("temp", 0.0),
+            top_p=self.generation_config.get("top_p", 1.0),
+            min_p=self.generation_config.get("min_p", 0.0),
+            min_tokens_to_keep=self.generation_config.get("min_tokens_to_keep", 1),
+            top_k=self.generation_config.get("top_k", 0),
+        )
+
         # Lock MLX model access to prevent Metal command buffer race conditions
         with MLX_LOCK:
-            outlines_kwargs = {"max_tokens": max_tokens}
+            outlines_kwargs = {"max_tokens": max_tokens, "sampler": sampler}
             if self.prompt_cache is not None:
                 outlines_kwargs["prompt_cache"] = self.prompt_cache
+
+            # Note: repetition_penalty must be applied via logits_processor, not sampler
+            # For now, we only support temp/top_p/min_p/top_k via sampler
+            # TODO: Add repetition_penalty support via logits_processor if needed
 
             if constraint:
                 # Use Outlines wrapper for constrained generation
@@ -142,14 +174,11 @@ class OutlinesLM(dspy.BaseLM):
                 )
             else:
                 # Use raw MLX for unconstrained generation
-                generate_kwargs = {"verbose": False}
-                if self.prompt_cache is not None:
-                    generate_kwargs["prompt_cache"] = self.prompt_cache
+                generate_kwargs = {"verbose": False, **outlines_kwargs}
                 completion = mlx_lm.generate(
                     self.raw_mlx_model,
                     self.tokenizer,
                     formatted_prompt,
-                    max_tokens=max_tokens,
                     **generate_kwargs,
                 )
 
