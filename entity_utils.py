@@ -1,10 +1,13 @@
 """Entity processing utilities using Graphiti conventions."""
+import logging
 from graphiti_core.utils.maintenance.dedup_helpers import _normalize_string_exact
 from graphiti_core.nodes import EntityNode
 from graphiti_core.edges import EntityEdge
 from graphiti_core.utils.datetime_utils import utc_now
 from models import Relationships
 from settings import GROUP_ID
+
+logger = logging.getLogger(__name__)
 
 
 def normalize_entity_name(name: str) -> str:
@@ -84,7 +87,7 @@ def build_entity_edges(
         target_node = entity_map.get(normalize_entity_name(rel.target))
 
         if not source_node or not target_node:
-            print(f"Warning: Skipping relationship {rel.source} -> {rel.target} (entity not found)")
+            logger.warning(f"Skipping relationship {rel.source} -> {rel.target} (entity not found)")
             continue
 
         edge = EntityEdge(

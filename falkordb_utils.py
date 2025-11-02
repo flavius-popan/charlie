@@ -18,11 +18,18 @@ db = FalkorDB(dbfilename=str(DB_PATH))
 # Select the graph to use (creates if doesn't exist)
 graph = db.select_graph(GRAPH_NAME)
 
+# Track database cleanup state
+_db_closed = False
+
 
 def cleanup_db():
     """Clean shutdown of FalkorDB - CRITICAL before exit."""
+    global _db_closed
+    if _db_closed:
+        return
     try:
         db.close()
+        _db_closed = True
         print("✓ FalkorDB closed successfully")
     except Exception as e:
         print(f"⚠ Warning: Failed to close FalkorDB: {e}")
@@ -81,6 +88,11 @@ def write_entities_and_edges(
 
     Error handling: Exceptions propagate to caller (fail-fast).
     """
+    # Validate input
+    if not entity_nodes:
+        logging.warning("write_entities_and_edges called with empty entity_nodes list")
+        return {"nodes_created": 0, "edges_created": 0, "node_uuids": [], "edge_uuids": []}
+
     # 1. Convert EntityNode objects to Cypher-compatible dicts
     node_dicts = []
     for node in entity_nodes:
