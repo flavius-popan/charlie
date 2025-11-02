@@ -19,23 +19,35 @@ def load_written_entities(node_uuids: list[str], edge_uuids: list[str]) -> dict[
         dict with 'nodes' and 'edges' result sets, or 'error' key on failure
     """
     try:
-        node_query = """
-        UNWIND $uuids AS uuid
-        MATCH (n:Entity {uuid: uuid})
-        RETURN n.uuid AS uuid, n.name AS name
-        """
-        node_result = graph.query(node_query, {"uuids": node_uuids})
+        # FalkorDBLite doesn't support parameterized queries
+        # Build IN clause with literal UUID values
+        nodes = []
+        if node_uuids:
+            # Quote each UUID for IN clause
+            uuid_list = ', '.join([f"'{uuid}'" for uuid in node_uuids])
+            node_query = f"""
+            MATCH (n:Entity)
+            WHERE n.uuid IN [{uuid_list}]
+            RETURN n.uuid AS uuid, n.name AS name
+            """
+            node_result = graph.query(node_query)
+            nodes = node_result.result_set or []
 
-        edge_query = """
-        UNWIND $uuids AS uuid
-        MATCH (source:Entity)-[r:RELATES_TO {uuid: uuid}]->(target:Entity)
-        RETURN r.uuid AS uuid, source.uuid AS source_uuid, target.uuid AS target_uuid, r.name AS name
-        """
-        edge_result = graph.query(edge_query, {"uuids": edge_uuids})
+        edges = []
+        if edge_uuids:
+            # Quote each UUID for IN clause
+            uuid_list = ', '.join([f"'{uuid}'" for uuid in edge_uuids])
+            edge_query = f"""
+            MATCH (source:Entity)-[r:RELATES_TO]->(target:Entity)
+            WHERE r.uuid IN [{uuid_list}]
+            RETURN r.uuid AS uuid, source.uuid AS source_uuid, target.uuid AS target_uuid, r.name AS name
+            """
+            edge_result = graph.query(edge_query)
+            edges = edge_result.result_set or []
 
         return {
-            "nodes": node_result.result_set or [],  # List[tuple]: [(uuid, name), ...]
-            "edges": edge_result.result_set or [],  # List[tuple]: [(uuid, src_uuid, tgt_uuid, name), ...]
+            "nodes": nodes,  # List[tuple]: [(uuid, name), ...]
+            "edges": edges,  # List[tuple]: [(uuid, src_uuid, tgt_uuid, name), ...]
         }
     except Exception as exc:
         logging.exception("Failed to verify FalkorDBLite write")
