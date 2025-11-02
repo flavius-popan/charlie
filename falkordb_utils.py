@@ -4,6 +4,10 @@ import logging
 from pathlib import Path
 from redislite.falkordb_client import FalkorDB
 from settings import DB_PATH, GRAPH_NAME
+from graphiti_core.nodes import EntityNode
+from graphiti_core.edges import EntityEdge
+from graphiti_core.utils.datetime_utils import convert_datetimes_to_strings
+from typing import Any
 
 # Create data directory
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -59,3 +63,104 @@ def reset_database() -> str:
     """
     graph.query("MATCH (n) DETACH DELETE n")
     return "Database cleared successfully"
+
+
+def write_entities_and_edges(
+    entity_nodes: list[EntityNode],
+    entity_edges: list[EntityEdge]
+) -> dict[str, Any]:
+    """
+    Write entities and relationships to FalkorDB using Graphiti utilities.
+
+    Args:
+        entity_nodes: List of EntityNode objects
+        entity_edges: List of EntityEdge objects
+
+    Returns:
+        dict with counts and UUIDs of created nodes/edges
+
+    Error handling: Exceptions propagate to caller (fail-fast).
+    """
+    # 1. Convert EntityNode objects to Cypher-compatible dicts
+    node_dicts = []
+    for node in entity_nodes:
+        node_dict = {
+            "uuid": node.uuid,
+            "name": node.name,
+            "group_id": node.group_id,
+            "created_at": node.created_at,
+            "labels": node.labels or ["Entity"],
+            "name_embedding": node.name_embedding or [],
+            "summary": node.summary,
+            "attributes": node.attributes or {},
+        }
+        # Use Graphiti's utility to convert datetimes to ISO strings
+        node_dicts.append(convert_datetimes_to_strings(node_dict))
+
+    # 2. Write nodes (one query with UNWIND)
+    if node_dicts:
+        node_query = """
+        UNWIND $nodes AS node
+        MERGE (n:Entity {uuid: node.uuid})
+        SET n:Entity
+        SET n.name = node.name,
+            n.group_id = node.group_id,
+            n.created_at = node.created_at,
+            n.labels = node.labels,
+            n.summary = node.summary,
+            n.attributes = node.attributes
+        SET n.name_embedding = vecf32(node.name_embedding)
+        RETURN n.uuid AS uuid
+        """
+        result = graph.query(node_query, {"nodes": node_dicts})
+        logging.info(f"Created {len(result.result_set)} nodes")
+
+    # 3. Convert EntityEdge objects to Cypher-compatible dicts
+    edge_dicts = []
+    for edge in entity_edges:
+        edge_dict = {
+            "uuid": edge.uuid,
+            "source_uuid": edge.source_node_uuid,
+            "target_uuid": edge.target_node_uuid,
+            "name": edge.name,
+            "fact": edge.fact,
+            "group_id": edge.group_id,
+            "created_at": edge.created_at,
+            "fact_embedding": edge.fact_embedding or [],
+            "episodes": edge.episodes or [],
+            "expired_at": edge.expired_at,
+            "valid_at": edge.valid_at,
+            "invalid_at": edge.invalid_at,
+            "attributes": edge.attributes or {},
+        }
+        # Use Graphiti's utility to convert datetimes to ISO strings
+        edge_dicts.append(convert_datetimes_to_strings(edge_dict))
+
+    # 4. Write edges (one query with UNWIND)
+    if edge_dicts:
+        edge_query = """
+        UNWIND $edges AS edge
+        MATCH (source:Entity {uuid: edge.source_uuid})
+        MATCH (target:Entity {uuid: edge.target_uuid})
+        MERGE (source)-[r:RELATES_TO {uuid: edge.uuid}]->(target)
+        SET r.name = edge.name,
+            r.fact = edge.fact,
+            r.group_id = edge.group_id,
+            r.created_at = edge.created_at,
+            r.episodes = edge.episodes,
+            r.expired_at = edge.expired_at,
+            r.valid_at = edge.valid_at,
+            r.invalid_at = edge.invalid_at,
+            r.attributes = edge.attributes
+        SET r.fact_embedding = vecf32(edge.fact_embedding)
+        RETURN r.uuid AS uuid
+        """
+        result = graph.query(edge_query, {"edges": edge_dicts})
+        logging.info(f"Created {len(result.result_set)} edges")
+
+    return {
+        "nodes_created": len(node_dicts),
+        "edges_created": len(edge_dicts),
+        "node_uuids": [n["uuid"] for n in node_dicts],
+        "edge_uuids": [e["uuid"] for e in edge_dicts]
+    }
