@@ -1,4 +1,9 @@
 """Phase 1 PoC: Text → Graph in FalkorDBLite with Gradio UI."""
+import os
+# Fix tokenizers parallelism warning (must be set before importing transformers)
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
+import logging
 import gradio as gr
 import dspy
 from dspy_outlines.adapter import OutlinesAdapter
@@ -9,6 +14,16 @@ from distilbert_ner import predict_entities
 from entity_utils import deduplicate_entities, build_entity_nodes, build_entity_edges
 from signatures import FactExtractionSignature, RelationshipSignature
 from graphviz_utils import load_written_entities, render_graph_from_db
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+logger.info(f"Starting Graphiti PoC with MODEL_CONFIG: {MODEL_CONFIG}")
+logger.info(f"Database path: {DB_PATH}")
 
 # Configure DSPy once at module level
 dspy.settings.configure(
@@ -40,6 +55,8 @@ def process_ner(text: str, persons_only: bool):
     entity_names = [e["text"] for e in filtered]
     unique_names = deduplicate_entities(entity_names)
 
+    logger.info(f"Stage 1: Extracted {len(unique_names)} unique entities")
+
     # Format for display
     display = "\n".join(unique_names) if unique_names else "(no entities found)"
 
@@ -59,6 +76,8 @@ def extract_facts(text: str, entity_names: list[str]):
     try:
         fact_predictor = dspy.Predict(FactExtractionSignature)
         facts = fact_predictor(text=text, entities=entity_names).facts
+
+        logger.info(f"Stage 2: Extracted {len(facts.items)} facts")
 
         # Convert to JSON for display
         facts_json = {
@@ -90,6 +109,8 @@ def infer_relationships(text: str, facts, entity_names: list[str]):
             facts=facts,
             entities=entity_names
         ).relationships
+
+        logger.info(f"Stage 3: Inferred {len(relationships.items)} relationships")
 
         # Convert to JSON for display
         rels_json = {
@@ -126,6 +147,8 @@ def build_graphiti_objects(entity_names: list[str], relationships):
         # Build edges
         entity_edges = build_entity_edges(relationships, entity_map)
 
+        logger.info(f"Stage 4: Built {len(entity_nodes)} nodes and {len(entity_edges)} edges")
+
         # Convert to JSON for display
         graphiti_json = {
             "nodes": [n.model_dump() for n in entity_nodes],
@@ -148,6 +171,7 @@ def write_to_falkordb(entity_nodes, entity_edges):
         return {"error": "No entities to write"}
 
     try:
+        logger.info(f"Stage 5: Writing {len(entity_nodes)} nodes and {len(entity_edges)} edges to FalkorDB")
         result = write_entities_and_edges(entity_nodes, entity_edges)
         return result
     except Exception as e:
@@ -193,6 +217,15 @@ with gr.Blocks(title="Phase 1 PoC: Graphiti Pipeline") as app:
         )
         reset_btn = gr.Button("Reset Database", variant="stop")
 
+    # Example text section
+    gr.Markdown("### Example Text")
+    example_text = gr.Textbox(
+        value="Alice works at Microsoft in Seattle. She reports to Bob, who manages the engineering team.",
+        interactive=False,
+        show_label=False
+    )
+    load_example_btn = gr.Button("Load Example", size="sm")
+
     # Stage 0: Input
     gr.Markdown("## Stage 0: Input Text")
     input_text = gr.Textbox(
@@ -209,22 +242,22 @@ with gr.Blocks(title="Phase 1 PoC: Graphiti Pipeline") as app:
     # Stage 2: Facts
     gr.Markdown("## Stage 2: Fact Extraction")
     run_facts_btn = gr.Button("Run Facts", variant="primary")
-    facts_output = gr.JSON(label="Extracted Facts")
+    facts_output = gr.JSON(label="Extracted Facts (or error)")
 
     # Stage 3: Relationships
     gr.Markdown("## Stage 3: Relationship Inference")
     run_relationships_btn = gr.Button("Run Relationships", variant="primary")
-    relationships_output = gr.JSON(label="Inferred Relationships")
+    relationships_output = gr.JSON(label="Inferred Relationships (or error)")
 
     # Stage 4: Graphiti Objects
     gr.Markdown("## Stage 4: Build Graphiti Objects")
     build_graphiti_btn = gr.Button("Build Graphiti Objects", variant="primary")
-    graphiti_output = gr.JSON(label="EntityNode + EntityEdge Objects")
+    graphiti_output = gr.JSON(label="EntityNode + EntityEdge Objects (or error)")
 
     # Stage 5: FalkorDB Write
     gr.Markdown("## Stage 5: Write to FalkorDB")
     write_falkor_btn = gr.Button("Write to Falkor", variant="primary")
-    write_output = gr.JSON(label="Write Confirmation")
+    write_output = gr.JSON(label="Write Confirmation (or error with traceback)")
 
     # Stage 6: Graphviz Preview
     gr.Markdown("## Stage 6: Graphviz Verification")
@@ -314,6 +347,15 @@ with gr.Blocks(title="Phase 1 PoC: Graphiti Pipeline") as app:
     reset_btn.click(
         on_reset_db,
         outputs=[db_stats_display]
+    )
+
+    # Load example handler
+    def on_load_example():
+        return example_text.value
+
+    load_example_btn.click(
+        on_load_example,
+        outputs=[input_text]
     )
 
 if __name__ == "__main__":
