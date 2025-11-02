@@ -8,6 +8,7 @@ from falkordb_utils import get_db_stats, reset_database, write_entities_and_edge
 from distilbert_ner import predict_entities
 from entity_utils import deduplicate_entities, build_entity_nodes, build_entity_edges
 from signatures import FactExtractionSignature, RelationshipSignature
+from graphviz_utils import load_written_entities, render_graph_from_db
 
 # Configure DSPy once at module level
 dspy.settings.configure(
@@ -157,6 +158,27 @@ def write_to_falkordb(entity_nodes, entity_edges):
         }
 
 
+# Stage 6: Graphviz rendering function
+def render_verification_graph(write_result):
+    """
+    Stage 6: Verify FalkorDB write by querying and rendering graph.
+
+    Returns: Path to PNG file, or None on error
+    """
+    if not write_result or "error" in write_result:
+        return None
+
+    # Load entities from DB using UUIDs
+    node_uuids = write_result.get("node_uuids", [])
+    edge_uuids = write_result.get("edge_uuids", [])
+
+    if not node_uuids:
+        return None
+
+    db_data = load_written_entities(node_uuids, edge_uuids)
+    return render_graph_from_db(db_data)
+
+
 # Build Gradio interface
 with gr.Blocks(title="Phase 1 PoC: Graphiti Pipeline") as app:
     gr.Markdown("# Phase 1 PoC: Text → Graph in FalkorDBLite")
@@ -270,17 +292,19 @@ with gr.Blocks(title="Phase 1 PoC: Graphiti Pipeline") as app:
         outputs=[graphiti_output, entity_nodes_state, entity_edges_state]
     )
 
-    # Stage 5: Write to FalkorDB
+    # Stage 5: Write to FalkorDB (triggers Stage 6)
     def on_write_falkor(entity_nodes, entity_edges):
         result = write_to_falkordb(entity_nodes, entity_edges)
         # Update database stats
         new_stats = str(get_db_stats())
-        return result, result, new_stats
+        # Render verification graph
+        graph_img = render_verification_graph(result)
+        return result, result, new_stats, graph_img
 
     write_falkor_btn.click(
         on_write_falkor,
         inputs=[entity_nodes_state, entity_edges_state],
-        outputs=[write_output, write_result_state, db_stats_display]
+        outputs=[write_output, write_result_state, db_stats_display, graphviz_output]
     )
 
     def on_reset_db():
