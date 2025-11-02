@@ -7,7 +7,7 @@ from settings import MODEL_CONFIG, DB_PATH
 from falkordb_utils import get_db_stats, reset_database
 from distilbert_ner import predict_entities
 from entity_utils import deduplicate_entities
-from signatures import FactExtractionSignature
+from signatures import FactExtractionSignature, RelationshipSignature
 
 # Configure DSPy once at module level
 dspy.settings.configure(
@@ -68,6 +68,42 @@ def extract_facts(text: str, entity_names: list[str]):
         }
 
         return facts, facts_json
+    except Exception as e:
+        return None, {"error": str(e)}
+
+
+# Stage 3: Relationship inference function
+def infer_relationships(text: str, facts, entity_names: list[str]):
+    """
+    Stage 3: Infer relationships using DSPy.
+
+    Returns: (Relationships object, JSON for display)
+    """
+    if not text.strip() or not facts or not entity_names:
+        return None, {"error": "Need text, facts, and entities"}
+
+    try:
+        rel_predictor = dspy.Predict(RelationshipSignature)
+        relationships = rel_predictor(
+            text=text,
+            facts=facts,
+            entities=entity_names
+        ).relationships
+
+        # Convert to JSON for display
+        rels_json = {
+            "items": [
+                {
+                    "source": r.source,
+                    "target": r.target,
+                    "relation": r.relation,
+                    "context": r.context
+                }
+                for r in relationships.items
+            ]
+        }
+
+        return relationships, rels_json
     except Exception as e:
         return None, {"error": str(e)}
 
@@ -161,6 +197,17 @@ with gr.Blocks(title="Phase 1 PoC: Graphiti Pipeline") as app:
         on_run_facts,
         inputs=[input_text, entity_names_state],
         outputs=[facts_output, facts_state]
+    )
+
+    # Stage 3: Relationship Inference
+    def on_run_relationships(text, facts, entity_names):
+        relationships, rels_json = infer_relationships(text, facts, entity_names)
+        return rels_json, relationships
+
+    run_relationships_btn.click(
+        on_run_relationships,
+        inputs=[input_text, facts_state, entity_names_state],
+        outputs=[relationships_output, relationships_state]
     )
 
     def on_reset_db():
