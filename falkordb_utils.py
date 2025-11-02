@@ -1,5 +1,6 @@
 """FalkorDB initialization and utility functions."""
 import atexit
+import json
 import logging
 from pathlib import Path
 from redislite.falkordb_client import FalkorDB
@@ -37,6 +38,37 @@ def cleanup_db():
 
 # Register cleanup handler for proper shutdown
 atexit.register(cleanup_db)
+
+
+def to_cypher_literal(value: Any) -> str:
+    """
+    Convert a Python value to a Cypher literal string.
+
+    Note: FalkorDBLite (embedded version) does not support parameterized queries,
+    so we must build queries with literal values.
+
+    Args:
+        value: Python value to convert (str, int, float, bool, None, list, dict)
+
+    Returns:
+        Cypher-compatible literal string
+    """
+    if value is None:
+        return "null"
+    elif isinstance(value, bool):
+        return "true" if value else "false"
+    elif isinstance(value, (int, float)):
+        return str(value)
+    elif isinstance(value, str):
+        # Escape single quotes and wrap in single quotes
+        escaped = value.replace("'", "\\'")
+        return f"'{escaped}'"
+    elif isinstance(value, (list, dict)):
+        # Arrays and objects use JSON format
+        return json.dumps(value)
+    else:
+        # Fallback to JSON encoding
+        return json.dumps(value)
 
 
 def get_db_stats() -> dict[str, int]:
@@ -109,23 +141,42 @@ def write_entities_and_edges(
         # Use Graphiti's utility to convert datetimes to ISO strings
         node_dicts.append(convert_datetimes_to_strings(node_dict))
 
-    # 2. Write nodes (one query with UNWIND)
+    # 2. Write nodes (individual queries - FalkorDBLite doesn't support parameters)
+    nodes_created = 0
     if node_dicts:
-        node_query = """
-        UNWIND $nodes AS node
-        MERGE (n:Entity {uuid: node.uuid})
-        SET n:Entity
-        SET n.name = node.name,
-            n.group_id = node.group_id,
-            n.created_at = node.created_at,
-            n.labels = node.labels,
-            n.summary = node.summary,
-            n.attributes = node.attributes
-        SET n.name_embedding = vecf32(node.name_embedding)
-        RETURN n.uuid AS uuid
-        """
-        result = graph.query(node_query, {"nodes": node_dicts})
-        logging.info(f"Created {len(result.result_set)} nodes")
+        for node in node_dicts:
+            # Build property assignments with literal values
+            props = {
+                'uuid': node['uuid'],
+                'name': node['name'],
+                'group_id': node['group_id'],
+                'created_at': node['created_at'],
+                'labels': node['labels'],
+                'summary': node['summary'],
+                'attributes': node['attributes']
+            }
+
+            # Build SET clauses for properties
+            set_clause = ', '.join([
+                f"n.{key} = {to_cypher_literal(value)}"
+                for key, value in props.items()
+            ])
+
+            # Build embedding SET clause separately (uses vecf32 function)
+            embedding_literal = json.dumps(node['name_embedding'])
+
+            node_query = f"""
+            MERGE (n:Entity {{uuid: {to_cypher_literal(node['uuid'])}}})
+            SET {set_clause}
+            SET n.name_embedding = vecf32({embedding_literal})
+            RETURN n.uuid AS uuid
+            """
+
+            result = graph.query(node_query)
+            if result.result_set:
+                nodes_created += 1
+
+        logging.info(f"Created {nodes_created} nodes")
 
     # 3. Convert EntityEdge objects to Cypher-compatible dicts
     edge_dicts = []
@@ -148,27 +199,47 @@ def write_entities_and_edges(
         # Use Graphiti's utility to convert datetimes to ISO strings
         edge_dicts.append(convert_datetimes_to_strings(edge_dict))
 
-    # 4. Write edges (one query with UNWIND)
+    # 4. Write edges (individual queries - FalkorDBLite doesn't support parameters)
+    edges_created = 0
     if edge_dicts:
-        edge_query = """
-        UNWIND $edges AS edge
-        MATCH (source:Entity {uuid: edge.source_uuid})
-        MATCH (target:Entity {uuid: edge.target_uuid})
-        MERGE (source)-[r:RELATES_TO {uuid: edge.uuid}]->(target)
-        SET r.name = edge.name,
-            r.fact = edge.fact,
-            r.group_id = edge.group_id,
-            r.created_at = edge.created_at,
-            r.episodes = edge.episodes,
-            r.expired_at = edge.expired_at,
-            r.valid_at = edge.valid_at,
-            r.invalid_at = edge.invalid_at,
-            r.attributes = edge.attributes
-        SET r.fact_embedding = vecf32(edge.fact_embedding)
-        RETURN r.uuid AS uuid
-        """
-        result = graph.query(edge_query, {"edges": edge_dicts})
-        logging.info(f"Created {len(result.result_set)} edges")
+        for edge in edge_dicts:
+            # Build property assignments with literal values
+            props = {
+                'uuid': edge['uuid'],
+                'name': edge['name'],
+                'fact': edge['fact'],
+                'group_id': edge['group_id'],
+                'created_at': edge['created_at'],
+                'episodes': edge['episodes'],
+                'expired_at': edge['expired_at'],
+                'valid_at': edge['valid_at'],
+                'invalid_at': edge['invalid_at'],
+                'attributes': edge['attributes']
+            }
+
+            # Build SET clauses for properties
+            set_clause = ', '.join([
+                f"r.{key} = {to_cypher_literal(value)}"
+                for key, value in props.items()
+            ])
+
+            # Build embedding SET clause separately (uses vecf32 function)
+            embedding_literal = json.dumps(edge['fact_embedding'])
+
+            edge_query = f"""
+            MATCH (source:Entity {{uuid: {to_cypher_literal(edge['source_uuid'])}}})
+            MATCH (target:Entity {{uuid: {to_cypher_literal(edge['target_uuid'])}}})
+            MERGE (source)-[r:RELATES_TO {{uuid: {to_cypher_literal(edge['uuid'])}}}]->(target)
+            SET {set_clause}
+            SET r.fact_embedding = vecf32({embedding_literal})
+            RETURN r.uuid AS uuid
+            """
+
+            result = graph.query(edge_query)
+            if result.result_set:
+                edges_created += 1
+
+        logging.info(f"Created {edges_created} edges")
 
     return {
         "nodes_created": len(node_dicts),
