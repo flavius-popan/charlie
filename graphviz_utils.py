@@ -53,6 +53,9 @@ def load_written_entities(node_uuids: list[str], edge_uuids: list[str]) -> dict[
                     uuid = row[0][1] if len(row) > 0 else None
                     name = row[1][1] if len(row) > 1 else None
                     if uuid is not None and name is not None:
+                        # Decode bytes to strings
+                        uuid = uuid.decode('utf-8') if isinstance(uuid, bytes) else str(uuid)
+                        name = name.decode('utf-8') if isinstance(name, bytes) else str(name)
                         nodes.append((uuid, name))
 
         edges = []
@@ -74,6 +77,11 @@ def load_written_entities(node_uuids: list[str], edge_uuids: list[str]) -> dict[
                     target_uuid = row[2][1] if len(row) > 2 else None
                     edge_name = row[3][1] if len(row) > 3 else None
                     if all(v is not None for v in [edge_uuid, source_uuid, target_uuid, edge_name]):
+                        # Decode bytes to strings
+                        edge_uuid = edge_uuid.decode('utf-8') if isinstance(edge_uuid, bytes) else str(edge_uuid)
+                        source_uuid = source_uuid.decode('utf-8') if isinstance(source_uuid, bytes) else str(source_uuid)
+                        target_uuid = target_uuid.decode('utf-8') if isinstance(target_uuid, bytes) else str(target_uuid)
+                        edge_name = edge_name.decode('utf-8') if isinstance(edge_name, bytes) else str(edge_name)
                         edges.append((edge_uuid, source_uuid, target_uuid, edge_name))
 
         return {
@@ -134,9 +142,9 @@ def render_graph_from_db(db_data: dict[str, Any]) -> str | None:
         # Add nodes from result_set: [(uuid, name), ...]
         for row in db_data["nodes"]:
             uuid, name = row
-            # Convert to string (FalkorDB may return as int/bytes)
-            uuid = str(uuid)
-            name = str(name) if name else ""
+            # Decode bytes to strings (FalkorDB returns bytes)
+            uuid = uuid.decode('utf-8') if isinstance(uuid, bytes) else str(uuid)
+            name = name.decode('utf-8') if isinstance(name, bytes) else str(name) if name else ""
 
             # Color logic: highlight "author" or "I"
             normalized = name.lower()
@@ -152,11 +160,11 @@ def render_graph_from_db(db_data: dict[str, Any]) -> str | None:
         # Add edges from result_set: [(uuid, source_uuid, target_uuid, name), ...]
         for row in db_data["edges"]:
             edge_uuid, source_uuid, target_uuid, edge_name = row
-            # Convert to strings (FalkorDB may return as int/bytes)
-            edge_uuid = str(edge_uuid)
-            source_uuid = str(source_uuid)
-            target_uuid = str(target_uuid)
-            edge_name = str(edge_name) if edge_name else ""
+            # Decode bytes to strings (FalkorDB returns bytes)
+            edge_uuid = edge_uuid.decode('utf-8') if isinstance(edge_uuid, bytes) else str(edge_uuid)
+            source_uuid = source_uuid.decode('utf-8') if isinstance(source_uuid, bytes) else str(source_uuid)
+            target_uuid = target_uuid.decode('utf-8') if isinstance(target_uuid, bytes) else str(target_uuid)
+            edge_name = edge_name.decode('utf-8') if isinstance(edge_name, bytes) else str(edge_name) if edge_name else ""
             edge_label = edge_name.replace("_", " ")
 
             dot.edge(source_uuid,
