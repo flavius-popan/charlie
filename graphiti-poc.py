@@ -6,7 +6,7 @@ from dspy_outlines.lm import OutlinesLM
 from settings import MODEL_CONFIG, DB_PATH
 from falkordb_utils import get_db_stats, reset_database
 from distilbert_ner import predict_entities
-from entity_utils import deduplicate_entities
+from entity_utils import deduplicate_entities, build_entity_nodes, build_entity_edges
 from signatures import FactExtractionSignature, RelationshipSignature
 
 # Configure DSPy once at module level
@@ -106,6 +106,34 @@ def infer_relationships(text: str, facts, entity_names: list[str]):
         return relationships, rels_json
     except Exception as e:
         return None, {"error": str(e)}
+
+
+# Stage 4: Graphiti object builder function
+def build_graphiti_objects(entity_names: list[str], relationships):
+    """
+    Stage 4: Build EntityNode and EntityEdge objects.
+
+    Returns: (entity_nodes, entity_edges, JSON for display)
+    """
+    if not entity_names or not relationships:
+        return [], [], {"error": "Need entities and relationships"}
+
+    try:
+        # Build nodes and entity map
+        entity_nodes, entity_map = build_entity_nodes(entity_names)
+
+        # Build edges
+        entity_edges = build_entity_edges(relationships, entity_map)
+
+        # Convert to JSON for display
+        graphiti_json = {
+            "nodes": [n.model_dump() for n in entity_nodes],
+            "edges": [e.model_dump() for e in entity_edges]
+        }
+
+        return entity_nodes, entity_edges, graphiti_json
+    except Exception as e:
+        return [], [], {"error": str(e)}
 
 
 # Build Gradio interface
@@ -208,6 +236,17 @@ with gr.Blocks(title="Phase 1 PoC: Graphiti Pipeline") as app:
         on_run_relationships,
         inputs=[input_text, facts_state, entity_names_state],
         outputs=[relationships_output, relationships_state]
+    )
+
+    # Stage 4: Build Graphiti Objects
+    def on_build_graphiti(entity_names, relationships):
+        nodes, edges, graphiti_json = build_graphiti_objects(entity_names, relationships)
+        return graphiti_json, nodes, edges
+
+    build_graphiti_btn.click(
+        on_build_graphiti,
+        inputs=[entity_names_state, relationships_state],
+        outputs=[graphiti_output, entity_nodes_state, entity_edges_state]
     )
 
     def on_reset_db():
