@@ -1,6 +1,6 @@
 # Graphiti Pipeline Parity Analysis Report
 
-**Generated**: 2025-02-15
+**Generated**: 2025-11-03
 **Graphiti-core Version**: 0.22.0
 **Analysis Scope**: Complete comparison of `graphiti_pipeline.py` against `graphiti_core.graphiti.add_episode()`
 
@@ -134,7 +134,7 @@ The custom `graphiti_pipeline.py` implementation achieves **high functional pari
 **What's Working**:
 - DSPy `FactExtractionSignature` extracts entity-specific facts (`graphiti_pipeline.py:188-209`)
 - DSPy `RelationshipSignature` infers relationships from facts and entity list (`graphiti_pipeline.py:229-252`)
-- ✅ **NEW**: `EntityEdgeDetectionSignature` adds an LLM-style verification pass prior to graph assembly (`graphiti_pipeline.py:260-283`, `972-1005`)
+- DSPy `EntityEdgeDetectionSignature` adds an LLM-style verification pass prior to graph assembly (`graphiti_pipeline.py:260-283`, `972-1005`)
 - Relationships are converted to `EntityEdge` objects with episode provenance tracking
 - Gradio UI exposes base, LLM, and merged relationship outputs for interactive debugging (`graphiti-poc.py`)
 
@@ -390,7 +390,7 @@ The custom `graphiti_pipeline.py` achieves **excellent functional parity** with 
 
 **Overall Grade**: **A (94%)** - Production-ready with consistent deduplication, contradiction handling, and configurable edge validation. Remaining gaps center on advanced LLM workflows.
 
-**Recent Improvements** (2025-02-15):
+**Recent Improvements** (2025-11-03):
 - ✅ Restored MinHash fuzzy dedup by importing `_minhash_signature`
 - ✅ Integrated `resolve_edge_contradictions()` for deterministic edge invalidation
 - ✅ Added DSPy-based `EntityEdgeDetectionSignature` with Gradio toggle for inspection
