@@ -285,36 +285,41 @@ These require LLM client or embedder, which the custom pipeline explicitly avoid
 
 ## Critical Gaps & Missing Features
 
-### High Impact Gaps:
+### High-Impact Gaps
 
-**1. Reflexion Loops** - graphiti-core uses self-correction for completeness
-- **Impact**: Custom pipeline may miss entities/relationships on first pass
-- **Recommendation**: Consider implementing DSPy reflexion module
+**1. Reflexion Loops for Extraction Completeness**
+- **Why it matters**: graphiti-core’s reflexion cycle lets the LLM critique and refine its own outputs, boosting recall on overlooked entities or relationships. Our pipeline currently runs a single-pass extraction, so missing an entity in the initial DSPy call means it never surfaces downstream.
+- **Desired behavior**: Layer a lightweight DSPy “self-check” signature that consumes the initial facts/relationships plus the episode text, emits questions or candidates for re-evaluation, and triggers a second extraction pass when gaps are detected.
+- **Risks without it**: Longer narratives or noisy transcripts will under-populate the graph relative to graphiti-core, forcing manual follow-up.
 
-**2. LLM-based Deduplication** - graphiti-core uses LLM to disambiguate similar entities
-- **Impact**: May create duplicate entities in rare edge cases where fuzzy matching isn't sufficient
-- **Status**: ✅ Fuzzy matching implemented as effective interim solution
+**2. LLM-assisted Deduplication for Ambiguous Entities**
+- **Why it matters**: Fuzzy MinHash catches near-identical names, but graphiti-core escalates borderline matches (“Bob Smith” vs “Robert J. Smith at Acme”) to an LLM that inspects surrounding context before merging. Without that step, we risk duplicate nodes that represent the same real-world entity.
+- **Desired behavior**: Introduce a DSPy-powered disambiguation signature that takes the candidate entity pair, their facts, and local context, then emits a merge/no-merge verdict with justification. Resolution decisions should be recorded alongside existing `dedupe_records` for auditability.
+- **Risks without it**: Knowledge graphs accumulate high-similarity duplicates that degrade search and ranking quality.
 
-**3. Custom Entity/Edge Types** - graphiti-core supports user-defined Pydantic schemas
-- **Impact**: Cannot customize entity classification or edge types
-- **Recommendation**: Add support for custom DSPy signatures per type
+**3. Custom Entity & Edge Types**
+- **Why it matters**: graphiti-core allows providers to define domain-specific Pydantic models (e.g., `Startup`, `FundingRound`, `ACQUISITION_EDGE`) that drive validation, attribute extraction, and UI rendering. Our pipeline emits only generic `Entity`/`RELATES_TO` records, limiting downstream expressiveness.
+- **Desired behavior**: Allow callers to register DSPy signatures per custom type. These signatures should validate schema-specific fields, emit labels/attributes, and influence relationship inference (e.g., `Investor -> Investment`).
+- **Risks without it**: Teams can’t encode domain knowledge locally, and parity with production deployments remains out of reach.
 
-### Medium Impact Gaps:
+### Medium-Impact Gaps
 
-**4. Episode Type Handling** - graphiti-core has different prompts for message/text/json
-- **Impact**: Single extraction approach may be suboptimal for all types
-- **Recommendation**: Add conditional DSPy signatures based on episode type
+**4. Episode-Type-Aware Extraction**
+- **Why it matters**: graphiti-core tunes prompts for `message`, `text`, and `json` sources. A Slack DM, long-form note, and structured incident report require different heuristics. Our single DSPy flow performs adequately for prose but under-leverages structured inputs.
+- **Desired behavior**: Branch on `EpisodeType` when invoking DSPy signatures—e.g., add a “message summarizer” that shortens conversational noise before NER, or parse JSON payloads directly into facts.
+- **Risks without it**: Message-heavy or semi-structured feeds will lag behind graphiti-core results, especially when blank lines, emojis, or key-value blobs are present.
 
-**5. Advanced Temporal Extraction** - graphiti-core parses dates from text
-- **Impact**: Missing precise temporal bounds
-- **Recommendation**: Consider DSPy temporal extraction signature
+**5. Temporal Extraction Signature**
+- **Why it matters**: graphiti-core pulls temporal hints (“since 2015”, “through Q4 last year”) into `valid_at`, `invalid_at`, and `expired_at`, enabling longitudinal analytics. We currently fall back to the episode’s reference time, erasing historical ordering and overwriting contradictory facts too aggressively.
+- **Desired behavior**: Add a DSPy `TemporalExtractionSignature` that reads the episode text + edge fact and returns structured bounds (absolute dates, relative offsets to `reference_time`, confidence flags). `_resolve_entity_edges()` should then merge these bounds before contradiction detection runs.
+- **Benefits**: Accurate timelines, better contradiction handling (e.g., auto-expiring “WORKS_AT Acme” when “left Acme in 2022” appears), and readiness for time-aware visualizations.
 
-### Low Impact Gaps (acceptable deviations):
+### Lower-Impact (Deferred) Items
 
-6. **Embeddings** - Explicitly deferred (awaiting Qwen embedder)
-7. **Reranking** - Explicitly deferred (awaiting cross-encoder)
-8. **Content Stripping** - Optional optimization
-9. **Community Updates** - Out of scope
+6. **Embeddings** – Remains blocked on shipping the local Qwen embedder; needed for vector search parity.
+7. **Reranking** – Deferred until a local cross-encoder is integrated; required for hybrid search quality.
+8. **Content Stripping** – Optional storage optimization (`store_raw_episode_content` flag).
+9. **Community Updates** – Out of scope for this MLX-first pipeline; depends on community graph features in graphiti-core.
 
 ---
 
@@ -342,23 +347,23 @@ These require LLM client or embedder, which the custom pipeline explicitly avoid
 
 ## Recommendations
 
-### Immediate Actions (High ROI, Low Effort):
+### Immediate Actions (High ROI, Low Effort)
 
-1. **Add regression coverage** for the MinHash fuzzy dedup path and contradiction invalidation so the new logic is protected against regressions.
-2. **Instrument relationship stages** to log base vs LLM edge counts, validating the effectiveness of `EntityEdgeDetectionSignature` in real runs.
-3. **Document the `llm_edge_detection_enabled` flag** in developer-facing docs/CLI help so operators know how to toggle the new stage.
+1. **Regression coverage for fuzzy/contradiction flows** – Add targeted tests that walk the MinHash path and the new contradiction invalidation branch so parity-critical behavior doesn’t regress during rapid iteration.
+2. **Relationship instrumentation** – Emit counters for DSPy vs LLM edge candidates and persist them in `PipelineArtifacts`. These metrics will guide signature tuning and quantify gains when reflexion or temporal extraction ships.
+3. **Surface configuration knobs** – Document `llm_edge_detection_enabled`, dedupe, attribute, and summary toggles in developer docs and CLI help to prevent silent drift between environments.
 
-### Near-Term Enhancements (Medium Effort):
+### Near-Term Enhancements (Medium Effort)
 
-5. **Add reflexion support** - Implement DSPy reflexion modules for entity/relationship completeness
-6. **Support custom entity types** - Allow user-defined Pydantic models and map to DSPy signatures
-7. **Enhance temporal extraction** - DSPy signature to parse dates from text
+4. **DSPy reflexion loop** – Implement the self-critique module described in “High-Impact Gap #1” so entity/relationship recall matches graphiti-core.
+5. **Custom schema support** – Introduce registration hooks + signatures for provider-defined entity/edge types, including validation and attribute hydration.
+6. **Temporal extraction signature** – Deliver the time-bound enrichment outlined earlier, feeding structured timestamps into `_resolve_entity_edges()` before contradiction resolution.
 
-### Long-Term (Defer):
+### Long-Term (Deferred)
 
-8. **Embedding integration** - After Qwen embedder implementation
-9. **Reranker integration** - After cross-encoder implementation
-10. **Community updates** - Out of current scope
+7. **Embedding integration** – Unblocked once the Qwen embedder lands; required for search parity.
+8. **Reranker integration** – Depends on a local cross-encoder; improves hybrid ranking fidelity.
+9. **Community updates** – Remains out of scope until community graph features are ported to this local stack.
 
 ---
 
