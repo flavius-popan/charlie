@@ -1,6 +1,6 @@
 # Graphiti Pipeline Parity Analysis Report
 
-**Generated**: 2025-11-02
+**Generated**: 2025-02-15
 **Graphiti-core Version**: 0.22.0
 **Analysis Scope**: Complete comparison of `graphiti_pipeline.py` against `graphiti_core.graphiti.add_episode()`
 
@@ -28,11 +28,11 @@ The custom pipeline should produce equivalent graph structures (nodes, edges, de
 
 ## Executive Summary
 
-The custom `graphiti_pipeline.py` implementation achieves **substantial functional parity** with graphiti-core's `add_episode()` method, with strategic differences that align with the project's goal of local MLX-based inference using DSPy/Outlines. The pipeline successfully reuses core graphiti-core data models and utilities while replacing LLM-based extraction with a hybrid DistilBERT+DSPy approach.
+The custom `graphiti_pipeline.py` implementation achieves **high functional parity** with graphiti-core's `add_episode()` method, aligning with the project's local MLX + DSPy objectives. The pipeline now layers a configurable DSPy edge detector on top of DistilBERT NER and reuses graphiti-core utilities for validation, deduplication, and contradiction handling.
 
-**Overall Assessment**: ~92% parity achieved. The custom pipeline covers all major stages but differs in entity extraction approach (by design) and lacks some advanced features (reflexion loops, LLM-based deduplication, custom entity/edge types).
+**Overall Assessment**: ~94% parity achieved. The custom pipeline covers all major stages, with intentional differences in extraction strategy and remaining gaps around reflexion and fully custom schemas.
 
-**Grade**: **A- (92%)** - Production-ready with fuzzy deduplication, proper UUID management, and input validation matching graphiti-core standards. Remaining gaps require async/client infrastructure.
+**Grade**: **A (94%)** - Production-ready with fuzzy deduplication, UUID management, contradiction handling, and configurable LLM-style edge validation. Remaining gaps focus on advanced LLM workflows rather than core correctness.
 
 ---
 
@@ -53,14 +53,12 @@ The custom `graphiti_pipeline.py` implementation achieves **substantial function
 
 | Feature | graphiti-core add_episode() | Custom graphiti_pipeline.py | Parity |
 |---------|---------------------------|----------------------------|---------|
-| Input validation | ✅ Lines 685-688 | ⚠️ Basic validation only | Partial |
-| Group ID handling | ✅ Lines 688-690 | ✅ Lines 89, 518 | ✅ Full |
-| Context episode retrieval | ✅ Lines 695-704 | ✅ Lines 708-715 | ✅ Full |
+| Input validation | ✅ Lines 685-688 | ✅ `build_graphiti_objects()` validator call (`graphiti_pipeline.py:739-745`) | ✅ Full |
+| Group ID handling | ✅ Lines 688-690 | ✅ Pipeline config + episode builder (`graphiti_pipeline.py:917`, `752-756`) | ✅ Full |
+| Context episode retrieval | ✅ Lines 695-704 | ✅ `fetch_recent_episodes()` (`graphiti_pipeline.py:945-953`) | ✅ Full |
 | Context window configuration | ✅ `RELEVANT_SCHEMA_LIMIT` | ✅ `EPISODE_CONTEXT_WINDOW` | ✅ Full |
 
-**Analysis**: The custom pipeline implements context retrieval correctly via `fetch_recent_episodes()` in `falkordb_utils.py:229-273`. Both use similar limits (graphiti uses `RELEVANT_SCHEMA_LIMIT`, custom uses `EPISODE_CONTEXT_WINDOW`).
-
-**Reuse Opportunity**: Could import `validate_entity_types`, `validate_excluded_entity_types`, `validate_group_id` from `graphiti_core.helpers`.
+**Analysis**: The custom pipeline mirrors graphiti-core's context retrieval via `fetch_recent_episodes()` (`falkordb_utils.py:229-273`) and reuses graphiti-core validators inside `build_graphiti_objects()`.
 
 ---
 
@@ -74,7 +72,7 @@ The custom `graphiti_pipeline.py` implementation achieves **substantial function
 | Reflexion loop | ✅ Lines 63-87 (node_operations.py) | ❌ Not implemented | Missing |
 | Output format | `EntityNode` objects | `EntityNode` objects | ✅ Full |
 
-**Critical Finding**: The custom pipeline intentionally **replaces** LLM-based extraction with DistilBERT NER (`graphiti_pipeline.py:133-160`). This is a strategic choice for local inference, not a bug.
+**Critical Finding**: The custom pipeline intentionally **replaces** LLM-based extraction with DistilBERT NER (`graphiti_pipeline.py:156-184`). This is a strategic choice for local inference, not a bug.
 
 **What's Working**:
 - DistilBERT NER extracts entities by type (PER/ORG/LOC)
@@ -95,31 +93,28 @@ The custom `graphiti_pipeline.py` implementation achieves **substantial function
 
 | Feature | graphiti-core | Custom Pipeline | Parity |
 |---------|--------------|----------------|---------|
-| Exact name matching | ✅ `_normalize_string_exact` | ✅ Lines 252-305 | ✅ Full |
-| Fuzzy matching | ✅ MinHash + Jaccard | ✅ Lines 306-393 | ✅ Full |
-| LLM-based deduplication | ✅ Lines 246-392 (node_operations.py) | ❌ Not implemented | Missing |
-| UUID remapping | ✅ uuid_map tracking | ✅ Lines 265-266, 276, 290 | ✅ Full |
-| UUID compression | ✅ `compress_uuid_map` | ✅ Lines 695-699 | ✅ Full |
-| Provenance tracking | ✅ Duplicate pairs | ✅ dedupe_records (lines 266, 281-303) | ✅ Full |
+| Exact name matching | ✅ `_normalize_string_exact` | ✅ `_resolve_entities()` exact-match branch (`graphiti_pipeline.py:347`) | ✅ Full |
+| Fuzzy matching | ✅ MinHash + Jaccard | ✅ `_resolve_entities()` fuzzy branch (`graphiti_pipeline.py:364`) | ✅ Full |
+| LLM-based deduplication | ✅ `resolve_extracted_nodes()` | ❌ Not implemented | Missing |
+| UUID remapping | ✅ uuid_map tracking | ✅ `_resolve_entities()` + `resolve_edge_pointers()` (`graphiti_pipeline.py:347`, `641`) | ✅ Full |
+| UUID compression | ✅ `compress_uuid_map` | ✅ `build_graphiti_objects()` cleanup (`graphiti_pipeline.py:828`) | ✅ Full |
+| Provenance tracking | ✅ Duplicate pairs | ✅ `dedupe_records` instrumentation (`graphiti_pipeline.py:381`) | ✅ Full |
 | Embedding similarity | ✅ Vector search | ❌ Stubbed | Missing (by design) |
 
 **What's Working**:
-- ✅ **NEW**: Fuzzy matching using MinHash + Jaccard similarity (`graphiti_pipeline.py:306-393`)
-- ✅ **NEW**: UUID compression with `compress_uuid_map()` for transitive deduplication
-- Exact name matching via `_normalize_string_exact`
-- UUID mapping preserves provisional→resolved mappings with proper edge pointer remapping
-- Dedupe records track match status and reasons (including fuzzy similarity scores)
-- Entropy-based filtering to skip common/generic names
+- ✅ Importing `_minhash_signature` restores the MinHash similarity path inside `_resolve_entities()` (`graphiti_pipeline.py:364-411`)
+- ✅ `compress_uuid_map()` now mirrors graphiti-core's transitive dedupe compression (`graphiti_pipeline.py:828-831`)
+- Exact and fuzzy matches both preserve provenance and remap pointers via `resolve_edge_pointers()` (`graphiti_pipeline.py:641`)
+- Dedupe records capture match reasoning, including fuzzy similarity scores
 
 **What's Missing**:
 - LLM-based disambiguation for ambiguous entities
-- Embedding-based similarity search (awaiting Qwen embedder integration)
+- Embedding-supported similarity search (awaiting local embedder integration)
 
 **Reuse Status**:
 1. ✅ **Already reusing**:
-   - `_normalize_string_exact` (`entity_utils.py:3, 14-16`)
-   - `_normalize_name_for_fuzzy`, `_has_high_entropy`, `_minhash_signature`, `_cached_shingles` (`graphiti_pipeline.py:33-38, 306-393`)
-   - `compress_uuid_map`, `resolve_edge_pointers` (`graphiti_pipeline.py:32, 644, 695-699`)
+   - `_normalize_string_exact`, `_normalize_name_for_fuzzy`, `_has_high_entropy`, `_minhash_signature`, `_cached_shingles` (`graphiti_pipeline.py:33-38`, `347-414`)
+   - `compress_uuid_map`, `resolve_edge_pointers` (`graphiti_pipeline.py:32`, `641`, `828-831`)
 2. **Cannot reuse**: `_collect_candidate_nodes` (requires embedder)
 
 ---
@@ -128,24 +123,25 @@ The custom `graphiti_pipeline.py` implementation achieves **substantial function
 
 | Feature | graphiti-core | Custom Pipeline | Parity |
 |---------|--------------|----------------|---------|
-| Extraction method | LLM with reflexion | DSPy signatures | ⚠️ Different (by design) |
-| Fact extraction | ✅ Embedded in edge extraction | ✅ Separate stage (lines 164-186) | ✅ Full |
-| Relationship extraction | ✅ `extract_edges()` | ✅ `infer_relationships()` (lines 190-222) | ✅ Full |
-| Reflexion loop | ✅ Lines 135-168 (edge_operations.py) | ❌ Not implemented | Missing |
+| Extraction method | LLM with reflexion | DSPy predictor stack | ⚠️ Different (by design) |
+| Fact extraction | ✅ Embedded in edge extraction | ✅ `extract_facts()` (`graphiti_pipeline.py:188-209`) | ✅ Full |
+| Relationship extraction | ✅ `extract_edges()` | ✅ `infer_relationships()` (`graphiti_pipeline.py:229-252`) | ✅ Full |
+| LLM edge validation | ✅ `resolve_extracted_edge()` reflexion | ✅ `detect_entity_edges()` (`graphiti_pipeline.py:260-283`) | ✅ Full |
+| Reflexion loop | ✅ Iterative self-check | ❌ Not implemented | Missing |
 | Custom edge types | ✅ Supported | ❌ Not implemented | Missing |
-| Temporal extraction | ✅ `extract_edge_dates()` | ⚠️ Basic (lines 451-465) | Partial |
+| Temporal extraction | ✅ `extract_edge_dates()` | ⚠️ Basic timestamp defaults (`graphiti_pipeline.py:651-655`) | Partial |
 
 **What's Working**:
-- DSPy `FactExtractionSignature` extracts entity-specific facts
-- DSPy `RelationshipSignature` infers relationships with context
-- Relationships converted to `EntityEdge` objects
-- Episode provenance tracked (episodes list)
+- DSPy `FactExtractionSignature` extracts entity-specific facts (`graphiti_pipeline.py:188-209`)
+- DSPy `RelationshipSignature` infers relationships from facts and entity list (`graphiti_pipeline.py:229-252`)
+- ✅ **NEW**: `EntityEdgeDetectionSignature` adds an LLM-style verification pass prior to graph assembly (`graphiti_pipeline.py:260-283`, `972-1005`)
+- Relationships are converted to `EntityEdge` objects with episode provenance tracking
+- Gradio UI exposes base, LLM, and merged relationship outputs for interactive debugging (`graphiti-poc.py`)
 
 **What's Missing**:
 - Reflexion loop for completeness checking
 - Custom edge types (edge_type_map support)
-- Advanced temporal bounds extraction (valid_at, invalid_at from text)
-- Edge type signatures (limiting edges between specific entity types)
+- Advanced temporal bounds extraction (valid_at/invalid_at derived from text)
 
 **Reuse Status**: Cannot directly reuse `extract_edges()` (requires LLM client), but the DSPy approach achieves similar goals with structured output guarantees.
 
@@ -155,26 +151,19 @@ The custom `graphiti_pipeline.py` implementation achieves **substantial function
 
 | Feature | graphiti-core | Custom Pipeline | Parity |
 |---------|--------------|----------------|---------|
-| Edge deduplication | ✅ Lines 241-405 (edge_operations.py) | ✅ Lines 425-479 | ✅ Full |
-| Episode list merging | ✅ Lines 447-450 | ✅ Lines 448-450 | ✅ Full |
-| Temporal propagation | ✅ `valid_at` handling | ✅ Lines 451-465 | ✅ Full |
-| Contradiction detection | ✅ `resolve_edge_contradictions` | ❌ Not implemented | Missing |
-| Edge invalidation | ✅ Setting `invalid_at` | ⚠️ Placeholder (line 439) | Partial |
+| Edge deduplication | ✅ Lines 241-405 (edge_operations.py) | ✅ `_resolve_entity_edges()` dedupe path (`graphiti_pipeline.py:629-667`) | ✅ Full |
+| Episode list merging | ✅ Lines 447-450 | ✅ `_resolve_entity_edges()` merges (`graphiti_pipeline.py:636-664`) | ✅ Full |
+| Temporal propagation | ✅ `valid_at` handling | ✅ Reference-time defaults (`graphiti_pipeline.py:651-653`) | ✅ Full |
+| Contradiction detection | ✅ `resolve_edge_contradictions` | ✅ Integrated helper (`graphiti_pipeline.py:675-697`) | ✅ Full |
+| Edge invalidation | ✅ Setting `invalid_at` | ✅ `resolve_edge_contradictions()` mutations captured (`graphiti_pipeline.py:681-697`) | ✅ Full |
 
 **What's Working**:
-- Custom `_resolve_entity_edges()` (`graphiti_pipeline.py:425-479`) deduplicates edges by (source, target, name)
-- Episode UUIDs merged when duplicates found
-- Temporal fields (`valid_at`) propagated based on reference_time
-- Edge resolution records track merge status
+- `_resolve_entity_edges()` now calls `resolve_edge_contradictions()` and records invalidations alongside merges (`graphiti_pipeline.py:629-697`)
+- Episode UUIDs are merged and `valid_at` defaults applied consistently
+- Edge resolution records include `invalidated` entries with provenance when contradictions occur
 
 **What's Missing**:
-- Contradiction detection (when edges conflict)
-- Setting `invalid_at` for contradicted edges
-- `expired_at` handling
-
-**Reuse Opportunities**:
-1. **Could reuse**: `resolve_edge_contradictions()` from `edge_operations.py:406-441`
-2. **Could reuse**: Temporal logic from `temporal_operations.py`
+- Advanced temporal reasoning beyond reference-time defaults (still pending dedicated temporal signature)
 
 ---
 
@@ -182,17 +171,17 @@ The custom `graphiti_pipeline.py` implementation achieves **substantial function
 
 | Feature | graphiti-core | Custom Pipeline | Parity |
 |---------|--------------|----------------|---------|
-| Entity attributes | ✅ `extract_attributes_from_nodes()` | ✅ `_apply_entity_attributes()` (lines 324-368) | ✅ Full |
-| Label augmentation | ✅ Custom entity types | ✅ NER label mapping (lines 243-249, 340-347) | ✅ Full |
-| Entity summaries | ✅ `_extract_entity_summary()` | ✅ `_extract_entity_summaries()` (lines 371-422) | ✅ Full |
+| Entity attributes | ✅ `extract_attributes_from_nodes()` | ✅ `_apply_entity_attributes()` (`graphiti_pipeline.py:507-551`) | ✅ Full |
+| Label augmentation | ✅ Custom entity types | ✅ NER label mapping (`graphiti_pipeline.py:337-344`) | ✅ Full |
+| Entity summaries | ✅ `_extract_entity_summary()` | ✅ `_extract_entity_summaries()` (`graphiti_pipeline.py:554-605`) | ✅ Full |
 | Custom attributes | ✅ From custom entity types | ⚠️ NER provenance only | Partial |
 
 **What's Working**:
-- `_apply_entity_attributes()` enriches nodes with NER-derived labels (Person/Organization/Location)
-- NER labels mapped to Graphiti conventions (`graphiti_pipeline.py:243-249`)
-- `_extract_entity_summaries()` uses DSPy `EntitySummarySignature` (lines 371-422)
-- Attributes merged without overwriting existing values (lines 345-353)
-- Summary generation failures logged, don't fail pipeline (lines 419-420)
+- `_apply_entity_attributes()` enriches nodes with NER-derived labels (Person/Organization/Location) (`graphiti_pipeline.py:507-551`)
+- NER labels mapped to Graphiti conventions (`graphiti_pipeline.py:337-344`)
+- `_extract_entity_summaries()` uses DSPy `EntitySummarySignature` (`graphiti_pipeline.py:554-605`)
+- Attributes merged without overwriting existing values (`graphiti_pipeline.py:528-535`)
+- Summary generation failures logged without halting the pipeline (`graphiti_pipeline.py:602-603`)
 
 **What's Missing**:
 - Custom attributes from user-defined entity types
@@ -221,14 +210,14 @@ The custom `graphiti_pipeline.py` implementation achieves **substantial function
 |---------|--------------|----------------|---------|
 | Bulk save operation | ✅ `add_nodes_and_edges_bulk()` | ✅ `write_entities_and_edges()` | ✅ Full |
 | Transaction support | ✅ Neo4j transactions | ✅ FalkorDB transactions | ✅ Full |
-| Embedding generation | ✅ `create_entity_node_embeddings()` | ❌ Stubbed (lines 482-495) | Missing (by design) |
-| Reranker integration | ✅ Supported | ❌ Stubbed (lines 490-495) | Missing (by design) |
+| Embedding generation | ✅ `create_entity_node_embeddings()` | ❌ Stubbed (`graphiti_pipeline.py:702-707`) | Missing (by design) |
+| Reranker integration | ✅ Supported | ❌ Stubbed (`graphiti_pipeline.py:710-715`) | Missing (by design) |
 | Content stripping | ✅ `store_raw_episode_content` flag | ❌ Not implemented | Missing |
 
 **What's Working**:
 - FalkorDB write operations mirror Neo4j structure
 - All nodes and edges persisted with UUIDs
-- Episode entity_edges list populated (line 574)
+- Episode `entity_edges` list populated (`graphiti_pipeline.py:806`)
 - Write result includes UUIDs for verification
 
 **What's Missing**:
@@ -250,11 +239,12 @@ The custom `graphiti_pipeline.py` implementation achieves **substantial function
 |--------|-----------|----------|
 | graphiti_core.nodes | `EntityNode`, `EpisodicNode`, `EpisodeType` | entity_utils.py:4 |
 | graphiti_core.edges | `EntityEdge`, `EpisodicEdge` | entity_utils.py:5 |
-| graphiti_core.utils.maintenance.dedup_helpers | `_normalize_string_exact`, `_normalize_name_for_fuzzy`, `_has_high_entropy`, `_minhash_signature`, `_cached_shingles` | entity_utils.py:3, graphiti_pipeline.py:33-38 |
-| graphiti_core.utils.bulk_utils | `compress_uuid_map`, `resolve_edge_pointers` | graphiti_pipeline.py:32 |
+| graphiti_core.utils.maintenance.dedup_helpers | `_normalize_string_exact`, `_normalize_name_for_fuzzy`, `_has_high_entropy`, `_minhash_signature`, `_cached_shingles` | entity_utils.py:3, graphiti_pipeline.py:33-38, 347-414 |
+| graphiti_core.utils.bulk_utils | `compress_uuid_map`, `resolve_edge_pointers` | graphiti_pipeline.py:32, 636-644, 828-831 |
 | graphiti_core.helpers | `validate_group_id`, `validate_excluded_entity_types` | graphiti_pipeline.py:28-31 |
 | graphiti_core.utils.ontology_utils.entity_types_utils | `validate_entity_types` | graphiti_pipeline.py:41 |
 | graphiti_core.utils.datetime_utils | `utc_now`, `convert_datetimes_to_strings` | entity_utils.py:6, falkordb_utils.py |
+| graphiti_core.utils.maintenance.edge_operations | `resolve_edge_contradictions` | graphiti_pipeline.py:675-697 |
 
 **Impact**: ~45% code reuse for data models, utilities, and validation. Strong foundation with fuzzy deduplication now integrated.
 
@@ -264,12 +254,7 @@ The custom `graphiti_pipeline.py` implementation achieves **substantial function
 
 #### High Priority (would significantly improve parity):
 
-**1. Edge contradiction handling** (`edge_operations.py:406-441`):
-- `resolve_edge_contradictions()`
-- **Impact**: Handle conflicting relationships
-- **Blocker**: Requires async/await + GraphitiClients infrastructure
-
-**2. Temporal utilities** (`temporal_operations.py`):
+**1. Temporal utilities** (`temporal_operations.py`):
 - `extract_edge_dates()` - parse temporal bounds from text
 - **Impact**: Better temporal metadata
 - **Effort**: Medium (requires DSPy signature or LLM integration)
@@ -314,26 +299,22 @@ These require LLM client or embedder, which the custom pipeline explicitly avoid
 - **Impact**: Cannot customize entity classification or edge types
 - **Recommendation**: Add support for custom DSPy signatures per type
 
-**4. Edge Contradiction Detection** - graphiti-core invalidates conflicting edges
-- **Impact**: Conflicting relationships both persist as valid
-- **Recommendation**: Reuse `resolve_edge_contradictions()` from graphiti-core
-
 ### Medium Impact Gaps:
 
-**5. Episode Type Handling** - graphiti-core has different prompts for message/text/json
+**4. Episode Type Handling** - graphiti-core has different prompts for message/text/json
 - **Impact**: Single extraction approach may be suboptimal for all types
 - **Recommendation**: Add conditional DSPy signatures based on episode type
 
-**6. Advanced Temporal Extraction** - graphiti-core parses dates from text
+**5. Advanced Temporal Extraction** - graphiti-core parses dates from text
 - **Impact**: Missing precise temporal bounds
 - **Recommendation**: Consider DSPy temporal extraction signature
 
 ### Low Impact Gaps (acceptable deviations):
 
-7. **Embeddings** - Explicitly deferred (awaiting Qwen embedder)
-8. **Reranking** - Explicitly deferred (awaiting cross-encoder)
-9. **Content Stripping** - Optional optimization
-10. **Community Updates** - Out of scope
+6. **Embeddings** - Explicitly deferred (awaiting Qwen embedder)
+7. **Reranking** - Explicitly deferred (awaiting cross-encoder)
+8. **Content Stripping** - Optional optimization
+9. **Community Updates** - Out of scope
 
 ---
 
@@ -347,7 +328,8 @@ These require LLM client or embedder, which the custom pipeline explicitly avoid
 4. ✅ **Temporal handling** - Basic `valid_at` propagation working
 5. ✅ **Provenance tracking** - Episode lists and dedupe records maintained
 6. ✅ **Structured outputs** - DSPy+Outlines guarantees schema compliance
-7. ✅ **FalkorDB integration** - Clean separation of concerns via falkordb_utils.py
+7. ✅ **Configurable edge detection** - `EntityEdgeDetectionSignature` provides a local alternative to graphiti-core's LLM pass
+8. ✅ **FalkorDB integration** - Clean separation of concerns via falkordb_utils.py
 
 ### Opportunities for Better Reuse:
 
@@ -362,39 +344,9 @@ These require LLM client or embedder, which the custom pipeline explicitly avoid
 
 ### Immediate Actions (High ROI, Low Effort):
 
-**1. Import validation helpers**:
-```python
-from graphiti_core.helpers import (
-    validate_entity_types,
-    validate_excluded_entity_types,
-    validate_group_id
-)
-```
-
-**2. Add fuzzy matching without embeddings**:
-```python
-from graphiti_core.utils.maintenance.dedup_helpers import (
-    _normalize_name_for_fuzzy,
-    _has_high_entropy,
-    compute_minhash,
-    estimate_jaccard
-)
-```
-
-**3. Import edge contradiction resolver**:
-```python
-from graphiti_core.utils.maintenance.edge_operations import (
-    resolve_edge_contradictions
-)
-```
-
-**4. Import UUID utilities**:
-```python
-from graphiti_core.utils.bulk_utils import (
-    resolve_edge_pointers,
-    compress_uuid_map
-)
-```
+1. **Add regression coverage** for the MinHash fuzzy dedup path and contradiction invalidation so the new logic is protected against regressions.
+2. **Instrument relationship stages** to log base vs LLM edge counts, validating the effectiveness of `EntityEdgeDetectionSignature` in real runs.
+3. **Document the `llm_edge_detection_enabled` flag** in developer-facing docs/CLI help so operators know how to toggle the new stage.
 
 ### Near-Term Enhancements (Medium Effort):
 
@@ -419,17 +371,18 @@ The custom `graphiti_pipeline.py` achieves **excellent functional parity** with 
 - ✅ **Maintains compatibility** with graphiti-core's database schema
 - ✅ **Fuzzy deduplication** using official MinHash+Jaccard implementations
 - ✅ **UUID management** with proper edge pointer remapping and transitive compression
+- ✅ **LLM-style edge detection** via `EntityEdgeDetectionSignature`, configurable per run
 - ⚠️ **Intentionally differs** in extraction approach (DistilBERT+DSPy vs LLM prompts)
-- ⚠️ **Missing some features** (reflexion, LLM-based disambiguation, custom types, edge contradictions)
+- ⚠️ **Missing some features** (reflexion loops, LLM-based entity disambiguation, custom types)
 
-**Overall Grade**: **A- (92%)** - Production-ready with robust deduplication and proper UUID handling. Remaining gaps require async/client infrastructure.
+**Overall Grade**: **A (94%)** - Production-ready with consistent deduplication, contradiction handling, and configurable edge validation. Remaining gaps center on advanced LLM workflows.
 
-**Recent Improvements** (2025-11-02):
-- ✅ Added fuzzy matching with MinHash + Jaccard similarity (86 lines)
-- ✅ Integrated UUID utilities (`resolve_edge_pointers`, `compress_uuid_map`)
-- ✅ Input validation matching graphiti-core standards
+**Recent Improvements** (2025-02-15):
+- ✅ Restored MinHash fuzzy dedup by importing `_minhash_signature`
+- ✅ Integrated `resolve_edge_contradictions()` for deterministic edge invalidation
+- ✅ Added DSPy-based `EntityEdgeDetectionSignature` with Gradio toggle for inspection
 
-**Remaining Work**: Edge contradiction detection blocked on async refactor. Custom entity/edge types and reflexion loops are enhancement opportunities.
+**Remaining Work**: Custom entity/edge types, reflexion loops, and richer temporal extraction remain the top feature gaps.
 
 ---
 
@@ -446,22 +399,21 @@ The custom `graphiti_pipeline.py` achieves **excellent functional parity** with 
 8. **Return Results** (lines 801-808)
 
 ### Custom Pipeline Flow (graphiti_pipeline.py):
-1. **Context Retrieval** (lines 708-715)
-2. **NER Extraction** (lines 718-723)
-3. **Fact Extraction** (lines 726-732)
-4. **Relationship Inference** (lines 735-741)
-5. **Graph Object Construction** (lines 744-776)
-   - Episode node creation (line 523-527)
-   - Provisional nodes (line 530)
-   - Entity resolution (lines 533-537)
-   - Edge construction (lines 540-544)
-   - Attribute enrichment (lines 547-551)
-   - Entity summaries (lines 554-560)
-   - Edge resolution (lines 563-571)
-   - Episodic edges (line 577)
-6. **Database Write** (lines 783-800)
+1. **Context Retrieval** (`run_episode`, lines 945-953)
+2. **NER Extraction** (`run_episode`, lines 955-961)
+3. **Fact Extraction** (`run_episode`, lines 964-970)
+4. **Relationship Inference & LLM Edge Detection** (`run_episode`, lines 972-1008)
+5. **Graph Object Construction** (`build_graphiti_objects`, lines 739-833)
+   - Episode node creation (`build_episodic_node`, lines 752-756)
+   - Entity resolution (`_resolve_entities`, lines 347-414)
+   - Edge construction & pointer resolution (`build_entity_edges` + `resolve_edge_pointers`, lines 636-644)
+   - Attribute enrichment (`_apply_entity_attributes`, lines 507-551)
+   - Entity summaries (`_extract_entity_summaries`, lines 554-605)
+   - Edge resolution & contradiction handling (`_resolve_entity_edges`, lines 629-697)
+   - Episodic edges (`entity_utils.py:166-193`)
+6. **Database Write & Optional Render** (`run_episode`, lines 1050-1077)
 
 ---
 
-**Document Version**: 1.0
-**Last Updated**: 2025-11-02
+**Document Version**: 1.1
+**Last Updated**: 2025-02-15

@@ -19,6 +19,16 @@ class RelationshipSignature(dspy.Signature):
     relationships: Relationships = dspy.OutputField(desc="Relationships between entities")
 
 
+class EntityEdgeDetectionSignature(dspy.Signature):
+    """Refine entity relationships using an LLM-style edge detection pass."""
+    text: str = dspy.InputField(desc="Original input text")
+    facts: Facts = dspy.InputField(desc="Supporting facts about entities")
+    entities: list[str] = dspy.InputField(desc="Entity names to consider for edge detection")
+    relationships: Relationships = dspy.OutputField(
+        desc="Edge candidates produced by the LLM-style detector",
+    )
+
+
 class EntitySummarySignature(dspy.Signature):
     """Summarize each entity based on context."""
     text: str = dspy.InputField(desc="Original episode text")

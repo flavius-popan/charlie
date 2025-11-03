@@ -62,6 +62,7 @@ def _build_config(
     attributes_enabled: bool,
     summary_enabled: bool,
     temporal_enabled: bool,
+    llm_edges_enabled: bool,
 ) -> PipelineConfig:
     return PipelineConfig(
         group_id=GROUP_ID,
@@ -70,6 +71,7 @@ def _build_config(
         attribute_extraction_enabled=attributes_enabled,
         entity_summary_enabled=summary_enabled,
         temporal_enabled=temporal_enabled,
+        llm_edge_detection_enabled=llm_edges_enabled,
     )
 
 
@@ -95,6 +97,7 @@ DEFAULT_UI_CONFIG = PipelineConfig(
     attribute_extraction_enabled=True,
     entity_summary_enabled=True,
     temporal_enabled=True,
+    llm_edge_detection_enabled=True,
 )
 INITIAL_CONTEXT = _context_to_json(
     fetch_recent_episodes(
@@ -195,6 +198,10 @@ with gr.Blocks(title="Phase 1 PoC: Graphiti Pipeline") as app:
             label="Enable temporal defaults",
             value=DEFAULT_UI_CONFIG.temporal_enabled,
         )
+        llm_edges_toggle = gr.Checkbox(
+            label="Enable LLM edge detection",
+            value=DEFAULT_UI_CONFIG.llm_edge_detection_enabled,
+        )
 
     run_pipeline_btn = gr.Button("Run Pipeline (no write)", variant="primary")
 
@@ -209,7 +216,9 @@ with gr.Blocks(title="Phase 1 PoC: Graphiti Pipeline") as app:
 
     gr.Markdown("## DSPy Extraction")
     facts_output = gr.JSON(label="Extracted Facts")
-    relationships_output = gr.JSON(label="Inferred Relationships")
+    base_relationships_output = gr.JSON(label="DSPy Relationships")
+    llm_relationships_output = gr.JSON(label="LLM Edge Detection")
+    relationships_output = gr.JSON(label="Merged Relationships")
 
     gr.Markdown("## Graph Assembly & Deduplication")
     graphiti_output = gr.JSON(label="Graphiti Objects")
@@ -243,6 +252,8 @@ with gr.Blocks(title="Phase 1 PoC: Graphiti Pipeline") as app:
     ner_raw_state = gr.State(None)
     entity_names_state = gr.State([])
     facts_state = gr.State(None)
+    base_relationships_state = gr.State(None)
+    llm_relationships_state = gr.State(None)
     relationships_state = gr.State(None)
     episode_state = gr.State(None)  # EpisodicNode
     entity_nodes_state = gr.State([])
@@ -258,6 +269,7 @@ with gr.Blocks(title="Phase 1 PoC: Graphiti Pipeline") as app:
         attributes_enabled,
         summary_enabled,
         temporal_enabled,
+        llm_edges_enabled,
         reference_time_value,
     ):
         config = _build_config(
@@ -266,6 +278,7 @@ with gr.Blocks(title="Phase 1 PoC: Graphiti Pipeline") as app:
             attributes_enabled,
             summary_enabled,
             temporal_enabled,
+            llm_edges_enabled,
         )
         reference_time = _parse_reference_time(reference_time_value)
         episodes = fetch_recent_episodes(
@@ -281,6 +294,7 @@ with gr.Blocks(title="Phase 1 PoC: Graphiti Pipeline") as app:
         attributes_toggle,
         summary_toggle,
         temporal_toggle,
+        llm_edges_toggle,
         reference_time_input,
     ]
 
@@ -322,6 +336,8 @@ with gr.Blocks(title="Phase 1 PoC: Graphiti Pipeline") as app:
                 {"error": message},
                 {"error": message},
                 {"error": message},
+                {"error": message},
+                {"error": message},
                 {"records": []},
                 {"records": []},
                 {"summaries": []},
@@ -331,6 +347,8 @@ with gr.Blocks(title="Phase 1 PoC: Graphiti Pipeline") as app:
                 _reranker_stub(),
                 None,
                 [],
+                None,
+                None,
                 None,
                 None,
                 None,
@@ -367,6 +385,8 @@ with gr.Blocks(title="Phase 1 PoC: Graphiti Pipeline") as app:
                 {"error": message},
                 {"error": message},
                 {"error": message},
+                {"error": message},
+                {"error": message},
                 {"records": []},
                 {"records": []},
                 {"summaries": []},
@@ -376,6 +396,8 @@ with gr.Blocks(title="Phase 1 PoC: Graphiti Pipeline") as app:
                 _reranker_stub(),
                 None,
                 [],
+                None,
+                None,
                 None,
                 None,
                 None,
@@ -394,6 +416,10 @@ with gr.Blocks(title="Phase 1 PoC: Graphiti Pipeline") as app:
             artifacts.ner_display,
             artifacts.context_json,
             artifacts.facts_json or {"items": []},
+            artifacts.base_relationships_json or {"items": []},
+            artifacts.llm_relationships_json
+            if artifacts.llm_relationships_json is not None
+            else {"items": []},
             artifacts.relationships_json or {"items": []},
             artifacts.graphiti_json or {"error": "Graphiti data missing"},
             {"records": artifacts.dedupe_records},
@@ -406,6 +432,8 @@ with gr.Blocks(title="Phase 1 PoC: Graphiti Pipeline") as app:
             artifacts.ner_raw,
             artifacts.ner_entities,
             artifacts.facts,
+            artifacts.base_relationships,
+            artifacts.llm_relationships,
             artifacts.relationships,
             artifacts.episode,
             artifacts.entity_nodes,
@@ -427,6 +455,8 @@ with gr.Blocks(title="Phase 1 PoC: Graphiti Pipeline") as app:
             ner_output,
             context_output,
             facts_output,
+            base_relationships_output,
+            llm_relationships_output,
             relationships_output,
             graphiti_output,
             dedupe_output,
@@ -439,6 +469,8 @@ with gr.Blocks(title="Phase 1 PoC: Graphiti Pipeline") as app:
             ner_raw_state,
             entity_names_state,
             facts_state,
+            base_relationships_state,
+            llm_relationships_state,
             relationships_state,
             episode_state,
             entity_nodes_state,

@@ -34,6 +34,7 @@ from graphiti_core.utils.maintenance.dedup_helpers import (
     _cached_shingles,
     _has_high_entropy,
     _jaccard_similarity,
+    _minhash_signature,
     _normalize_name_for_fuzzy,
 )
 from graphiti_core.utils.maintenance.edge_operations import (
@@ -55,6 +56,7 @@ from models import Facts, Relationships
 from settings import DB_PATH, EPISODE_CONTEXT_WINDOW, GROUP_ID, MODEL_CONFIG
 from signatures import (
     EntityAttributesSignature,
+    EntityEdgeDetectionSignature,
     EntitySummarySignature,
     FactExtractionSignature,
     RelationshipSignature,
@@ -109,6 +111,7 @@ class PipelineConfig:
     attribute_extraction_enabled: bool = True
     entity_summary_enabled: bool = True
     temporal_enabled: bool = True
+    llm_edge_detection_enabled: bool = True
 
 
 @dataclass
@@ -124,8 +127,12 @@ class PipelineArtifacts:
     ner_display: str = ""
     facts: Any = None
     facts_json: Optional[dict[str, Any]] = None
+    base_relationships: Any = None
     relationships: Any = None
     relationships_json: Optional[dict[str, Any]] = None
+    base_relationships_json: Optional[dict[str, Any]] = None
+    llm_relationships: Any = None
+    llm_relationships_json: Optional[dict[str, Any]] = None
     episode: Any = None
     entity_nodes: list[Any] = field(default_factory=list)
     entity_edges: list[Any] = field(default_factory=list)
@@ -203,6 +210,24 @@ def extract_facts(text: str, entity_names: list[str]):
         return None, {"error": str(exc)}
 
 
+def _serialize_relationships(relationships: Relationships | None) -> dict[str, Any]:
+    """Convert Relationships collection into JSON consumable by the UI."""
+    if not relationships or not getattr(relationships, "items", None):
+        return {"items": []}
+
+    return {
+        "items": [
+            {
+                "source": rel.source,
+                "target": rel.target,
+                "relation": rel.relation,
+                "context": rel.context,
+            }
+            for rel in relationships.items
+        ]
+    }
+
+
 # Relationship inference function
 def infer_relationships(text: str, facts, entity_names: list[str]):
     """
@@ -221,22 +246,75 @@ def infer_relationships(text: str, facts, entity_names: list[str]):
 
         logger.info("Relationships: inferred %d items", len(relationships.items))
 
-        # Convert to JSON for display
-        rels_json = {
-            "items": [
-                {
-                    "source": r.source,
-                    "target": r.target,
-                    "relation": r.relation,
-                    "context": r.context,
-                }
-                for r in relationships.items
-            ]
-        }
-
-        return relationships, rels_json
+        return relationships, _serialize_relationships(relationships)
     except Exception as exc:  # noqa: BLE001
         return None, {"error": str(exc)}
+
+
+def detect_entity_edges(
+    text: str,
+    facts: Facts | None,
+    entity_names: list[str],
+) -> tuple[Relationships | None, dict[str, Any]]:
+    """
+    Run LLM-flavored DSPy signature to detect entity edges directly from text.
+
+    Returns: (Relationships object, JSON for display)
+    """
+    if not text.strip() or not entity_names:
+        return None, {"error": "Need text and entities"}
+
+    try:
+        edge_predictor = dspy.Predict(EntityEdgeDetectionSignature)
+        result = edge_predictor(
+            text=text,
+            facts=facts or Facts(items=[]),
+            entities=entity_names,
+        )
+        relationships = getattr(result, "relationships", None)
+        if relationships is None:
+            return None, {"items": []}
+
+        logger.info(
+            "LLM Edge Detection: produced %d candidate relationships",
+            len(relationships.items),
+        )
+
+        return relationships, _serialize_relationships(relationships)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("LLM edge detection failed: %s", exc)
+        return None, {"error": str(exc)}
+
+
+def _merge_relationship_collections(
+    primary: Relationships,
+    secondary: Relationships | None,
+) -> Relationships:
+    """
+    Merge two relationship collections, deduplicating by normalized endpoints and relation.
+    """
+    if secondary is None or not getattr(secondary, "items", None):
+        return primary
+
+    merged_items: list[Any] = []
+    seen: set[tuple[str, str, str]] = set()
+
+    def _key(rel: Any) -> tuple[str, str, str]:
+        return (
+            normalize_entity_name(rel.source),
+            normalize_entity_name(rel.target),
+            rel.relation.strip().lower(),
+        )
+
+    for collection in (primary.items, secondary.items):
+        for rel in collection:
+            key = _key(rel)
+            if key in seen:
+                continue
+            seen.add(key)
+            merged_items.append(rel)
+
+    return Relationships(items=merged_items)
 
 
 def _build_context_json(episodes: list[Any]) -> list[dict[str, Any]]:
@@ -308,29 +386,46 @@ def _resolve_entities(
             fuzzy_key = _normalize_name_for_fuzzy(node.name)
             if _has_high_entropy(fuzzy_key):
                 node_shingles = set(_cached_shingles(fuzzy_key))
-                node_sig = _minhash_signature(node_shingles)
+                node_sig = _minhash_signature(node_shingles) if node_shingles else ()
 
                 best_match = None
                 best_similarity = 0.0
 
                 for existing_name, existing_nodes in normalized_existing.items():
-                    existing_fuzzy = _normalize_name_for_fuzzy(existing_nodes[0].name)
+                    existing_sample = existing_nodes[0]
+                    existing_fuzzy = _normalize_name_for_fuzzy(existing_sample.name)
                     existing_shingles = set(_cached_shingles(existing_fuzzy))
-                    existing_sig = _minhash_signature(existing_shingles)
+                    existing_sig = (
+                        _minhash_signature(existing_shingles)
+                        if existing_shingles
+                        else ()
+                    )
 
-                    # Estimate Jaccard similarity via minhash
-                    matching = sum(1 for a, b in zip(node_sig, existing_sig) if a == b)
-                    similarity = matching / len(node_sig)
+                    similarity = 0.0
+                    if node_sig and existing_sig and len(node_sig) == len(existing_sig):
+                        matching = sum(
+                            1 for a, b in zip(node_sig, existing_sig) if a == b
+                        )
+                        if len(node_sig) > 0:
+                            similarity = matching / len(node_sig)
+
+                    if similarity == 0.0:
+                        similarity = _jaccard_similarity(node_shingles, existing_shingles)
 
                     if similarity > best_similarity:
                         best_similarity = similarity
-                        best_match = existing_nodes[0]
+                        best_match = existing_sample
 
-                if best_match and best_similarity > 0.9:
+                if best_match and best_similarity >= 0.9:
                     # Fuzzy match found - reuse existing node
                     existing = best_match.model_copy(deep=True)
                     uuid_map[node.uuid] = existing.uuid
                     resolved_map[key] = existing
+                    existing_bucket = normalized_existing.setdefault(key, [])
+                    if all(
+                        candidate.uuid != existing.uuid for candidate in existing_bucket
+                    ):
+                        existing_bucket.append(existing)
                     if existing.uuid not in seen_uuid:
                         resolved_nodes.append(existing)
                         seen_uuid.add(existing.uuid)
@@ -519,17 +614,23 @@ def _resolve_entity_edges(
 ) -> tuple[list[Any], list[Any], list[dict[str, Any]]]:
     """Resolve entity edges against existing graph edges."""
     existing_index: dict[tuple[str, str, str], Any] = {}
+    edges_by_pair: dict[tuple[str, str], list[Any]] = defaultdict(list)
     for edge in existing_edges.values():
         key = (edge.source_node_uuid, edge.target_node_uuid, edge.name)
         existing_index[key] = edge
+        pair_key = (edge.source_node_uuid, edge.target_node_uuid)
+        edges_by_pair[pair_key].append(edge)
 
     resolved_edges: list[Any] = []
     invalidated_edges: list[Any] = []
     records: list[dict[str, Any]] = []
+    invalidated_seen: set[str] = set()
 
     for edge in candidate_edges:
         key = (edge.source_node_uuid, edge.target_node_uuid, edge.name)
         existing = existing_index.get(key)
+        pair_key = (edge.source_node_uuid, edge.target_node_uuid)
+        contradiction_pool = list(edges_by_pair.get(pair_key, []))
 
         if existing and config.dedupe_enabled:
             updated = existing.model_copy(deep=True)
@@ -538,31 +639,62 @@ def _resolve_entity_edges(
             updated.episodes = sorted(existing_episode_ids.union(new_episode_ids))
             if config.temporal_enabled:
                 updated.valid_at = existing.valid_at or reference_time
-            records.append(
-                {
-                    "status": "merged",
-                    "edge_uuid": updated.uuid,
-                    "source_uuid": updated.source_node_uuid,
-                    "target_uuid": updated.target_node_uuid,
-                    "relation": updated.name,
-                }
-            )
-            resolved_edges.append(updated)
+            resolved_edge = updated
+            record = {
+                "status": "merged",
+                "edge_uuid": updated.uuid,
+                "source_uuid": updated.source_node_uuid,
+                "target_uuid": updated.target_node_uuid,
+                "relation": updated.name,
+            }
         else:
             if config.temporal_enabled and edge.valid_at is None:
                 edge.valid_at = reference_time
             edge.episodes = sorted(set((edge.episodes or []) + [episode_uuid]))
-            records.append(
-                {
-                    "status": "new",
-                    "edge_uuid": edge.uuid,
-                    "source_uuid": edge.source_node_uuid,
-                    "target_uuid": edge.target_node_uuid,
-                    "relation": edge.name,
-                }
-            )
-            resolved_edges.append(edge)
-            existing_index[key] = edge
+            resolved_edge = edge
+            record = {
+                "status": "new",
+                "edge_uuid": edge.uuid,
+                "source_uuid": edge.source_node_uuid,
+                "target_uuid": edge.target_node_uuid,
+                "relation": edge.name,
+            }
+
+        resolved_edges.append(resolved_edge)
+        records.append(record)
+        existing_index[key] = resolved_edge
+
+        filtered_pool = [
+            candidate
+            for candidate in contradiction_pool
+            if candidate.uuid != resolved_edge.uuid
+        ]
+        filtered_pool.append(resolved_edge)
+        edges_by_pair[pair_key] = filtered_pool
+
+        contradiction_candidates = [
+            candidate
+            for candidate in filtered_pool
+            if candidate.uuid != resolved_edge.uuid and candidate.name != resolved_edge.name
+        ]
+        if contradiction_candidates:
+            invalidated = resolve_edge_contradictions(resolved_edge, contradiction_candidates)
+            for invalid_edge in invalidated:
+                if invalid_edge.uuid in invalidated_seen:
+                    continue
+                invalidated_seen.add(invalid_edge.uuid)
+                invalidated_edges.append(invalid_edge)
+                records.append(
+                    {
+                        "status": "invalidated",
+                        "edge_uuid": invalid_edge.uuid,
+                        "source_uuid": invalid_edge.source_node_uuid,
+                        "target_uuid": invalid_edge.target_node_uuid,
+                        "relation": invalid_edge.name,
+                        "reason": f"contradiction_with:{resolved_edge.uuid}",
+                        "invalidated_at": getattr(invalid_edge, "invalid_at", None),
+                    }
+                )
 
     return resolved_edges, invalidated_edges, records
 
@@ -839,12 +971,42 @@ class GraphitiPipeline:
 
         # Relationship inference
         relationships, rels_json = infer_relationships(text, facts, entities)
-        artifacts.relationships = relationships
-        artifacts.relationships_json = rels_json
         if relationships is None or ("error" in rels_json):
             raise GraphitiPipelineError(
                 "Relationships", rels_json.get("error", "Unknown error")
             )
+        base_relationships = relationships
+        artifacts.base_relationships = base_relationships
+        artifacts.base_relationships_json = rels_json
+
+        final_relationships = base_relationships
+        final_relationships_json = rels_json
+
+        llm_relationships = None
+        llm_relationships_json: dict[str, Any] | None = None
+        if config.llm_edge_detection_enabled:
+            llm_relationships, llm_relationships_json = detect_entity_edges(
+                text,
+                facts,
+                entities,
+            )
+            artifacts.llm_relationships = llm_relationships
+            artifacts.llm_relationships_json = llm_relationships_json
+            if llm_relationships is not None:
+                final_relationships = _merge_relationship_collections(
+                    base_relationships,
+                    llm_relationships,
+                )
+                final_relationships_json = _serialize_relationships(
+                    final_relationships
+                )
+        else:
+            artifacts.llm_relationships = None
+            artifacts.llm_relationships_json = {"status": "disabled"}
+
+        artifacts.relationships = final_relationships
+        artifacts.relationships_json = final_relationships_json
+        relationships = final_relationships
 
         # Build graph objects and resolution records
         build_result = build_graphiti_objects(
@@ -926,6 +1088,7 @@ __all__ = [
     "process_ner",
     "extract_facts",
     "infer_relationships",
+    "detect_entity_edges",
     "build_graphiti_objects",
     "write_to_falkordb",
     "render_verification_graph",
