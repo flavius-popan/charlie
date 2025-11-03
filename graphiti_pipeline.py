@@ -756,15 +756,30 @@ def _enrich_temporal_metadata(
             "confidence": "low"
         }
 
-        fact_text = edge.fact if hasattr(edge, 'fact') else edge.name
+        fact_attr = getattr(edge, "fact", None)
+        fact_text_candidate = fact_attr if isinstance(fact_attr, str) else ""
+        if not fact_text_candidate.strip():
+            name_attr = getattr(edge, "name", "")
+            fact_text_candidate = name_attr if isinstance(name_attr, str) else ""
+        fact_text = fact_text_candidate
 
         try:
-            dates = search_dates(
+            matches = search_dates(
                 fact_text,
                 settings={'RELATIVE_BASE': reference_time}
             )
-            if dates:
-                record["dateparser_dates"] = [(text, dt.isoformat()) for text, dt in dates]
+            date_matches: list[tuple[str, datetime]] = []
+            if matches:
+                for text_match, match_dt in matches:
+                    normalized_dt = ensure_utc(match_dt)
+                    if normalized_dt is None:
+                        continue
+                    date_matches.append((text_match, normalized_dt))
+                if date_matches:
+                    record["dateparser_dates"] = [
+                        (text, dt.isoformat()) for text, dt in date_matches
+                    ]
+            dates = date_matches
         except Exception as e:
             logger.warning(f"dateparser failed for edge {edge.uuid}: {e}")
             dates = None
