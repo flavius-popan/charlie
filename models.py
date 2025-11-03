@@ -1,4 +1,6 @@
 """Pydantic models for DSPy signature outputs."""
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 
@@ -24,3 +26,32 @@ class Relationship(BaseModel):
 class Relationships(BaseModel):
     """Collection wrapper for DSPy output."""
     items: list[Relationship]
+
+
+class EntitySummary(BaseModel):
+    """Summary of a specific entity."""
+    entity: str = Field(description="Entity name")
+    summary: str = Field(description="Concise entity summary")
+
+
+class EntitySummaries(BaseModel):
+    """Collection wrapper for entity summaries."""
+    items: list[EntitySummary] = Field(default_factory=list)
+
+
+class EntityAttribute(BaseModel):
+    """Attributes inferred for an entity."""
+    entity: str = Field(description="Entity name")
+    labels: list[str] = Field(
+        default_factory=list,
+        description="Graphiti-compatible labels for the entity",
+    )
+    attributes: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Attribute dictionary to merge onto the entity",
+    )
+
+
+class EntityAttributes(BaseModel):
+    """Collection wrapper for entity attributes."""
+    items: list[EntityAttribute] = Field(default_factory=list)

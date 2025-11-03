@@ -7,6 +7,7 @@ GRAPH_NAME = "phase1_poc"
 
 # Phase 1 identifiers
 GROUP_ID = "phase1-poc"
+EPISODE_CONTEXT_WINDOW = 3  # Mirrors Graphiti's default (EPISODE_WINDOW_LEN)
 
 # Model generation parameters (edit and restart to change)
 # Supported: temp, top_p, min_p, min_tokens_to_keep, top_k

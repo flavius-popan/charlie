@@ -1,18 +1,21 @@
 """Phase 1 PoC: Text → Graph in FalkorDBLite with Gradio UI."""
 
 import logging
+from datetime import datetime
+
 import gradio as gr
+
+from falkordb_utils import fetch_recent_episodes
 from graphiti_pipeline import (
-    build_graphiti_objects,
-    extract_facts,
+    GraphitiPipeline,
+    GraphitiPipelineError,
+    PipelineConfig,
     get_db_stats,
-    infer_relationships,
-    process_ner,
     render_verification_graph,
     reset_database,
     write_to_falkordb,
 )
-from settings import DB_PATH, MODEL_CONFIG
+from settings import DB_PATH, MODEL_CONFIG, GROUP_ID
 
 # Configure logging
 logging.basicConfig(
@@ -24,12 +27,87 @@ logger.info(f"Starting Graphiti PoC with MODEL_CONFIG: {MODEL_CONFIG}")
 logger.info(f"Database path: {DB_PATH}")
 
 
+def _parse_reference_time(value: str | None) -> datetime:
+    if not value:
+        return datetime.now()
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        logging.warning("Invalid reference time %s, using now()", value)
+        return datetime.now()
+
+
+def _context_to_json(episodes):
+    entries = []
+    for episode in episodes:
+        entries.append(
+            {
+                "uuid": episode.uuid,
+                "name": episode.name,
+                "valid_at": getattr(episode, "valid_at", None),
+                "content_preview": (episode.content[:200] + "...")
+                if episode.content and len(episode.content) > 200
+                else episode.content,
+            }
+        )
+    return entries
+
+
+def _build_config(
+    context_window: int,
+    dedupe_enabled: bool,
+    attributes_enabled: bool,
+    summary_enabled: bool,
+    temporal_enabled: bool,
+) -> PipelineConfig:
+    return PipelineConfig(
+        group_id=GROUP_ID,
+        context_window=int(context_window),
+        dedupe_enabled=dedupe_enabled,
+        attribute_extraction_enabled=attributes_enabled,
+        entity_summary_enabled=summary_enabled,
+        temporal_enabled=temporal_enabled,
+    )
+
+
+def _embedding_stub():
+    return {
+        "status": "not_implemented",
+        "message": "Embeddings will be generated post-deduplication in a future phase.",
+    }
+
+
+def _reranker_stub():
+    return {
+        "status": "not_implemented",
+        "message": "Reranker scoring will be integrated alongside embeddings in a future phase.",
+    }
+
+
+PIPELINE = GraphitiPipeline()
+DEFAULT_UI_CONFIG = PipelineConfig(
+    group_id=GROUP_ID,
+    context_window=3,
+    dedupe_enabled=True,
+    attribute_extraction_enabled=True,
+    entity_summary_enabled=True,
+    temporal_enabled=True,
+)
+INITIAL_CONTEXT = _context_to_json(
+    fetch_recent_episodes(
+        DEFAULT_UI_CONFIG.group_id,
+        datetime.now(),
+        DEFAULT_UI_CONFIG.context_window,
+    )
+)
+
+
 # Build Gradio interface
 with gr.Blocks(title="Phase 1 PoC: Graphiti Pipeline") as app:
     gr.Markdown("# Phase 1 PoC: Text → Graph in FalkorDBLite")
     gr.Markdown(f"**Database:** `{DB_PATH}` | **Model Config:** `{MODEL_CONFIG}`")
 
-    # Database stats display
+    # Database controls
     with gr.Row():
         db_stats_display = gr.Textbox(
             label="Database Stats", value=lambda: str(get_db_stats()), interactive=False
@@ -45,42 +123,78 @@ with gr.Blocks(title="Phase 1 PoC: Graphiti Pipeline") as app:
     )
     load_example_btn = gr.Button("Load Example", size="sm")
 
-    # Stage 0: Input
-    gr.Markdown("## Stage 0: Input Text")
+    gr.Markdown("## Input & Configuration")
     input_text = gr.Textbox(
         label="Journal Entry", placeholder="Enter text here...", lines=5
     )
 
-    # Stage 1: NER
-    gr.Markdown("## Stage 1: NER Entities")
+    with gr.Row():
+        persons_only_filter = gr.Checkbox(label="Persons only", value=False)
+        reference_time_input = gr.Textbox(
+            label="Reference Time (ISO8601, optional)",
+            placeholder="Defaults to current time",
+        )
+
+    with gr.Row():
+        context_window_slider = gr.Slider(
+            label="Context Window (previous episodes)",
+            minimum=0,
+            maximum=10,
+            step=1,
+            value=DEFAULT_UI_CONFIG.context_window,
+        )
+        dedupe_toggle = gr.Checkbox(
+            label="Enable deduplication", value=DEFAULT_UI_CONFIG.dedupe_enabled
+        )
+        attributes_toggle = gr.Checkbox(
+            label="Enable attribute extraction",
+            value=DEFAULT_UI_CONFIG.attribute_extraction_enabled,
+        )
+        summary_toggle = gr.Checkbox(
+            label="Enable entity summaries",
+            value=DEFAULT_UI_CONFIG.entity_summary_enabled,
+        )
+        temporal_toggle = gr.Checkbox(
+            label="Enable temporal defaults",
+            value=DEFAULT_UI_CONFIG.temporal_enabled,
+        )
+
+    run_pipeline_btn = gr.Button("Run Pipeline (no write)", variant="primary")
+
+    gr.Markdown("### Context Episodes")
+    context_output = gr.JSON(
+        label="Most recent episodes",
+        value=INITIAL_CONTEXT,
+    )
+
+    gr.Markdown("## Entity Recognition (DistilBERT NER)")
     ner_output = gr.Textbox(label="Entity Names", interactive=False)
-    persons_only_filter = gr.Checkbox(label="Persons only", value=False)
 
-    # Stage 2: Facts
-    gr.Markdown("## Stage 2: Fact Extraction")
-    run_facts_btn = gr.Button("Run Facts", variant="primary")
-    facts_output = gr.JSON(label="Extracted Facts (or error)")
+    gr.Markdown("## DSPy Extraction")
+    facts_output = gr.JSON(label="Extracted Facts")
+    relationships_output = gr.JSON(label="Inferred Relationships")
 
-    # Stage 3: Relationships
-    gr.Markdown("## Stage 3: Relationship Inference")
-    run_relationships_btn = gr.Button("Run Relationships", variant="primary")
-    relationships_output = gr.JSON(label="Inferred Relationships (or error)")
+    gr.Markdown("## Graph Assembly & Deduplication")
+    graphiti_output = gr.JSON(label="Graphiti Objects")
+    dedupe_output = gr.JSON(label="Entity Resolution Records")
+    edge_resolution_output = gr.JSON(label="Relationship Resolution Records")
+    invalidated_edges_output = gr.JSON(label="Invalidated Relationships")
 
-    # Stage 4: Graphiti Objects
-    gr.Markdown("## Stage 4: Build Graphiti Objects")
-    build_graphiti_btn = gr.Button("Build Graphiti Objects", variant="primary")
-    graphiti_output = gr.JSON(label="EntityNode + EntityEdge Objects (or error)")
+    gr.Markdown("## Attributes & Summaries")
+    attributes_output = gr.JSON(label="Entity Attributes")
+    summaries_output = gr.JSON(label="Entity Summaries")
 
-    # Stage 5: FalkorDB Write
-    gr.Markdown("## Stage 5: Write to FalkorDB")
-    write_falkor_btn = gr.Button("Write to Falkor", variant="primary")
-    write_output = gr.JSON(label="Write Confirmation (or error with traceback)")
+    gr.Markdown("## Embeddings & Reranker (Stubs)")
+    embedding_stub_output = gr.JSON(label="Embedding Status")
+    reranker_stub_output = gr.JSON(label="Reranker Status")
 
-    # Stage 6: Graphviz Preview
-    gr.Markdown("## Stage 6: Graphviz Verification")
+    gr.Markdown("## Persistence & Visualization")
+    write_falkor_btn = gr.Button("Write to FalkorDB", variant="primary")
+    write_output = gr.JSON(label="Write Confirmation")
     graphviz_output = gr.Image(label="Graph Visualization")
 
     # State management
+    config_state = gr.State(DEFAULT_UI_CONFIG)
     ner_raw_state = gr.State(None)
     entity_names_state = gr.State([])
     facts_state = gr.State(None)
@@ -89,86 +203,233 @@ with gr.Blocks(title="Phase 1 PoC: Graphiti Pipeline") as app:
     entity_nodes_state = gr.State([])
     entity_edges_state = gr.State([])
     episodic_edges_state = gr.State([])  # EpisodicEdge list
+    invalidated_edges_state = gr.State([])
+    artifacts_state = gr.State(None)
     write_result_state = gr.State(None)
 
-    # Event handlers
-
-    # Stage 1: NER (automatic on text change)
-    def on_text_change(text, persons_only):
-        entity_names, raw_ner, display = process_ner(text, persons_only)
-        return display, entity_names, raw_ner
-
-    input_text.change(
-        on_text_change,
-        inputs=[input_text, persons_only_filter],
-        outputs=[ner_output, entity_names_state, ner_raw_state],
-        trigger_mode="always_last",
-    )
-
-    persons_only_filter.change(
-        on_text_change,
-        inputs=[input_text, persons_only_filter],
-        outputs=[ner_output, entity_names_state, ner_raw_state],
-    )
-
-    # Stage 2: Fact Extraction
-    def on_run_facts(text, entity_names):
-        facts, facts_json = extract_facts(text, entity_names)
-        return facts_json, facts
-
-    run_facts_btn.click(
-        on_run_facts,
-        inputs=[input_text, entity_names_state],
-        outputs=[facts_output, facts_state],
-    )
-
-    # Stage 3: Relationship Inference
-    def on_run_relationships(text, facts, entity_names):
-        relationships, rels_json = infer_relationships(text, facts, entity_names)
-        return rels_json, relationships
-
-    run_relationships_btn.click(
-        on_run_relationships,
-        inputs=[input_text, facts_state, entity_names_state],
-        outputs=[relationships_output, relationships_state],
-    )
-
-    # Stage 4: Build Graphiti Objects
-    def on_build_graphiti(text, entity_names, relationships):
-        from datetime import datetime
-
-        reference_time = datetime.now()
-
-        episode, nodes, entity_edges, episodic_edges, json_output = (
-            build_graphiti_objects(
-                input_text=text,
-                entity_names=entity_names,
-                relationships=relationships,
-                reference_time=reference_time,
-            )
+    def on_config_change(
+        context_window,
+        dedupe_enabled,
+        attributes_enabled,
+        summary_enabled,
+        temporal_enabled,
+        reference_time_value,
+    ):
+        config = _build_config(
+            context_window,
+            dedupe_enabled,
+            attributes_enabled,
+            summary_enabled,
+            temporal_enabled,
         )
-        return json_output, episode, nodes, entity_edges, episodic_edges
+        reference_time = _parse_reference_time(reference_time_value)
+        episodes = fetch_recent_episodes(
+            config.group_id,
+            reference_time,
+            config.context_window,
+        )
+        return config, _context_to_json(episodes)
 
-    build_graphiti_btn.click(
-        on_build_graphiti,
-        inputs=[input_text, entity_names_state, relationships_state],
+    config_inputs = [
+        context_window_slider,
+        dedupe_toggle,
+        attributes_toggle,
+        summary_toggle,
+        temporal_toggle,
+        reference_time_input,
+    ]
+
+    for control in config_inputs:
+        control.change(
+            on_config_change,
+            inputs=config_inputs,
+            outputs=[config_state, context_output],
+        )
+
+    def on_run_pipeline(
+        text,
+        persons_only,
+        reference_time_value,
+        config: PipelineConfig,
+    ):
+        if not text or not text.strip():
+            message = "Enter episode text before running the pipeline."
+            return (
+                "(no entities)",
+                [],
+                {"error": message},
+                {"error": message},
+                {"error": message},
+                {"records": []},
+                {"records": []},
+                {"summaries": []},
+                {"records": []},
+                {"invalidated_edges": []},
+                _embedding_stub(),
+                _reranker_stub(),
+                None,
+                [],
+                None,
+                None,
+                None,
+                [],
+                [],
+                [],
+                [],
+                None,
+            )
+
+        reference_time = _parse_reference_time(reference_time_value)
+
+        try:
+            artifacts = PIPELINE.run_episode(
+                text=text,
+                persons_only=persons_only,
+                reference_time=reference_time,
+                write=False,
+                render_graph=False,
+                config=config,
+            )
+        except GraphitiPipelineError as exc:
+            message = getattr(exc, "message", str(exc))
+            context = _context_to_json(
+                fetch_recent_episodes(
+                    config.group_id,
+                    reference_time,
+                    config.context_window,
+                )
+            )
+            return (
+                "(pipeline error)",
+                context,
+                {"error": message},
+                {"error": message},
+                {"error": message},
+                {"records": []},
+                {"records": []},
+                {"summaries": []},
+                {"records": []},
+                {"invalidated_edges": []},
+                _embedding_stub(),
+                _reranker_stub(),
+                None,
+                [],
+                None,
+                None,
+                None,
+                [],
+                [],
+                [],
+                [],
+                None,
+            )
+
+        invalidated_edges_json = [
+            edge.model_dump() for edge in artifacts.invalidated_edges
+        ]
+
+        return (
+            artifacts.ner_display,
+            artifacts.context_json,
+            artifacts.facts_json or {"items": []},
+            artifacts.relationships_json or {"items": []},
+            artifacts.graphiti_json or {"error": "Graphiti data missing"},
+            {"records": artifacts.dedupe_records},
+            {"records": artifacts.entity_attributes_json},
+            {"summaries": artifacts.entity_summaries_json},
+            {"records": artifacts.edge_resolution_records},
+            {"invalidated_edges": invalidated_edges_json},
+            artifacts.embedding_stub,
+            artifacts.reranker_stub,
+            artifacts.ner_raw,
+            artifacts.ner_entities,
+            artifacts.facts,
+            artifacts.relationships,
+            artifacts.episode,
+            artifacts.entity_nodes,
+            artifacts.entity_edges,
+            artifacts.episodic_edges,
+            artifacts.invalidated_edges,
+            artifacts,
+        )
+
+    run_pipeline_btn.click(
+        on_run_pipeline,
+        inputs=[
+            input_text,
+            persons_only_filter,
+            reference_time_input,
+            config_state,
+        ],
         outputs=[
+            ner_output,
+            context_output,
+            facts_output,
+            relationships_output,
             graphiti_output,
-            episode_state,  # New
+            dedupe_output,
+            attributes_output,
+            summaries_output,
+            edge_resolution_output,
+            invalidated_edges_output,
+            embedding_stub_output,
+            reranker_stub_output,
+            ner_raw_state,
+            entity_names_state,
+            facts_state,
+            relationships_state,
+            episode_state,
             entity_nodes_state,
             entity_edges_state,
-            episodic_edges_state,  # New
+            episodic_edges_state,
+            invalidated_edges_state,
+            artifacts_state,
         ],
     )
 
-    # Stage 5: Write to FalkorDB (triggers Stage 6)
-    def on_write_falkor(episode, entity_nodes, entity_edges, episodic_edges):
-        result = write_to_falkordb(episode, entity_nodes, entity_edges, episodic_edges)
-        # Update database stats
+    def on_write_falkor(
+        episode,
+        entity_nodes,
+        entity_edges,
+        invalidated_edges,
+        episodic_edges,
+        config: PipelineConfig,
+        reference_time_value,
+    ):
+        if not episode or not entity_nodes:
+            return (
+                {"error": "Run the pipeline before writing to FalkorDB."},
+                None,
+                str(get_db_stats()),
+                None,
+                _context_to_json(
+                    fetch_recent_episodes(
+                        config.group_id,
+                        _parse_reference_time(reference_time_value),
+                        config.context_window,
+                    )
+                ),
+            )
+
+        edges_for_write = list(entity_edges or []) + list(invalidated_edges or [])
+        result = write_to_falkordb(
+            episode,
+            entity_nodes,
+            edges_for_write,
+            episodic_edges or [],
+        )
+
         new_stats = str(get_db_stats())
-        # Render verification graph
         graph_img = render_verification_graph(result)
-        return result, result, new_stats, graph_img
+        reference_time = _parse_reference_time(reference_time_value)
+        context = _context_to_json(
+            fetch_recent_episodes(
+                config.group_id,
+                reference_time,
+                config.context_window,
+            )
+        )
+        return result, result, new_stats, graph_img, context
 
     write_falkor_btn.click(
         on_write_falkor,
@@ -176,18 +437,40 @@ with gr.Blocks(title="Phase 1 PoC: Graphiti Pipeline") as app:
             episode_state,
             entity_nodes_state,
             entity_edges_state,
+            invalidated_edges_state,
             episodic_edges_state,
+            config_state,
+            reference_time_input,
         ],
-        outputs=[write_output, write_result_state, db_stats_display, graphviz_output],
+        outputs=[
+            write_output,
+            write_result_state,
+            db_stats_display,
+            graphviz_output,
+            context_output,
+        ],
     )
 
-    def on_reset_db():
-        msg = reset_database()
-        return str(get_db_stats())
+    def on_reset_db(config: PipelineConfig, reference_time_value):
+        reset_database()
+        reference_time = _parse_reference_time(reference_time_value)
+        return (
+            str(get_db_stats()),
+            _context_to_json(
+                fetch_recent_episodes(
+                    config.group_id,
+                    reference_time,
+                    config.context_window,
+                )
+            ),
+        )
 
-    reset_btn.click(on_reset_db, outputs=[db_stats_display])
+    reset_btn.click(
+        on_reset_db,
+        inputs=[config_state, reference_time_input],
+        outputs=[db_stats_display, context_output],
+    )
 
-    # Load example handler
     def on_load_example():
         return example_text.value
 
