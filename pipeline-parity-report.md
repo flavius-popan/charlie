@@ -262,18 +262,15 @@ The pipeline implements a 3-stage hybrid approach matching graphiti-core's inlin
 
 ### 🟡 Could Reuse (Opportunities)
 
-#### High Priority (would significantly improve parity):
-
-**1. Temporal utilities** (`temporal_operations.py`):
-- `extract_edge_dates()` - reference implementation for temporal bounds parsing
-- **Impact**: Guides parity checks while we mirror behavior with the hybrid dateparser + DSPy stack
-- **Effort**: Medium (requires building the new signature and integration glue)
-
 #### Medium Priority:
 
-**3. Graph data operations** (`graph_data_operations.py`):
+**Graph data operations** (`graph_data_operations.py`):
 - `build_indices_and_constraints()` - database schema setup
 - **Impact**: Better FalkorDB schema management
+
+**Bulk query generators** (`graphiti_core.models.nodes.node_db_queries`):
+- `get_entity_node_save_bulk_query()` and related helpers streamline Cypher generation
+- **Impact**: Reduce bespoke FalkorDB Cypher assembly and stay aligned with Graphiti’s bulk write semantics
 
 ---
 
