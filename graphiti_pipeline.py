@@ -25,6 +25,23 @@ from entity_utils import (
     deduplicate_entities,
     normalize_entity_name,
 )
+from graphiti_core.helpers import (
+    validate_excluded_entity_types,
+    validate_group_id,
+)
+from graphiti_core.utils.bulk_utils import compress_uuid_map, resolve_edge_pointers
+from graphiti_core.utils.maintenance.dedup_helpers import (
+    _cached_shingles,
+    _has_high_entropy,
+    _jaccard_similarity,
+    _normalize_name_for_fuzzy,
+)
+from graphiti_core.utils.maintenance.edge_operations import (
+    resolve_edge_contradictions,
+)
+from graphiti_core.utils.ontology_utils.entity_types_utils import (
+    validate_entity_types,
+)
 from falkordb_utils import (
     fetch_entities_by_group,
     fetch_entity_edges_by_group,
@@ -286,6 +303,77 @@ def _resolve_entities(
                     "reason": "exact_name_match",
                 }
             )
+        elif config.dedupe_enabled and normalized_existing:
+            # Try fuzzy matching as fallback
+            fuzzy_key = _normalize_name_for_fuzzy(node.name)
+            if _has_high_entropy(fuzzy_key):
+                node_shingles = set(_cached_shingles(fuzzy_key))
+                node_sig = _minhash_signature(node_shingles)
+
+                best_match = None
+                best_similarity = 0.0
+
+                for existing_name, existing_nodes in normalized_existing.items():
+                    existing_fuzzy = _normalize_name_for_fuzzy(existing_nodes[0].name)
+                    existing_shingles = set(_cached_shingles(existing_fuzzy))
+                    existing_sig = _minhash_signature(existing_shingles)
+
+                    # Estimate Jaccard similarity via minhash
+                    matching = sum(1 for a, b in zip(node_sig, existing_sig) if a == b)
+                    similarity = matching / len(node_sig)
+
+                    if similarity > best_similarity:
+                        best_similarity = similarity
+                        best_match = existing_nodes[0]
+
+                if best_match and best_similarity > 0.9:
+                    # Fuzzy match found - reuse existing node
+                    existing = best_match.model_copy(deep=True)
+                    uuid_map[node.uuid] = existing.uuid
+                    resolved_map[key] = existing
+                    if existing.uuid not in seen_uuid:
+                        resolved_nodes.append(existing)
+                        seen_uuid.add(existing.uuid)
+                    dedupe_records.append(
+                        {
+                            "entity": node.name,
+                            "status": "matched",
+                            "resolved_uuid": existing.uuid,
+                            "reason": f"fuzzy_match (similarity={best_similarity:.2f})",
+                        }
+                    )
+                else:
+                    # No fuzzy match - create new entity
+                    uuid_map[node.uuid] = node.uuid
+                    resolved_map[key] = node
+                    normalized_existing.setdefault(key, []).append(node)
+                    if node.uuid not in seen_uuid:
+                        resolved_nodes.append(node)
+                        seen_uuid.add(node.uuid)
+                    dedupe_records.append(
+                        {
+                            "entity": node.name,
+                            "status": "new",
+                            "resolved_uuid": node.uuid,
+                            "reason": "no_fuzzy_match",
+                        }
+                    )
+            else:
+                # Low entropy - skip fuzzy matching
+                uuid_map[node.uuid] = node.uuid
+                resolved_map[key] = node
+                normalized_existing.setdefault(key, []).append(node)
+                if node.uuid not in seen_uuid:
+                    resolved_nodes.append(node)
+                    seen_uuid.add(node.uuid)
+                dedupe_records.append(
+                    {
+                        "entity": node.name,
+                        "status": "new",
+                        "resolved_uuid": node.uuid,
+                        "reason": "low_entropy_name",
+                    }
+                )
         else:
             uuid_map[node.uuid] = node.uuid
             resolved_map[key] = node
@@ -515,6 +603,15 @@ def build_graphiti_objects(
         )
 
     config = config or PipelineConfig()
+
+    # Input validation (mirrors graphiti-core add_episode lines 685-690)
+    try:
+        validate_entity_types(None)  # No custom entity types in current implementation
+        validate_excluded_entity_types(None, None)  # No exclusions in current implementation
+        validate_group_id(config.group_id)
+    except Exception as exc:  # noqa: BLE001
+        raise GraphitiPipelineError("Input Validation", str(exc)) from exc
+
     existing_entities = existing_entities or fetch_entities_by_group(config.group_id)
     existing_edges = existing_edges or fetch_entity_edges_by_group(config.group_id)
 
@@ -542,6 +639,9 @@ def build_graphiti_objects(
             resolved_map,
             episode_uuid=episode.uuid,
         )
+
+        # 4a. Remap edge pointers based on entity deduplication
+        entity_edges = resolve_edge_pointers(entity_edges, uuid_map)
 
         # 5. Apply attribute enrichment
         attributes_by_uuid, attribute_json = _apply_entity_attributes(
@@ -591,6 +691,12 @@ def build_graphiti_objects(
             "entity_edges": [e.model_dump() for e in resolved_edges],
             "episodic_edges": [e.model_dump() for e in episodic_edges],
         }
+
+        # 10. Compress UUID map to handle transitive deduplication
+        # Convert dict to list of tuples for compress_uuid_map
+        duplicate_pairs = [(k, v) for k, v in uuid_map.items() if k != v]
+        if duplicate_pairs:
+            uuid_map = compress_uuid_map(duplicate_pairs)
 
         return GraphitiBuildResult(
             episode=episode,
