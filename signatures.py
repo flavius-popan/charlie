@@ -12,18 +12,38 @@ class FactExtractionSignature(dspy.Signature):
 
 
 class RelationshipSignature(dspy.Signature):
-    """Infer relationships between entities based on facts."""
+    """Infer relationships between entities based on facts.
+
+    DATETIME RULES:
+    - Use ISO 8601 with "Z" suffix for UTC (e.g., 2025-04-30T00:00:00Z)
+    - If the fact is ongoing (present tense), set valid_at to REFERENCE_TIME
+    - If a change/termination is expressed, set invalid_at to the relevant timestamp
+    - Leave both fields null if no explicit or resolvable time is stated
+    - If only a date is mentioned (no time), assume 00:00:00
+    - If only a year is mentioned, use January 1st at 00:00:00
+    """
     text: str = dspy.InputField(desc="Original input text")
     facts: Facts = dspy.InputField(desc="Extracted facts about entities")
     entities: list[str] = dspy.InputField(desc="Entity names to constrain relationships")
+    reference_time: str = dspy.InputField(desc="Current episode reference timestamp in ISO 8601 format (e.g., 2025-04-30T00:00:00Z)")
     relationships: Relationships = dspy.OutputField(desc="Relationships between entities")
 
 
 class EntityEdgeDetectionSignature(dspy.Signature):
-    """Refine entity relationships using an LLM-style edge detection pass."""
+    """Refine entity relationships using an LLM-style edge detection pass.
+
+    DATETIME RULES:
+    - Use ISO 8601 with "Z" suffix for UTC (e.g., 2025-04-30T00:00:00Z)
+    - If the fact is ongoing (present tense), set valid_at to REFERENCE_TIME
+    - If a change/termination is expressed, set invalid_at to the relevant timestamp
+    - Leave both fields null if no explicit or resolvable time is stated
+    - If only a date is mentioned (no time), assume 00:00:00
+    - If only a year is mentioned, use January 1st at 00:00:00
+    """
     text: str = dspy.InputField(desc="Original input text")
     facts: Facts = dspy.InputField(desc="Supporting facts about entities")
     entities: list[str] = dspy.InputField(desc="Entity names to consider for edge detection")
+    reference_time: str = dspy.InputField(desc="Current episode reference timestamp in ISO 8601 format (e.g., 2025-04-30T00:00:00Z)")
     relationships: Relationships = dspy.OutputField(
         desc="Edge candidates produced by the LLM-style detector",
     )

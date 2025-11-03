@@ -62,6 +62,7 @@ def _build_config(
     attributes_enabled: bool,
     summary_enabled: bool,
     temporal_enabled: bool,
+    temporal_enrichment_enabled: bool,
     llm_edges_enabled: bool,
 ) -> PipelineConfig:
     return PipelineConfig(
@@ -71,6 +72,7 @@ def _build_config(
         attribute_extraction_enabled=attributes_enabled,
         entity_summary_enabled=summary_enabled,
         temporal_enabled=temporal_enabled,
+        temporal_enrichment_enabled=temporal_enrichment_enabled,
         llm_edge_detection_enabled=llm_edges_enabled,
     )
 
@@ -97,6 +99,7 @@ DEFAULT_UI_CONFIG = PipelineConfig(
     attribute_extraction_enabled=True,
     entity_summary_enabled=True,
     temporal_enabled=True,
+    temporal_enrichment_enabled=True,
     llm_edge_detection_enabled=True,
 )
 INITIAL_CONTEXT = _context_to_json(
@@ -198,6 +201,10 @@ with gr.Blocks(title="Phase 1 PoC: Graphiti Pipeline") as app:
             label="Enable temporal defaults",
             value=DEFAULT_UI_CONFIG.temporal_enabled,
         )
+        temporal_enrichment_toggle = gr.Checkbox(
+            label="Enable temporal enrichment (dateparser)",
+            value=DEFAULT_UI_CONFIG.temporal_enrichment_enabled,
+        )
         llm_edges_toggle = gr.Checkbox(
             label="Enable LLM edge detection",
             value=DEFAULT_UI_CONFIG.llm_edge_detection_enabled,
@@ -225,6 +232,9 @@ with gr.Blocks(title="Phase 1 PoC: Graphiti Pipeline") as app:
     dedupe_output = gr.JSON(label="Entity Resolution Records")
     edge_resolution_output = gr.JSON(label="Relationship Resolution Records")
     invalidated_edges_output = gr.JSON(label="Invalidated Relationships")
+
+    gr.Markdown("## Temporal Enrichment")
+    temporal_enrichment_output = gr.JSON(label="Temporal Metadata (dateparser validation)")
 
     gr.Markdown("## Attributes & Summaries")
     attributes_output = gr.JSON(label="Entity Attributes")
@@ -269,6 +279,7 @@ with gr.Blocks(title="Phase 1 PoC: Graphiti Pipeline") as app:
         attributes_enabled,
         summary_enabled,
         temporal_enabled,
+        temporal_enrichment_enabled,
         llm_edges_enabled,
         reference_time_value,
     ):
@@ -278,6 +289,7 @@ with gr.Blocks(title="Phase 1 PoC: Graphiti Pipeline") as app:
             attributes_enabled,
             summary_enabled,
             temporal_enabled,
+            temporal_enrichment_enabled,
             llm_edges_enabled,
         )
         reference_time = _parse_reference_time(reference_time_value)
@@ -294,6 +306,7 @@ with gr.Blocks(title="Phase 1 PoC: Graphiti Pipeline") as app:
         attributes_toggle,
         summary_toggle,
         temporal_toggle,
+        temporal_enrichment_toggle,
         llm_edges_toggle,
         reference_time_input,
     ]
@@ -343,6 +356,7 @@ with gr.Blocks(title="Phase 1 PoC: Graphiti Pipeline") as app:
                 {"summaries": []},
                 {"records": []},
                 {"invalidated_edges": []},
+                {"records": []},
                 _embedding_stub(),
                 _reranker_stub(),
                 None,
@@ -392,6 +406,7 @@ with gr.Blocks(title="Phase 1 PoC: Graphiti Pipeline") as app:
                 {"summaries": []},
                 {"records": []},
                 {"invalidated_edges": []},
+                {"records": []},
                 _embedding_stub(),
                 _reranker_stub(),
                 None,
@@ -427,6 +442,7 @@ with gr.Blocks(title="Phase 1 PoC: Graphiti Pipeline") as app:
             {"summaries": artifacts.entity_summaries_json},
             {"records": artifacts.edge_resolution_records},
             {"invalidated_edges": invalidated_edges_json},
+            {"records": artifacts.temporal_enrichment_records},
             artifacts.embedding_stub,
             artifacts.reranker_stub,
             artifacts.ner_raw,
@@ -464,6 +480,7 @@ with gr.Blocks(title="Phase 1 PoC: Graphiti Pipeline") as app:
             summaries_output,
             edge_resolution_output,
             invalidated_edges_output,
+            temporal_enrichment_output,
             embedding_stub_output,
             reranker_stub_output,
             ner_raw_state,

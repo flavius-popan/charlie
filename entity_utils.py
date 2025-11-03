@@ -3,7 +3,7 @@ import logging
 from graphiti_core.utils.maintenance.dedup_helpers import _normalize_string_exact
 from graphiti_core.nodes import EntityNode, EpisodicNode, EpisodeType
 from graphiti_core.edges import EntityEdge, EpisodicEdge
-from graphiti_core.utils.datetime_utils import utc_now
+from graphiti_core.utils.datetime_utils import utc_now, ensure_utc
 from datetime import datetime
 from models import Relationships
 from settings import GROUP_ID
@@ -93,6 +93,34 @@ def build_entity_edges(
             logger.warning(f"Skipping relationship {rel.source} -> {rel.target} (entity not found)")
             continue
 
+        # Parse temporal fields from ISO strings to datetime objects
+        valid_at_datetime = None
+        invalid_at_datetime = None
+
+        if hasattr(rel, 'valid_at') and rel.valid_at:
+            try:
+                valid_at_datetime = ensure_utc(
+                    datetime.fromisoformat(rel.valid_at.replace('Z', '+00:00'))
+                )
+            except (ValueError, AttributeError) as e:
+                logger.warning(f"Error parsing valid_at date: {e}. Input: {rel.valid_at}")
+
+        if hasattr(rel, 'invalid_at') and rel.invalid_at:
+            try:
+                invalid_at_datetime = ensure_utc(
+                    datetime.fromisoformat(rel.invalid_at.replace('Z', '+00:00'))
+                )
+            except (ValueError, AttributeError) as e:
+                logger.warning(f"Error parsing invalid_at date: {e}. Input: {rel.invalid_at}")
+
+        # Validate temporal consistency
+        if (valid_at_datetime and invalid_at_datetime and
+            invalid_at_datetime <= valid_at_datetime):
+            logger.warning(
+                f"Invalid temporal range: invalid_at ({invalid_at_datetime}) "
+                f"<= valid_at ({valid_at_datetime}) for edge {rel.source} -> {rel.target}"
+            )
+
         edge = EntityEdge(
             source_node_uuid=source_node.uuid,
             target_node_uuid=target_node.uuid,
@@ -103,8 +131,8 @@ def build_entity_edges(
             fact_embedding=[],
             episodes=[episode_uuid],
             expired_at=None,
-            valid_at=None,
-            invalid_at=None,
+            valid_at=valid_at_datetime,
+            invalid_at=invalid_at_datetime,
             attributes={}
         )
         entity_edges.append(edge)

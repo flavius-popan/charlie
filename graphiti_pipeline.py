@@ -12,6 +12,8 @@ from typing import Any, Dict, Optional
 import dspy
 from dspy_outlines.adapter import OutlinesAdapter
 from dspy_outlines.lm import OutlinesLM
+import dateparser
+from dateparser.search import search_dates
 
 # Fix tokenizers parallelism warning (must be set before importing transformers)
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
@@ -40,6 +42,7 @@ from graphiti_core.utils.maintenance.dedup_helpers import (
 from graphiti_core.utils.maintenance.edge_operations import (
     resolve_edge_contradictions,
 )
+from graphiti_core.utils.datetime_utils import ensure_utc
 from graphiti_core.utils.ontology_utils.entity_types_utils import (
     validate_entity_types,
 )
@@ -99,6 +102,7 @@ class GraphitiBuildResult:
     invalidated_edges: list[Any]
     entity_attributes_json: list[dict[str, Any]]
     entity_summaries_json: list[dict[str, Any]]
+    temporal_enrichment_records: list[dict[str, Any]]
 
 
 @dataclass
@@ -111,6 +115,7 @@ class PipelineConfig:
     attribute_extraction_enabled: bool = True
     entity_summary_enabled: bool = True
     temporal_enabled: bool = True
+    temporal_enrichment_enabled: bool = True
     llm_edge_detection_enabled: bool = True
 
 
@@ -151,6 +156,7 @@ class PipelineArtifacts:
     invalidated_edges: list[Any] = field(default_factory=list)
     embedding_stub: dict[str, Any] = field(default_factory=dict)
     reranker_stub: dict[str, Any] = field(default_factory=dict)
+    temporal_enrichment_records: list[dict[str, Any]] = field(default_factory=list)
 
 
 # NER processing function
@@ -229,7 +235,7 @@ def _serialize_relationships(relationships: Relationships | None) -> dict[str, A
 
 
 # Relationship inference function
-def infer_relationships(text: str, facts, entity_names: list[str]):
+def infer_relationships(text: str, facts, entity_names: list[str], reference_time: datetime):
     """
     Infer relationships using DSPy.
 
@@ -241,7 +247,10 @@ def infer_relationships(text: str, facts, entity_names: list[str]):
     try:
         rel_predictor = dspy.Predict(RelationshipSignature)
         relationships = rel_predictor(
-            text=text, facts=facts, entities=entity_names
+            text=text,
+            facts=facts,
+            entities=entity_names,
+            reference_time=reference_time.isoformat()
         ).relationships
 
         logger.info("Relationships: inferred %d items", len(relationships.items))
@@ -255,6 +264,7 @@ def detect_entity_edges(
     text: str,
     facts: Facts | None,
     entity_names: list[str],
+    reference_time: datetime,
 ) -> tuple[Relationships | None, dict[str, Any]]:
     """
     Run LLM-flavored DSPy signature to detect entity edges directly from text.
@@ -270,6 +280,7 @@ def detect_entity_edges(
             text=text,
             facts=facts or Facts(items=[]),
             entities=entity_names,
+            reference_time=reference_time.isoformat(),
         )
         relationships = getattr(result, "relationships", None)
         if relationships is None:
@@ -638,7 +649,8 @@ def _resolve_entity_edges(
             new_episode_ids = set(edge.episodes or [])
             updated.episodes = sorted(existing_episode_ids.union(new_episode_ids))
             if config.temporal_enabled:
-                updated.valid_at = existing.valid_at or reference_time
+                updated.valid_at = existing.valid_at or edge.valid_at or reference_time
+                updated.invalid_at = existing.invalid_at or edge.invalid_at
             resolved_edge = updated
             record = {
                 "status": "merged",
@@ -648,8 +660,9 @@ def _resolve_entity_edges(
                 "relation": updated.name,
             }
         else:
-            if config.temporal_enabled and edge.valid_at is None:
-                edge.valid_at = reference_time
+            if config.temporal_enabled:
+                if edge.valid_at is None:
+                    edge.valid_at = reference_time
             edge.episodes = sorted(set((edge.episodes or []) + [episode_uuid]))
             resolved_edge = edge
             record = {
@@ -697,6 +710,147 @@ def _resolve_entity_edges(
                 )
 
     return resolved_edges, invalidated_edges, records
+
+
+def _enrich_temporal_metadata(
+    edges: list[Any],
+    episode_text: str,
+    reference_time: datetime,
+    config: PipelineConfig,
+) -> tuple[list[Any], list[dict[str, Any]]]:
+    """
+    Validate and enrich edge temporal metadata using dateparser.
+
+    Args:
+        edges: List of EntityEdge objects with optional valid_at/invalid_at
+        episode_text: Original episode text for context
+        reference_time: Episode reference datetime
+        config: Pipeline configuration
+
+    Returns:
+        Tuple of (enriched_edges, enrichment_records)
+    """
+    enrichment_records: list[dict[str, Any]] = []
+
+    if not config.temporal_enabled:
+        return edges, enrichment_records
+
+    temporal_cues = {
+        "valid_markers": ["since", "from", "starting", "began", "as of"],
+        "invalid_markers": ["until", "through", "ended", "stopped", "left"],
+        "ongoing_markers": ["currently", "now", "present", "today"],
+        "terminated_markers": ["no longer", "formerly", "previously", "used to", "was", "were"]
+    }
+
+    for edge in edges:
+        record = {
+            "edge_uuid": edge.uuid,
+            "source": edge.source_node_uuid,
+            "target": edge.target_node_uuid,
+            "relation": edge.name,
+            "dspy_valid_at": str(edge.valid_at) if edge.valid_at else None,
+            "dspy_invalid_at": str(edge.invalid_at) if edge.invalid_at else None,
+            "dateparser_dates": [],
+            "cues_detected": [],
+            "action": "unchanged",
+            "confidence": "low"
+        }
+
+        fact_text = edge.fact if hasattr(edge, 'fact') else edge.name
+
+        try:
+            dates = search_dates(
+                fact_text,
+                settings={'RELATIVE_BASE': reference_time}
+            )
+            if dates:
+                record["dateparser_dates"] = [(text, dt.isoformat()) for text, dt in dates]
+        except Exception as e:
+            logger.warning(f"dateparser failed for edge {edge.uuid}: {e}")
+            dates = None
+
+        fact_lower = fact_text.lower()
+
+        for marker in temporal_cues["valid_markers"]:
+            if marker in fact_lower:
+                record["cues_detected"].append(f"valid:{marker}")
+
+        for marker in temporal_cues["invalid_markers"]:
+            if marker in fact_lower:
+                record["cues_detected"].append(f"invalid:{marker}")
+
+        for marker in temporal_cues["ongoing_markers"]:
+            if marker in fact_lower:
+                record["cues_detected"].append(f"ongoing:{marker}")
+
+        for marker in temporal_cues["terminated_markers"]:
+            if marker in fact_lower:
+                record["cues_detected"].append(f"terminated:{marker}")
+
+        has_valid_cues = any(c.startswith("valid:") for c in record["cues_detected"])
+        has_invalid_cues = any(c.startswith("invalid:") for c in record["cues_detected"])
+        has_ongoing_cues = any(c.startswith("ongoing:") for c in record["cues_detected"])
+        has_terminated_cues = any(c.startswith("terminated:") for c in record["cues_detected"])
+
+        if dates and len(dates) > 0:
+            dateparser_dt = dates[0][1]
+
+            if edge.valid_at:
+                time_diff = abs((edge.valid_at - dateparser_dt).total_seconds())
+                if time_diff <= 86400:
+                    record["action"] = "validated"
+                    record["confidence"] = "high"
+                else:
+                    logger.warning(
+                        f"Temporal conflict for edge {edge.uuid}: "
+                        f"DSPy={edge.valid_at}, dateparser={dateparser_dt}. "
+                        f"Preferring DSPy (has full context)."
+                    )
+                    record["action"] = "conflict_dspy_preferred"
+                    record["confidence"] = "medium"
+
+            elif edge.invalid_at:
+                time_diff = abs((edge.invalid_at - dateparser_dt).total_seconds())
+                if time_diff <= 86400:
+                    record["action"] = "validated"
+                    record["confidence"] = "high"
+                else:
+                    logger.warning(
+                        f"Temporal conflict for edge {edge.uuid}: "
+                        f"DSPy invalid_at={edge.invalid_at}, dateparser={dateparser_dt}. "
+                        f"Preferring DSPy (has full context)."
+                    )
+                    record["action"] = "conflict_dspy_preferred"
+                    record["confidence"] = "medium"
+
+            else:
+                enriched_dt = ensure_utc(dateparser_dt)
+
+                if has_invalid_cues or has_terminated_cues:
+                    edge.invalid_at = enriched_dt
+                    record["action"] = "enriched_invalid_at"
+                    record["confidence"] = "medium"
+                elif has_valid_cues:
+                    edge.valid_at = enriched_dt
+                    record["action"] = "enriched_valid_at"
+                    record["confidence"] = "medium"
+                elif has_ongoing_cues:
+                    edge.valid_at = ensure_utc(reference_time)
+                    record["action"] = "enriched_ongoing"
+                    record["confidence"] = "medium"
+                else:
+                    edge.valid_at = enriched_dt
+                    record["action"] = "enriched_valid_at_default"
+                    record["confidence"] = "low"
+
+        elif has_ongoing_cues and not edge.valid_at:
+            edge.valid_at = ensure_utc(reference_time)
+            record["action"] = "enriched_ongoing_no_date"
+            record["confidence"] = "low"
+
+        enrichment_records.append(record)
+
+    return edges, enrichment_records
 
 
 def _build_embedding_stub() -> dict[str, Any]:
@@ -775,6 +929,22 @@ def build_graphiti_objects(
         # 4a. Remap edge pointers based on entity deduplication
         entity_edges = resolve_edge_pointers(entity_edges, uuid_map)
 
+        # 4b. Enrich temporal metadata with dateparser validation
+        if config.temporal_enrichment_enabled:
+            entity_edges, temporal_enrichment_records = _enrich_temporal_metadata(
+                entity_edges,
+                input_text,
+                reference_time,
+                config,
+            )
+            logger.info(
+                "Temporal enrichment: processed %d edges, %d enriched",
+                len(entity_edges),
+                sum(1 for r in temporal_enrichment_records if r["action"] != "unchanged")
+            )
+        else:
+            temporal_enrichment_records = []
+
         # 5. Apply attribute enrichment
         attributes_by_uuid, attribute_json = _apply_entity_attributes(
             resolved_map,
@@ -842,6 +1012,7 @@ def build_graphiti_objects(
             invalidated_edges=invalidated_edges,
             entity_attributes_json=attribute_json,
             entity_summaries_json=summaries_json,
+            temporal_enrichment_records=temporal_enrichment_records,
         )
 
     except Exception as exc:  # noqa: BLE001
@@ -970,7 +1141,7 @@ class GraphitiPipeline:
             )
 
         # Relationship inference
-        relationships, rels_json = infer_relationships(text, facts, entities)
+        relationships, rels_json = infer_relationships(text, facts, entities, reference_time)
         if relationships is None or ("error" in rels_json):
             raise GraphitiPipelineError(
                 "Relationships", rels_json.get("error", "Unknown error")
@@ -989,6 +1160,7 @@ class GraphitiPipeline:
                 text,
                 facts,
                 entities,
+                reference_time,
             )
             artifacts.llm_relationships = llm_relationships
             artifacts.llm_relationships_json = llm_relationships_json
@@ -1027,6 +1199,7 @@ class GraphitiPipeline:
         artifacts.dedupe_records = build_result.dedupe_records
         artifacts.edge_resolution_records = build_result.edge_resolution_records
         artifacts.invalidated_edges = build_result.invalidated_edges
+        artifacts.temporal_enrichment_records = build_result.temporal_enrichment_records
         artifacts.entity_summaries_json = build_result.entity_summaries_json
         artifacts.entity_summaries = {
             entry["uuid"]: entry["summary"]
@@ -1042,6 +1215,7 @@ class GraphitiPipeline:
             for entry in build_result.entity_attributes_json
             if "uuid" in entry
         }
+        artifacts.temporal_enrichment_records = build_result.temporal_enrichment_records
 
         # Embedding/reranker stubs (for future integration)
         artifacts.embedding_stub = _build_embedding_stub()

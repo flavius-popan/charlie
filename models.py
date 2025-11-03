@@ -21,6 +21,14 @@ class Relationship(BaseModel):
     target: str = Field(description="Target entity name")
     relation: str = Field(description="Relationship type (e.g., works_at, knows)")
     context: str = Field(description="Supporting fact/context for this relationship")
+    valid_at: str | None = Field(
+        None,
+        description="ISO 8601 datetime when the relationship became true (e.g., 2025-04-30T00:00:00Z)"
+    )
+    invalid_at: str | None = Field(
+        None,
+        description="ISO 8601 datetime when the relationship stopped being true (e.g., 2025-04-30T00:00:00Z)"
+    )
 
 
 class Relationships(BaseModel):
