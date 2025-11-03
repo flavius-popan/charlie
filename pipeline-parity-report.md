@@ -143,6 +143,13 @@ The custom `graphiti_pipeline.py` implementation achieves **high functional pari
 - Custom edge types (edge_type_map support)
 - Advanced temporal bounds extraction (valid_at/invalid_at derived from text)
 
+**Hybrid Temporal Extraction Blueprint**:
+- **Stage 1 – Local parsing**: Run `dateparser.search_dates` over each edge fact plus adjacent episode sentences, anchoring `RELATIVE_BASE` to the episode reference timestamp. Capture absolute timestamps, relative offsets, parser confidence, and the raw span text without mutating pipeline outputs yet.
+- **Stage 2 – Cue interpretation**: Apply lightweight heuristics keyed to discourse markers (“since”, “until”, “as of”, “no longer”) and tense shifts to tag each candidate as a potential start, end, or ongoing marker, and flag contradictory or low-confidence spans.
+- **Stage 3 – DSPy adjudication**: Feed the curated candidates, cue metadata, and the source fact into a compact `TemporalExtractionSignature`. This signature (or a future rule-based adapter) decides whether to adopt, adjust, or discard each suggestion and emits structured `valid_at`/`invalid_at` plus audit-friendly explanations.
+- **Stage 4 – Edge resolution integration**: Extend `_resolve_entity_edges()` to prefer high-confidence timestamps, fall back to the episode reference time when none qualify, and persist provenance so contradiction handling distinguishes parser-derived dates from defaults.
+- **Benefits**: Preserves the local-first mandate, removes repeated LLM temporal prompts, lowers inference latency versus graphiti-core’s prompt loop, and keeps the adjudication step small enough for MLX-backed local models while targeting `add_episode()` parity.
+
 **Reuse Status**: Cannot directly reuse `extract_edges()` (requires LLM client), but the DSPy approach achieves similar goals with structured output guarantees.
 
 ---
@@ -255,9 +262,9 @@ The custom `graphiti_pipeline.py` implementation achieves **high functional pari
 #### High Priority (would significantly improve parity):
 
 **1. Temporal utilities** (`temporal_operations.py`):
-- `extract_edge_dates()` - parse temporal bounds from text
-- **Impact**: Better temporal metadata
-- **Effort**: Medium (requires DSPy signature or LLM integration)
+- `extract_edge_dates()` - reference implementation for temporal bounds parsing
+- **Impact**: Guides parity checks while we mirror behavior with the hybrid dateparser + DSPy stack
+- **Effort**: Medium (requires building the new signature and integration glue)
 
 #### Medium Priority:
 
@@ -309,10 +316,11 @@ These require LLM client or embedder, which the custom pipeline explicitly avoid
 - **Desired behavior**: Branch on `EpisodeType` when invoking DSPy signatures—e.g., add a “message summarizer” that shortens conversational noise before NER, or parse JSON payloads directly into facts.
 - **Risks without it**: Message-heavy or semi-structured feeds will lag behind graphiti-core results, especially when blank lines, emojis, or key-value blobs are present.
 
-**5. Temporal Extraction Signature**
+**5. Temporal Extraction Signature (Hybrid dateparser + DSPy)**
 - **Why it matters**: graphiti-core pulls temporal hints (“since 2015”, “through Q4 last year”) into `valid_at`, `invalid_at`, and `expired_at`, enabling longitudinal analytics. We currently fall back to the episode’s reference time, erasing historical ordering and overwriting contradictory facts too aggressively.
-- **Desired behavior**: Add a DSPy `TemporalExtractionSignature` that reads the episode text + edge fact and returns structured bounds (absolute dates, relative offsets to `reference_time`, confidence flags). `_resolve_entity_edges()` should then merge these bounds before contradiction detection runs.
-- **Benefits**: Accurate timelines, better contradiction handling (e.g., auto-expiring “WORKS_AT Acme” when “left Acme in 2022” appears), and readiness for time-aware visualizations.
+- **Desired behavior**: Implement the four-stage blueprint above—use `dateparser` for fast, local candidate extraction, apply cue-based heuristics, and let a DSPy `TemporalExtractionSignature` adjudicate which timestamps to trust before `_resolve_entity_edges()` runs.
+- **Implementation notes**: Store parser metadata alongside each edge so contradiction checks know whether a timestamp came from text, minimize re-parsing by caching sentence windows, and gate MLX inference with confidence thresholds so we can downgrade to rule-only adjudication if small models struggle.
+- **Benefits**: Accurate timelines, better contradiction handling (e.g., auto-expiring “WORKS_AT Acme” when “left Acme in 2022” appears), reduced reliance on large LLMs, and readiness for time-aware visualizations that remain compatible with `add_episode()` semantics.
 
 ### Lower-Impact (Deferred) Items
 
@@ -357,7 +365,7 @@ These require LLM client or embedder, which the custom pipeline explicitly avoid
 
 4. **DSPy reflexion loop** – Implement the self-critique module described in “High-Impact Gap #1” so entity/relationship recall matches graphiti-core.
 5. **Custom schema support** – Introduce registration hooks + signatures for provider-defined entity/edge types, including validation and attribute hydration.
-6. **Temporal extraction signature** – Deliver the time-bound enrichment outlined earlier, feeding structured timestamps into `_resolve_entity_edges()` before contradiction resolution.
+6. **Hybrid temporal extraction** – Stand up the dateparser pre-pass, cue heuristics, and DSPy adjudication signature from the blueprint, then thread the structured timestamps into `_resolve_entity_edges()` so parity with `add_episode()` improves without increasing inference cost.
 
 ### Long-Term (Deferred)
 
@@ -421,4 +429,4 @@ The custom `graphiti_pipeline.py` achieves **excellent functional parity** with 
 ---
 
 **Document Version**: 1.1
-**Last Updated**: 2025-02-15
+**Last Updated**: 2025-11-03
