@@ -146,116 +146,287 @@ def _debounced_ner_preview(text: str, persons_only: bool):
 
 # Build Gradio interface
 with gr.Blocks(title="Phase 1 PoC: Graphiti Pipeline") as app:
-    gr.Markdown("# Phase 1 PoC: Text → Graph in FalkorDBLite")
+    gr.Markdown("# Graphiti Pipeline: Local Knowledge Graph Construction")
     gr.Markdown(f"**Database:** `{DB_PATH}` | **Model Config:** `{MODEL_CONFIG}`")
 
-    gr.Markdown("## Input & Configuration")
-    with gr.Row(equal_height=True):
-        with gr.Column(scale=3, min_width=400):
-            input_text = gr.Textbox(
-                label="Journal Entry",
-                placeholder="Enter text here...",
-                lines=8,
-            )
-            reference_time_input = gr.Textbox(
-                label="Reference Time (ISO8601, optional)",
-                placeholder="Defaults to current time",
-            )
-        with gr.Column(scale=2, min_width=320):
-            with gr.Group():
-                gr.Markdown("### Entity Detection Preview")
-                persons_only_filter = gr.Checkbox(
-                    label="Persons only", value=False
+    with gr.Tabs():
+        # Tab 0: Overview & Input
+        with gr.Tab("Overview & Input"):
+            gr.Markdown("""
+## Pipeline Overview
+
+This pipeline transforms unstructured text into a knowledge graph through five stages. Unlike graphiti-core's API-based LLM approach,
+this implementation runs entirely offline using **DistilBERT** for entity recognition and **DSPy + Outlines** for structured extraction with local MLX inference.
+
+### The Five Stages
+
+1. **Entity Detection** - DistilBERT NER identifies people, organizations, and locations in your text
+2. **Knowledge Extraction** - DSPy signatures extract facts and relationships from the text and entities
+3. **Graph Assembly** - Entities and edges are deduplicated against existing graph data, with contradictions resolved
+4. **Entity Enrichment** - Entities receive attributes, labels, and summaries to enhance searchability
+5. **Persistence** - The graph is written to FalkorDB and visualized
+
+### Key Architectural Differences from graphiti-core
+
+- **Entity Extraction**: DistilBERT NER (local) vs LLM prompts (API)
+- **Fact/Relationship Extraction**: DSPy signatures (structured) vs prompt-based LLM calls
+- **Inference**: Local MLX execution vs OpenAI/Anthropic APIs
+- **Deduplication**: Reuses graphiti-core's MinHash + Jaccard fuzzy matching
+- **Temporal Handling**: Hybrid inline DSPy extraction + dateparser validation
+- **Schema Compatibility**: Uses graphiti-core's data models (`EntityNode`, `EntityEdge`, etc.)
+
+---
+
+## Input Configuration
+
+Enter your text below and configure the pipeline behavior. The live preview shows entities detected by DistilBERT NER as you type.
+            """)
+
+            with gr.Row(equal_height=True):
+                with gr.Column(scale=3, min_width=400):
+                    input_text = gr.Textbox(
+                        label="Journal Entry / Text to Process",
+                        placeholder="Enter text here...",
+                        lines=10,
+                    )
+                    reference_time_input = gr.Textbox(
+                        label="Reference Time (ISO8601, optional)",
+                        placeholder="Defaults to current time",
+                    )
+                with gr.Column(scale=2, min_width=320):
+                    gr.Markdown("### Live Entity Preview")
+                    gr.Markdown("As you type, DistilBERT NER extracts entities in real-time. This preview shows what the pipeline will process.")
+                    persons_only_filter = gr.Checkbox(
+                        label="Persons only", value=False
+                    )
+                    entity_preview_box = gr.Textbox(
+                        label="Detected entities",
+                        value="Enter text to see detected entities.",
+                        interactive=False,
+                        lines=10,
+                    )
+
+            gr.Markdown("### Pipeline Configuration")
+            gr.Markdown("Toggle features on/off to experiment with different pipeline behaviors. All toggles are enabled by default.")
+
+            with gr.Row():
+                context_window_slider = gr.Slider(
+                    label="Context Window (previous episodes)",
+                    minimum=0,
+                    maximum=10,
+                    step=1,
+                    value=DEFAULT_UI_CONFIG.context_window,
                 )
-                entity_preview_box = gr.Textbox(
-                    label="Entities to extract",
-                    value="Enter text to see detected entities.",
-                    interactive=False,
-                    lines=8,
+                dedupe_toggle = gr.Checkbox(
+                    label="Enable deduplication", value=DEFAULT_UI_CONFIG.dedupe_enabled
                 )
+                attributes_toggle = gr.Checkbox(
+                    label="Enable attribute extraction",
+                    value=DEFAULT_UI_CONFIG.attribute_extraction_enabled,
+                )
+                summary_toggle = gr.Checkbox(
+                    label="Enable entity summaries",
+                    value=DEFAULT_UI_CONFIG.entity_summary_enabled,
+                )
+                temporal_toggle = gr.Checkbox(
+                    label="Enable temporal defaults",
+                    value=DEFAULT_UI_CONFIG.temporal_enabled,
+                )
+                temporal_enrichment_toggle = gr.Checkbox(
+                    label="Enable temporal enrichment (dateparser)",
+                    value=DEFAULT_UI_CONFIG.temporal_enrichment_enabled,
+                )
+                llm_edges_toggle = gr.Checkbox(
+                    label="Enable LLM edge detection",
+                    value=DEFAULT_UI_CONFIG.llm_edge_detection_enabled,
+                )
+
+            run_pipeline_btn = gr.Button("Run Pipeline (Dry Run - No Database Write)", variant="primary", size="lg")
+            gr.Markdown("Click to process your text through all five stages. Results appear in the following tabs.")
+
+        # Tab 1: Entity Detection
+        with gr.Tab("Stage 1: Entity Detection"):
+            gr.Markdown("""
+## Stage 1: Entity Detection
+
+This stage identifies entities in your text and retrieves context from previous episodes. Understanding what entities already exist helps the pipeline
+make intelligent deduplication decisions later.
+
+### What Happens Here
+
+1. **Context Retrieval**: The pipeline queries FalkorDB for recent episodes within your configured context window
+2. **Entity Recognition**: DistilBERT NER processes your text and extracts people, organizations, and locations
+3. **Entity Deduplication**: Extracted entity names are normalized and deduplicated before passing to the next stage
+
+### Why This Matters
+
+Context episodes inform entity resolution in Stage 3. If "Alice" appears in a previous episode, the pipeline can match the new mention to the existing entity node rather than creating a duplicate.
+
+---
+            """)
+
+            gr.Markdown("**Context Episodes** - Recent episodes from your graph, ordered by recency.")
+            context_output = gr.JSON(
+                label="Most recent episodes",
+                value=INITIAL_CONTEXT,
+            )
+
+            gr.Markdown("**Detected Entities** - DistilBERT NER extracts named entities with type labels (PER/ORG/LOC).")
+            ner_output = gr.Textbox(label="Entity Names", interactive=False, lines=6)
+
+            with gr.Accordion("Raw NER Output", open=False):
                 entity_preview_raw = gr.JSON(
-                    label="Detected entities (raw)",
+                    label="Raw DistilBERT predictions with scores",
                     value=None,
                 )
 
-    with gr.Row():
-        context_window_slider = gr.Slider(
-            label="Context Window (previous episodes)",
-            minimum=0,
-            maximum=10,
-            step=1,
-            value=DEFAULT_UI_CONFIG.context_window,
-        )
-        dedupe_toggle = gr.Checkbox(
-            label="Enable deduplication", value=DEFAULT_UI_CONFIG.dedupe_enabled
-        )
-        attributes_toggle = gr.Checkbox(
-            label="Enable attribute extraction",
-            value=DEFAULT_UI_CONFIG.attribute_extraction_enabled,
-        )
-        summary_toggle = gr.Checkbox(
-            label="Enable entity summaries",
-            value=DEFAULT_UI_CONFIG.entity_summary_enabled,
-        )
-        temporal_toggle = gr.Checkbox(
-            label="Enable temporal defaults",
-            value=DEFAULT_UI_CONFIG.temporal_enabled,
-        )
-        temporal_enrichment_toggle = gr.Checkbox(
-            label="Enable temporal enrichment (dateparser)",
-            value=DEFAULT_UI_CONFIG.temporal_enrichment_enabled,
-        )
-        llm_edges_toggle = gr.Checkbox(
-            label="Enable LLM edge detection",
-            value=DEFAULT_UI_CONFIG.llm_edge_detection_enabled,
-        )
+        # Tab 2: Knowledge Extraction
+        with gr.Tab("Stage 2: Knowledge Extraction"):
+            gr.Markdown("""
+## Stage 2: Knowledge Extraction
 
-    run_pipeline_btn = gr.Button("Run Pipeline (no write)", variant="primary")
+This stage extracts structured facts and relationships from your text using DSPy signatures with local MLX inference. This replaces graphiti-core's
+LLM-based extraction while maintaining structured output guarantees.
 
-    gr.Markdown("### Context Episodes")
-    context_output = gr.JSON(
-        label="Most recent episodes",
-        value=INITIAL_CONTEXT,
-    )
+### What Happens Here
 
-    gr.Markdown("## Entity Recognition (DistilBERT NER)")
-    ner_output = gr.Textbox(label="Entity Names", interactive=False)
+1. **Fact Extraction**: DSPy `FactExtractionSignature` extracts entity-specific facts grounded in the text
+2. **Relationship Inference**: DSPy `RelationshipSignature` infers relationships between entities using the extracted facts
+3. **LLM Edge Detection** (optional): `EntityEdgeDetectionSignature` detects relationships directly from text, providing an alternative extraction path
+4. **Relationship Merging**: Both extraction methods are deduplicated and merged into a final relationship set
 
-    gr.Markdown("## DSPy Extraction")
-    facts_output = gr.JSON(label="Extracted Facts")
-    base_relationships_output = gr.JSON(label="DSPy Relationships")
-    llm_relationships_output = gr.JSON(label="LLM Edge Detection")
-    relationships_output = gr.JSON(label="Merged Relationships")
+### Why This Matters
 
-    gr.Markdown("## Graph Assembly & Deduplication")
-    graphiti_output = gr.JSON(label="Graphiti Objects")
-    dedupe_output = gr.JSON(label="Entity Resolution Records")
-    edge_resolution_output = gr.JSON(label="Relationship Resolution Records")
-    invalidated_edges_output = gr.JSON(label="Invalidated Relationships")
+Facts provide grounding for relationship extraction. The two-stage approach (fact-based + direct edge detection) improves recall by catching relationships
+that might be missed by either method alone. Temporal metadata (`valid_at`, `invalid_at`) is extracted inline during relationship inference.
 
-    gr.Markdown("## Temporal Enrichment")
-    temporal_enrichment_output = gr.JSON(label="Temporal Metadata (dateparser validation)")
+---
+            """)
 
-    gr.Markdown("## Attributes & Summaries")
-    attributes_output = gr.JSON(label="Entity Attributes")
-    summaries_output = gr.JSON(label="Entity Summaries")
+            gr.Markdown("**Extracted Facts** - Entity-specific facts that ground relationship inference.")
+            facts_output = gr.JSON(label="Facts")
 
-    gr.Markdown("## Embeddings & Reranker (Stubs)")
-    embedding_stub_output = gr.JSON(label="Embedding Status")
-    reranker_stub_output = gr.JSON(label="Reranker Status")
+            gr.Markdown("**DSPy Relationships** - Core relationship extraction using fact-based reasoning and temporal inference.")
+            base_relationships_output = gr.JSON(label="DSPy Relationships")
 
-    gr.Markdown("## Persistence & Visualization")
-    with gr.Row():
-        write_falkor_btn = gr.Button("Write to FalkorDB", variant="primary")
-        db_stats_display = gr.Textbox(
-            label="Database Stats",
-            value=lambda: str(get_db_stats()),
-            interactive=False,
-        )
-        reset_btn = gr.Button("Reset Database", variant="stop")
+            gr.Markdown("**LLM Edge Detection** - Optional direct relationship extraction (enabled when 'LLM edge detection' toggle is on).")
+            llm_relationships_output = gr.JSON(label="LLM Edge Detection Results")
 
-    write_output = gr.JSON(label="Write Confirmation")
-    graphviz_output = gr.Image(label="Graph Visualization")
+            gr.Markdown("**Merged Relationships** - Final deduplicated relationship set combining both extraction methods.")
+            relationships_output = gr.JSON(label="Final Merged Relationships")
+
+        # Tab 3: Graph Assembly & Resolution
+        with gr.Tab("Stage 3: Graph Assembly & Resolution"):
+            gr.Markdown("""
+## Stage 3: Graph Assembly & Resolution
+
+This stage builds graph objects and resolves them against existing data. Entities are matched using exact and fuzzy matching (MinHash + Jaccard).
+Relationships are deduplicated and checked for contradictions.
+
+### What Happens Here
+
+1. **Episodic Node Creation**: An `EpisodicNode` is created for your text with a UUID and timestamp
+2. **Entity Resolution**: Extracted entities are matched against existing graph entities using exact name matching, then fuzzy matching (MinHash similarity)
+3. **Entity Edge Construction**: Relationships are converted to `EntityEdge` objects with temporal metadata
+4. **Edge Pointer Resolution**: Edge source/target UUIDs are remapped based on entity deduplication decisions
+5. **Temporal Enrichment**: Dateparser validates DSPy-extracted temporal metadata and applies cue-based heuristics ("since", "until", "currently", etc.)
+6. **Edge Resolution**: Entity edges are deduplicated against existing edges; episode lists are merged
+7. **Contradiction Detection**: `resolve_edge_contradictions()` identifies conflicting relationships and invalidates outdated ones
+8. **Episodic Edges**: MENTIONS edges are created linking the episode to each referenced entity
+
+### Why This Matters
+
+Resolution prevents duplicate entities and edges from polluting your graph. Fuzzy matching catches variations like "Bob Smith" vs "Robert Smith".
+Contradiction handling maintains temporal consistency by invalidating relationships that conflict with newer information.
+
+---
+            """)
+
+            gr.Markdown("**Complete Graph Structure** - All nodes and edges assembled for this episode.")
+            graphiti_output = gr.JSON(label="Graphiti Objects (Episode + Nodes + Edges)")
+
+            gr.Markdown("**Entity Resolution Records** - Tracks how each entity was resolved: exact match, fuzzy match, or new creation.")
+            dedupe_output = gr.JSON(label="Entity Deduplication Decisions")
+
+            gr.Markdown("**Edge Resolution Records** - Shows whether relationships were merged with existing edges or created as new.")
+            edge_resolution_output = gr.JSON(label="Relationship Resolution Decisions")
+
+            gr.Markdown("**Invalidated Edges** - Relationships marked invalid due to contradictions with newer information.")
+            invalidated_edges_output = gr.JSON(label="Contradicted/Invalidated Relationships")
+
+            gr.Markdown("**Temporal Enrichment** - Dateparser validation results showing how temporal metadata was enriched or validated.")
+            temporal_enrichment_output = gr.JSON(label="Temporal Metadata Enrichment Records")
+
+        # Tab 4: Entity Enrichment
+        with gr.Tab("Stage 4: Entity Enrichment"):
+            gr.Markdown("""
+## Stage 4: Entity Enrichment
+
+This stage adds metadata to entities to improve search, retrieval, and context understanding. Attributes are derived from NER labels,
+while summaries are generated using DSPy.
+
+### What Happens Here
+
+1. **Attribute Extraction**: NER labels (PER/ORG/LOC) are mapped to Graphiti labels (Person/Organization/Location) and attached to entities
+2. **Entity Summary Generation**: DSPy `EntitySummarySignature` generates concise summaries for each entity using facts and relationships
+3. **Embeddings** (stubbed): Placeholder for future local Qwen embedder integration
+4. **Reranker** (stubbed): Placeholder for future cross-encoder integration
+
+### Why This Matters
+
+Attributes and labels enable type-specific filtering and validation. Summaries improve retrieval by providing context at a glance.
+Embeddings (when integrated) will power semantic search across your knowledge graph.
+
+---
+            """)
+
+            gr.Markdown("**Entity Attributes** - NER-derived labels and custom properties attached to each entity.")
+            attributes_output = gr.JSON(label="Attributes & Labels")
+
+            gr.Markdown("**Entity Summaries** - DSPy-generated summaries providing entity context at a glance.")
+            summaries_output = gr.JSON(label="Entity Summaries")
+
+            gr.Markdown("**Future Integration Stubs** - Embeddings and reranking will be integrated when local models are ready.")
+            with gr.Row():
+                embedding_stub_output = gr.JSON(label="Embedding Status")
+                reranker_stub_output = gr.JSON(label="Reranker Status")
+
+        # Tab 5: Persistence & Visualization
+        with gr.Tab("Stage 5: Persistence & Visualization"):
+            gr.Markdown("""
+## Stage 5: Persistence & Visualization
+
+This stage writes the assembled graph to FalkorDB and renders a visualization. The dry run above skips this step;
+click "Write to FalkorDB" to persist your results.
+
+### What Happens Here
+
+1. **Bulk Write**: All nodes (episode + entities) and edges (entity edges + episodic edges + invalidated edges) are written to FalkorDB in a single transaction
+2. **Verification**: The write result includes UUIDs for all created/updated objects
+3. **Visualization**: Graphviz renders the graph showing the episode node, entity nodes, and their relationships
+
+### Why This Matters
+
+FalkorDB provides a persistent, queryable graph database compatible with Cypher. The visualization helps you verify that entities and
+relationships were extracted and linked correctly.
+
+---
+            """)
+
+            with gr.Row():
+                write_falkor_btn = gr.Button("Write to FalkorDB", variant="primary", size="lg")
+                db_stats_display = gr.Textbox(
+                    label="Database Stats",
+                    value=lambda: str(get_db_stats()),
+                    interactive=False,
+                )
+                reset_btn = gr.Button("Reset Database", variant="stop")
+
+            gr.Markdown("**Write Confirmation** - Result of the FalkorDB write operation with UUIDs.")
+            write_output = gr.JSON(label="Write Result")
+
+            gr.Markdown("**Graph Visualization** - Graphviz rendering showing your episode (blue), entities (green), and relationships.")
+            graphviz_output = gr.Image(label="Graph Visualization")
 
     # State management
     config_state = gr.State(DEFAULT_UI_CONFIG)
