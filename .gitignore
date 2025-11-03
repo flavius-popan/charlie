@@ -24,3 +24,4 @@ prompts/.dspy_cache/
 data/*.db
 data/*.rdb
 data/dump.rdb
+data/*.db.settings
