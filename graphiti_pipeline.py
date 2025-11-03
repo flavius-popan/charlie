@@ -80,6 +80,8 @@ class GraphitiBuildResult:
     invalidated_edges: list[Any]
     entity_attributes_json: list[dict[str, Any]]
     entity_summaries_json: list[dict[str, Any]]
+
+
 @dataclass
 class PipelineConfig:
     """Configuration knobs mirroring Graphiti's add_episode parameters."""

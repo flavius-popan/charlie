@@ -1,6 +1,8 @@
 """Phase 1 PoC: Text → Graph in FalkorDBLite with Gradio UI."""
 
 import logging
+import threading
+import time
 from datetime import datetime
 
 import gradio as gr
@@ -11,6 +13,7 @@ from graphiti_pipeline import (
     GraphitiPipelineError,
     PipelineConfig,
     get_db_stats,
+    process_ner,
     render_verification_graph,
     reset_database,
     write_to_falkordb,
@@ -101,39 +104,73 @@ INITIAL_CONTEXT = _context_to_json(
     )
 )
 
+_NER_PREVIEW_DELAY = 0.75
+_ner_preview_lock = threading.Lock()
+_last_ner_preview_time = 0.0
+
+
+def _debounced_ner_preview(text: str, persons_only: bool):
+    """Live NER preview with debounce to avoid recalculating on every keystroke."""
+    global _last_ner_preview_time
+
+    normalized_text = (text or "").strip()
+
+    with _ner_preview_lock:
+        current_time = time.time()
+        _last_ner_preview_time = current_time
+
+    if not normalized_text:
+        return "Enter text to see detected entities.", gr.update(value=None)
+
+    time.sleep(_NER_PREVIEW_DELAY)
+
+    with _ner_preview_lock:
+        if current_time != _last_ner_preview_time:
+            return gr.update(), gr.update()
+
+    try:
+        entity_names, raw_entities, _ = process_ner(normalized_text, persons_only)
+    except Exception as exc:  # noqa: BLE001
+        logging.exception("Live NER preview failed")
+        return f"NER error: {exc}", gr.update(value=None)
+
+    names_text = "\n".join(entity_names) if entity_names else "(no entities detected)"
+    return names_text, raw_entities
+
 
 # Build Gradio interface
 with gr.Blocks(title="Phase 1 PoC: Graphiti Pipeline") as app:
     gr.Markdown("# Phase 1 PoC: Text → Graph in FalkorDBLite")
     gr.Markdown(f"**Database:** `{DB_PATH}` | **Model Config:** `{MODEL_CONFIG}`")
 
-    # Database controls
-    with gr.Row():
-        db_stats_display = gr.Textbox(
-            label="Database Stats", value=lambda: str(get_db_stats()), interactive=False
-        )
-        reset_btn = gr.Button("Reset Database", variant="stop")
-
-    # Example text section
-    gr.Markdown("### Example Text")
-    example_text = gr.Textbox(
-        value="Alice works at Microsoft in Seattle. She reports to Bob, who manages the engineering team.",
-        interactive=False,
-        show_label=False,
-    )
-    load_example_btn = gr.Button("Load Example", size="sm")
-
     gr.Markdown("## Input & Configuration")
-    input_text = gr.Textbox(
-        label="Journal Entry", placeholder="Enter text here...", lines=5
-    )
-
-    with gr.Row():
-        persons_only_filter = gr.Checkbox(label="Persons only", value=False)
-        reference_time_input = gr.Textbox(
-            label="Reference Time (ISO8601, optional)",
-            placeholder="Defaults to current time",
-        )
+    with gr.Row(equal_height=True):
+        with gr.Column(scale=3, min_width=400):
+            input_text = gr.Textbox(
+                label="Journal Entry",
+                placeholder="Enter text here...",
+                lines=8,
+            )
+            reference_time_input = gr.Textbox(
+                label="Reference Time (ISO8601, optional)",
+                placeholder="Defaults to current time",
+            )
+        with gr.Column(scale=2, min_width=320):
+            with gr.Group():
+                gr.Markdown("### Entity Detection Preview")
+                persons_only_filter = gr.Checkbox(
+                    label="Persons only", value=False
+                )
+                entity_preview_box = gr.Textbox(
+                    label="Entities to extract",
+                    value="Enter text to see detected entities.",
+                    interactive=False,
+                    lines=8,
+                )
+                entity_preview_raw = gr.JSON(
+                    label="Detected entities (raw)",
+                    value=None,
+                )
 
     with gr.Row():
         context_window_slider = gr.Slider(
@@ -189,7 +226,15 @@ with gr.Blocks(title="Phase 1 PoC: Graphiti Pipeline") as app:
     reranker_stub_output = gr.JSON(label="Reranker Status")
 
     gr.Markdown("## Persistence & Visualization")
-    write_falkor_btn = gr.Button("Write to FalkorDB", variant="primary")
+    with gr.Row():
+        write_falkor_btn = gr.Button("Write to FalkorDB", variant="primary")
+        db_stats_display = gr.Textbox(
+            label="Database Stats",
+            value=lambda: str(get_db_stats()),
+            interactive=False,
+        )
+        reset_btn = gr.Button("Reset Database", variant="stop")
+
     write_output = gr.JSON(label="Write Confirmation")
     graphviz_output = gr.Image(label="Graph Visualization")
 
@@ -245,6 +290,23 @@ with gr.Blocks(title="Phase 1 PoC: Graphiti Pipeline") as app:
             inputs=config_inputs,
             outputs=[config_state, context_output],
         )
+
+    preview_inputs = [input_text, persons_only_filter]
+
+    input_text.change(
+        fn=_debounced_ner_preview,
+        inputs=preview_inputs,
+        outputs=[entity_preview_box, entity_preview_raw],
+        trigger_mode="always_last",
+        show_progress="hidden",
+    )
+
+    persons_only_filter.change(
+        fn=_debounced_ner_preview,
+        inputs=preview_inputs,
+        outputs=[entity_preview_box, entity_preview_raw],
+        show_progress="hidden",
+    )
 
     def on_run_pipeline(
         text,
@@ -470,11 +532,6 @@ with gr.Blocks(title="Phase 1 PoC: Graphiti Pipeline") as app:
         inputs=[config_state, reference_time_input],
         outputs=[db_stats_display, context_output],
     )
-
-    def on_load_example():
-        return example_text.value
-
-    load_example_btn.click(on_load_example, outputs=[input_text])
 
 if __name__ == "__main__":
     app.launch()

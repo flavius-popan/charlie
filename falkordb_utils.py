@@ -115,12 +115,22 @@ def get_db_stats() -> dict[str, int]:
     Error handling: Exceptions propagate to caller (fail-fast).
     """
     # Count nodes
-    result = graph.query("MATCH (n) RETURN count(n) as node_count")
-    node_count = result.result_set[0][0] if result.result_set else 0
+    node_result = graph.query("MATCH (n) RETURN count(n) as node_count")
+    node_count = 0
+    if node_result.statistics and node_result.statistics[0]:
+        node_column = node_result.statistics[0][0]
+        node_value = node_column[1] if len(node_column) > 1 else node_column[0]
+        decoded_value = _decode_value(node_value)
+        node_count = int(decoded_value) if decoded_value is not None else 0
 
     # Count edges
-    result = graph.query("MATCH ()-[r]->() RETURN count(r) as edge_count")
-    edge_count = result.result_set[0][0] if result.result_set else 0
+    edge_result = graph.query("MATCH ()-[r]->() RETURN count(r) as edge_count")
+    edge_count = 0
+    if edge_result.statistics and edge_result.statistics[0]:
+        edge_column = edge_result.statistics[0][0]
+        edge_value = edge_column[1] if len(edge_column) > 1 else edge_column[0]
+        decoded_value = _decode_value(edge_value)
+        edge_count = int(decoded_value) if decoded_value is not None else 0
 
     return {"nodes": node_count, "edges": edge_count}
 
