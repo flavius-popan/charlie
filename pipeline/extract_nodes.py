@@ -47,6 +47,7 @@ from graphiti_core.utils.maintenance.dedup_helpers import (
 from pydantic import BaseModel, Field
 
 from pipeline.db_utils import fetch_entities_by_group, fetch_recent_episodes
+from pipeline.entity_edge_models import entity_types
 
 
 logger = logging.getLogger(__name__)
@@ -54,7 +55,10 @@ logger = logging.getLogger(__name__)
 
 # Pydantic models for structured output via Outlines
 class ExtractedEntity(BaseModel):
-    """Entity with type classification."""
+    """Entity with name and type classification.
+
+    Attributes are extracted separately in Stage 3, following graphiti-core's pattern.
+    """
 
     name: str = Field(description="Entity name")
     entity_type_id: int = Field(description="0=Entity, 1+=custom types", ge=0)
@@ -170,16 +174,18 @@ class ExtractNodes:
         reference_time: datetime | None = None,
         name: str | None = None,
         source_description: str = "Journal entry",
-        entity_types: dict | None = None,
+        entity_types: dict | None = entity_types,
     ) -> ExtractNodesOutput:
         """Extract and resolve entities from journal entry text.
+
+        By default, extracts Person and Emotion entities with custom attributes.
 
         Args:
             content: Journal entry text
             reference_time: When entry was written (defaults to now)
             name: Episode identifier (defaults to generated name)
             source_description: Description of source
-            entity_types: Custom entity type schemas
+            entity_types: Custom entity type schemas (defaults to Person and Emotion)
 
         Returns:
             ExtractNodesOutput with episode, resolved nodes, and UUID mappings

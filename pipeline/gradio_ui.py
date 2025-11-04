@@ -53,14 +53,35 @@ def _parse_reference_time(value: str | None) -> datetime:
 
 
 def _format_entity_list(nodes) -> str:
-    """Format entity nodes as readable list."""
+    """Format entity nodes as readable list with custom attributes.
+
+    Note: Attributes will be populated once Stage 3 (extract_attributes) is implemented.
+    Currently, Stage 1 extracts only entity names and types, following graphiti-core's pattern.
+    """
     if not nodes:
         return "(no entities extracted)"
 
     lines = []
     for node in nodes:
         labels = ", ".join(node.labels) if node.labels else "Entity"
-        lines.append(f"- {node.name} [{labels}] (UUID: {node.uuid[:8]}...)")
+        base_info = f"- {node.name} [{labels}]"
+
+        if node.attributes:
+            attrs = []
+            if "Person" in node.labels:
+                if relationship := node.attributes.get("relationship_type"):
+                    attrs.append(relationship)
+            elif "Emotion" in node.labels:
+                if emotion := node.attributes.get("specific_emotion"):
+                    attrs.append(emotion)
+                if category := node.attributes.get("category"):
+                    attrs.append(category)
+
+            if attrs:
+                base_info += f" ({', '.join(attrs)})"
+
+        base_info += f" (UUID: {node.uuid[:8]}...)"
+        lines.append(base_info)
 
     return "\n".join(lines)
 

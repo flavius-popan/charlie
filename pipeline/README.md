@@ -84,6 +84,8 @@ extractor = ExtractNodes(group_id="user_123", entity_extractor=compiled)
 result = await extractor(content="...")
 ```
 
+**Important**: Stage 1 extracts entity names and types ONLY. Custom attributes (e.g., Person.relationship_type, Emotion.specific_emotion) are extracted in Stage 3, following graphiti-core's separation of concerns.
+
 **Pattern for Future Stages**: Repeat this two-layer design. Create a pure `dspy.Module` for each LLM operation, inject into orchestrator.
 
 ### Stage 2: Extract Edges (TODO)
@@ -94,9 +96,31 @@ Extract relationships between resolved entities.
 
 ### Stage 3: Extract Attributes (TODO)
 
+**Module**: `extract_attributes.py` (not yet implemented)
 **Analogous to**: graphiti-core's `extract_attributes_from_nodes()`
 
-Enrich entity nodes with attributes.
+**Purpose**: Extract custom entity attributes based on entity type and episode context.
+
+**Design**:
+- For each resolved entity from Stage 1, extract type-specific attributes:
+  - **Person**: `relationship_type` (e.g., "friend", "colleague", "family")
+  - **Emotion**: `specific_emotion` (e.g., "anxiety", "joy"), `category` (e.g., "positive", "negative")
+- Pass entity's Pydantic model (from `entity_edge_models.py`) as `response_model` to LLM
+- LLM extracts attributes based on episode context
+- Results merged into `EntityNode.attributes` dict
+
+**Architecture** (follows two-layer pattern):
+1. **`AttributeExtractor`** (dspy.Module): Pure LLM extraction. Takes entity name, type, and episode context. Returns Pydantic model with attributes.
+2. **`ExtractAttributes`** (orchestrator): Iterates over resolved entities, calls AttributeExtractor for each, merges results.
+
+**Example**:
+```python
+# For a Person entity "Sarah" in episode "Today I met with my friend Sarah"
+# LLM extracts: {"relationship_type": "friend"}
+# Merged into: EntityNode(name="Sarah", labels=["Entity", "Person"], attributes={"relationship_type": "friend"})
+```
+
+**Critical**: This stage follows graphiti-core's separation of concerns. Entity names/types are extracted in Stage 1, attributes in Stage 3. This enables optimizing each stage independently and matches graphiti-core's architecture.
 
 ### Stage 4: Generate Summaries (TODO)
 
