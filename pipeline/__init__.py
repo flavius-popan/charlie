@@ -24,6 +24,7 @@ from graphiti_core.nodes import EntityNode, EpisodicNode
 from graphiti_core.utils.ontology_utils.entity_types_utils import validate_entity_types
 
 from .extract_nodes import ExtractNodes, ExtractNodesOutput
+from .entity_edge_models import entity_types
 
 # ========== Pipeline Orchestration ==========
 
@@ -44,7 +45,7 @@ async def add_journal(
     reference_time: datetime | None = None,
     name: str | None = None,
     source_description: str = "Journal entry",
-    entity_types: dict | None = None,
+    entity_types: dict | None = entity_types,
     excluded_entity_types: list[str] | None = None,
     extract_nodes_factory: Callable[[str], ExtractNodes] | None = None,
 ) -> AddJournalResults:

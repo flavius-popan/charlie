@@ -33,6 +33,7 @@ from dataclasses import dataclass
 from datetime import datetime
 import json
 import logging
+from pathlib import Path
 from typing import Any
 
 import dspy
@@ -110,6 +111,12 @@ class EntityExtractor(dspy.Module):
     def __init__(self):
         super().__init__()
         self.extractor = dspy.Predict(EntityExtractionSignature)
+
+        # Auto-load optimized prompts if they exist
+        prompt_path = Path(__file__).parent / "prompts" / "extract_nodes.json"
+        if prompt_path.exists():
+            self.load(str(prompt_path))
+            logger.info("Loaded optimized prompts from %s", prompt_path)
 
     def forward(
         self,
@@ -368,11 +375,13 @@ class ExtractNodes:
             else:
                 desc = base_desc
 
-            types_list.append({
-                "entity_type_id": i + 1,
-                "entity_type_name": name,
-                "entity_type_description": desc,
-            })
+            types_list.append(
+                {
+                    "entity_type_id": i + 1,
+                    "entity_type_name": name,
+                    "entity_type_description": desc,
+                }
+            )
 
         return json.dumps(types_list)
 

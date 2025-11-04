@@ -132,6 +132,56 @@ Generate entity summaries.
 
 Save all graph elements to FalkorDB.
 
+## Optimization
+
+Each pipeline stage can be optimized using DSPy's BootstrapFewShot optimizer to improve prompt quality.
+
+### Pattern
+
+All optimizers follow this structure:
+
+1. **Location**: `pipeline/optimizers/<stage_name>_optimizer.py`
+2. **Prompts**: Saved to `pipeline/prompts/<stage_name>.json`
+3. **Auto-loading**: Stage modules automatically load optimized prompts if present
+4. **Template**: 8-section functional template (no shared utilities)
+
+### Running Optimizers
+
+```bash
+# Optimize Stage 1: Entity Extraction
+python -m pipeline.optimizers.extract_nodes_optimizer
+
+# Future stages will follow same pattern
+# python -m pipeline.optimizers.extract_edges_optimizer
+```
+
+**What happens:**
+1. Baseline evaluation on training set
+2. BootstrapFewShot optimization (5 demos)
+3. Optimized evaluation
+4. Prompts saved to `pipeline/prompts/<stage>.json`
+5. Stage auto-loads optimized prompts on next run
+
+### Optimizer Structure
+
+Each optimizer script contains:
+
+1. **configure_dspy()** - Setup LM and adapter
+2. **build_trainset()** - 15-25 training examples
+3. **<stage>_metric()** - Stage-specific evaluation metric (e.g., F1 for entities)
+4. **optimize()** - Run BootstrapFewShot
+5. **evaluate()** - Measure quality
+6. **main()** - Orchestrate: baseline → optimize → evaluate → save
+
+### Adding New Stage Optimizers
+
+1. Copy `pipeline/optimizers/extract_nodes_optimizer.py` as template
+2. Customize `build_trainset()` with stage-specific examples
+3. Implement stage-specific metric function
+4. Update imports to use your stage's dspy.Module
+5. Set correct `PROMPT_OUTPUT` path
+6. Add auto-load logic to your stage's Module.__init__()
+
 ## Testing UI
 
 ### Gradio Interactive UI

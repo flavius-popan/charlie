@@ -1,0 +1,401 @@
+{
+  "extractor": {
+    "traces": [],
+    "train": [],
+    "demos": [
+      {
+        "episode_content": "Finals week is crushing me. Professor Chen extended my deadline after I told her about Mom's surgery. Feeling overwhelmed but relieved.",
+        "entity_types": "[{\"entity_type_id\": 0, \"entity_type_name\": \"Entity\", \"entity_type_description\": \"fallback for significant entities\"}, {\"entity_type_id\": 1, \"entity_type_name\": \"Person\", \"entity_type_description\": \"people author interacts with\"}, {\"entity_type_id\": 2, \"entity_type_name\": \"Emotion\", \"entity_type_description\": \"emotional states author experiences\"}]",
+        "extracted_entities": {
+          "extracted_entities": [
+            {
+              "name": "Professor Chen",
+              "entity_type_id": 1
+            },
+            {
+              "name": "Mom",
+              "entity_type_id": 1
+            },
+            {
+              "name": "overwhelmed",
+              "entity_type_id": 2
+            },
+            {
+              "name": "relieved",
+              "entity_type_id": 2
+            }
+          ]
+        }
+      },
+      {
+        "episode_content": "Had tea with my old friend Eleanor this afternoon. We talked about our grandchildren and laughed about getting old. Feeling content and peaceful.",
+        "entity_types": "[{\"entity_type_id\": 0, \"entity_type_name\": \"Entity\", \"entity_type_description\": \"fallback for significant entities\"}, {\"entity_type_id\": 1, \"entity_type_name\": \"Person\", \"entity_type_description\": \"people author interacts with\"}, {\"entity_type_id\": 2, \"entity_type_name\": \"Emotion\", \"entity_type_description\": \"emotional states author experiences\"}]",
+        "extracted_entities": {
+          "extracted_entities": [
+            {
+              "name": "Eleanor",
+              "entity_type_id": 1
+            },
+            {
+              "name": "content",
+              "entity_type_id": 2
+            },
+            {
+              "name": "peaceful",
+              "entity_type_id": 2
+            }
+          ]
+        }
+      },
+      {
+        "episode_content": "Dropped my daughter Amara off at college today. Her roommate Keiko seems sweet. My partner Sam and I cried all the way home. Feeling bittersweet and empty.",
+        "entity_types": "[{\"entity_type_id\": 0, \"entity_type_name\": \"Entity\", \"entity_type_description\": \"fallback for significant entities\"}, {\"entity_type_id\": 1, \"entity_type_name\": \"Person\", \"entity_type_description\": \"people author interacts with\"}, {\"entity_type_id\": 2, \"entity_type_name\": \"Emotion\", \"entity_type_description\": \"emotional states author experiences\"}]",
+        "extracted_entities": {
+          "extracted_entities": [
+            {
+              "name": "Amara",
+              "entity_type_id": 1
+            },
+            {
+              "name": "Keiko",
+              "entity_type_id": 1
+            },
+            {
+              "name": "Sam",
+              "entity_type_id": 1
+            },
+            {
+              "name": "bittersweet",
+              "entity_type_id": 2
+            },
+            {
+              "name": "empty",
+              "entity_type_id": 2
+            }
+          ]
+        }
+      },
+      {
+        "episode_content": "Watched my daughter Lily perform in the school play tonight. Dad was there too. Feeling so proud and grateful.",
+        "entity_types": "[{\"entity_type_id\": 0, \"entity_type_name\": \"Entity\", \"entity_type_description\": \"fallback for significant entities\"}, {\"entity_type_id\": 1, \"entity_type_name\": \"Person\", \"entity_type_description\": \"people author interacts with\"}, {\"entity_type_id\": 2, \"entity_type_name\": \"Emotion\", \"entity_type_description\": \"emotional states author experiences\"}]",
+        "extracted_entities": {
+          "extracted_entities": [
+            {
+              "name": "Lily",
+              "entity_type_id": 1
+            },
+            {
+              "name": "Dad",
+              "entity_type_id": 1
+            },
+            {
+              "name": "proud",
+              "entity_type_id": 2
+            },
+            {
+              "name": "grateful",
+              "entity_type_id": 2
+            }
+          ]
+        }
+      },
+      {
+        "episode_content": "Alex smiled at me during lunch today. My best friend Nina says I should just ask them out. Feeling nervous, excited, and terrified all at once.",
+        "entity_types": "[{\"entity_type_id\": 0, \"entity_type_name\": \"Entity\", \"entity_type_description\": \"fallback for significant entities\"}, {\"entity_type_id\": 1, \"entity_type_name\": \"Person\", \"entity_type_description\": \"people author interacts with\"}, {\"entity_type_id\": 2, \"entity_type_name\": \"Emotion\", \"entity_type_description\": \"emotional states author experiences\"}]",
+        "extracted_entities": {
+          "extracted_entities": [
+            {
+              "name": "Alex",
+              "entity_type_id": 1
+            },
+            {
+              "name": "Nina",
+              "entity_type_id": 1
+            },
+            {
+              "name": "nervous",
+              "entity_type_id": 2
+            },
+            {
+              "name": "excited",
+              "entity_type_id": 2
+            },
+            {
+              "name": "terrified",
+              "entity_type_id": 2
+            }
+          ]
+        }
+      },
+      {
+        "episode_content": "Six months since we lost Mom. My sister Carmen called to check in. Pastor Williams invited me to the grief support group. Feeling sad but supported.",
+        "entity_types": "[{\"entity_type_id\": 0, \"entity_type_name\": \"Entity\", \"entity_type_description\": \"fallback for significant entities\"}, {\"entity_type_id\": 1, \"entity_type_name\": \"Person\", \"entity_type_description\": \"people author interacts with\"}, {\"entity_type_id\": 2, \"entity_type_name\": \"Emotion\", \"entity_type_description\": \"emotional states author experiences\"}]",
+        "extracted_entities": {
+          "extracted_entities": [
+            {
+              "name": "Mom",
+              "entity_type_id": 1
+            },
+            {
+              "name": "Carmen",
+              "entity_type_id": 1
+            },
+            {
+              "name": "Pastor Williams",
+              "entity_type_id": 1
+            },
+            {
+              "name": "sad",
+              "entity_type_id": 2
+            },
+            {
+              "name": "supported",
+              "entity_type_id": 2
+            }
+          ]
+        }
+      },
+      {
+        "episode_content": "Finished my first painting! My roommate Zara said it belongs in a gallery. Professor Lee wants to feature it in the student exhibition. Feeling joyful and proud.",
+        "entity_types": "[{\"entity_type_id\": 0, \"entity_type_name\": \"Entity\", \"entity_type_description\": \"fallback for significant entities\"}, {\"entity_type_id\": 1, \"entity_type_name\": \"Person\", \"entity_type_description\": \"people author interacts with\"}, {\"entity_type_id\": 2, \"entity_type_name\": \"Emotion\", \"entity_type_description\": \"emotional states author experiences\"}]",
+        "extracted_entities": {
+          "extracted_entities": [
+            {
+              "name": "Zara",
+              "entity_type_id": 1
+            },
+            {
+              "name": "Professor Lee",
+              "entity_type_id": 1
+            },
+            {
+              "name": "joyful",
+              "entity_type_id": 2
+            },
+            {
+              "name": "proud",
+              "entity_type_id": 2
+            }
+          ]
+        }
+      },
+      {
+        "episode_content": "Today I met with Sarah at the coffee shop. Feeling anxious about tomorrow's presentation.",
+        "entity_types": "[{\"entity_type_id\": 0, \"entity_type_name\": \"Entity\", \"entity_type_description\": \"fallback for significant entities\"}, {\"entity_type_id\": 1, \"entity_type_name\": \"Person\", \"entity_type_description\": \"people author interacts with\"}, {\"entity_type_id\": 2, \"entity_type_name\": \"Emotion\", \"entity_type_description\": \"emotional states author experiences\"}]",
+        "extracted_entities": {
+          "extracted_entities": [
+            {
+              "name": "Sarah",
+              "entity_type_id": 1
+            },
+            {
+              "name": "anxious",
+              "entity_type_id": 2
+            }
+          ]
+        }
+      },
+      {
+        "episode_content": "Marcus hasn't responded to my texts in days. Feeling hurt and confused about what I did wrong.",
+        "entity_types": "[{\"entity_type_id\": 0, \"entity_type_name\": \"Entity\", \"entity_type_description\": \"fallback for significant entities\"}, {\"entity_type_id\": 1, \"entity_type_name\": \"Person\", \"entity_type_description\": \"people author interacts with\"}, {\"entity_type_id\": 2, \"entity_type_name\": \"Emotion\", \"entity_type_description\": \"emotional states author experiences\"}]",
+        "extracted_entities": {
+          "extracted_entities": [
+            {
+              "name": "Marcus",
+              "entity_type_id": 1
+            },
+            {
+              "name": "hurt",
+              "entity_type_id": 2
+            },
+            {
+              "name": "confused",
+              "entity_type_id": 2
+            }
+          ]
+        }
+      },
+      {
+        "episode_content": "Moving across the country for the new job. My brother Theo helped me pack. Mom cried but said she's proud. Feeling scared, excited, and guilty for leaving.",
+        "entity_types": "[{\"entity_type_id\": 0, \"entity_type_name\": \"Entity\", \"entity_type_description\": \"fallback for significant entities\"}, {\"entity_type_id\": 1, \"entity_type_name\": \"Person\", \"entity_type_description\": \"people author interacts with\"}, {\"entity_type_id\": 2, \"entity_type_name\": \"Emotion\", \"entity_type_description\": \"emotional states author experiences\"}]",
+        "extracted_entities": {
+          "extracted_entities": [
+            {
+              "name": "Theo",
+              "entity_type_id": 1
+            },
+            {
+              "name": "Mom",
+              "entity_type_id": 1
+            },
+            {
+              "name": "scared",
+              "entity_type_id": 2
+            },
+            {
+              "name": "excited",
+              "entity_type_id": 2
+            },
+            {
+              "name": "guilty",
+              "entity_type_id": 2
+            }
+          ]
+        }
+      },
+      {
+        "episode_content": "Found out that Rachel told my secrets to everyone at work. Talked to my therapist Dr. Kim about it. Feeling betrayed and angry.",
+        "entity_types": "[{\"entity_type_id\": 0, \"entity_type_name\": \"Entity\", \"entity_type_description\": \"fallback for significant entities\"}, {\"entity_type_id\": 1, \"entity_type_name\": \"Person\", \"entity_type_description\": \"people author interacts with\"}, {\"entity_type_id\": 2, \"entity_type_name\": \"Emotion\", \"entity_type_description\": \"emotional states author experiences\"}]",
+        "extracted_entities": {
+          "extracted_entities": [
+            {
+              "name": "Rachel",
+              "entity_type_id": 1
+            },
+            {
+              "name": "Dr. Kim",
+              "entity_type_id": 1
+            },
+            {
+              "name": "betrayed",
+              "entity_type_id": 2
+            },
+            {
+              "name": "angry",
+              "entity_type_id": 2
+            }
+          ]
+        }
+      },
+      {
+        "episode_content": "Doctor Patel says my blood pressure is improving. My neighbor Frank walks with me every morning now. Feeling optimistic and thankful for good friends.",
+        "entity_types": "[{\"entity_type_id\": 0, \"entity_type_name\": \"Entity\", \"entity_type_description\": \"fallback for significant entities\"}, {\"entity_type_id\": 1, \"entity_type_name\": \"Person\", \"entity_type_description\": \"people author interacts with\"}, {\"entity_type_id\": 2, \"entity_type_name\": \"Emotion\", \"entity_type_description\": \"emotional states author experiences\"}]",
+        "extracted_entities": {
+          "extracted_entities": [
+            {
+              "name": "Doctor Patel",
+              "entity_type_id": 1
+            },
+            {
+              "name": "Frank",
+              "entity_type_id": 1
+            },
+            {
+              "name": "optimistic",
+              "entity_type_id": 2
+            },
+            {
+              "name": "thankful",
+              "entity_type_id": 2
+            }
+          ]
+        }
+      },
+      {
+        "episode_content": "Didn't get the grant I worked on for months. My colleague Iris reminded me that rejection is part of the process. Feeling disappointed but resilient.",
+        "entity_types": "[{\"entity_type_id\": 0, \"entity_type_name\": \"Entity\", \"entity_type_description\": \"fallback for significant entities\"}, {\"entity_type_id\": 1, \"entity_type_name\": \"Person\", \"entity_type_description\": \"people author interacts with\"}, {\"entity_type_id\": 2, \"entity_type_name\": \"Emotion\", \"entity_type_description\": \"emotional states author experiences\"}]",
+        "extracted_entities": {
+          "extracted_entities": [
+            {
+              "name": "Iris",
+              "entity_type_id": 1
+            },
+            {
+              "name": "disappointed",
+              "entity_type_id": 2
+            },
+            {
+              "name": "resilient",
+              "entity_type_id": 2
+            }
+          ]
+        }
+      },
+      {
+        "episode_content": "My granddaughter Sophie visited today. We looked at old photos and she asked about my childhood. Feeling nostalgic and warm inside.",
+        "entity_types": "[{\"entity_type_id\": 0, \"entity_type_name\": \"Entity\", \"entity_type_description\": \"fallback for significant entities\"}, {\"entity_type_id\": 1, \"entity_type_name\": \"Person\", \"entity_type_description\": \"people author interacts with\"}, {\"entity_type_id\": 2, \"entity_type_name\": \"Emotion\", \"entity_type_description\": \"emotional states author experiences\"}]",
+        "extracted_entities": {
+          "extracted_entities": [
+            {
+              "name": "Sophie",
+              "entity_type_id": 1
+            },
+            {
+              "name": "nostalgic",
+              "entity_type_id": 2
+            },
+            {
+              "name": "warm",
+              "entity_type_id": 2
+            }
+          ]
+        }
+      },
+      {
+        "episode_content": "Had coffee with Emma this morning. She gave me interview tips and now I'm feeling confident and excited!",
+        "entity_types": "[{\"entity_type_id\": 0, \"entity_type_name\": \"Entity\", \"entity_type_description\": \"fallback for significant entities\"}, {\"entity_type_id\": 1, \"entity_type_name\": \"Person\", \"entity_type_description\": \"people author interacts with\"}, {\"entity_type_id\": 2, \"entity_type_name\": \"Emotion\", \"entity_type_description\": \"emotional states author experiences\"}]",
+        "extracted_entities": {
+          "extracted_entities": [
+            {
+              "name": "Emma",
+              "entity_type_id": 1
+            },
+            {
+              "name": "confident",
+              "entity_type_id": 2
+            },
+            {
+              "name": "excited",
+              "entity_type_id": 2
+            }
+          ]
+        }
+      },
+      {
+        "episode_content": "My son Miguel came home late again. His coach says he's been practicing extra hard for the championship. Feeling worried but also loving his dedication.",
+        "entity_types": "[{\"entity_type_id\": 0, \"entity_type_name\": \"Entity\", \"entity_type_description\": \"fallback for significant entities\"}, {\"entity_type_id\": 1, \"entity_type_name\": \"Person\", \"entity_type_description\": \"people author interacts with\"}, {\"entity_type_id\": 2, \"entity_type_name\": \"Emotion\", \"entity_type_description\": \"emotional states author experiences\"}]",
+        "extracted_entities": {
+          "extracted_entities": [
+            {
+              "name": "Miguel",
+              "entity_type_id": 1
+            },
+            {
+              "name": "worried",
+              "entity_type_id": 2
+            },
+            {
+              "name": "loving",
+              "entity_type_id": 2
+            }
+          ]
+        }
+      }
+    ],
+    "signature": {
+      "instructions": "Extract significant entities from personal journal entries focusing on people and emotions.",
+      "fields": [
+        {
+          "prefix": "Episode Content:",
+          "description": "personal journal entry describing the author's experiences and feelings"
+        },
+        {
+          "prefix": "Entity Types:",
+          "description": "available entity types: Person (people author interacts with), Emotion (feelings author experiences), Entity (rare fallback)"
+        },
+        {
+          "prefix": "Extracted Entities:",
+          "description": "significant entities: people (type_id=1) and emotions (type_id=2); avoid objects, places, activities"
+        }
+      ]
+    },
+    "lm": null
+  },
+  "metadata": {
+    "dependency_versions": {
+      "python": "3.13",
+      "dspy": "3.0.3",
+      "cloudpickle": "3.1"
+    }
+  }
+}
