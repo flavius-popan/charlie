@@ -1,7 +1,5 @@
 ## Technical
 - Check if you can use MLX batch()
-- Integrate [Distilbert-NER](https://huggingface.co/dslim/distilbert-NER), combo with smaller LLM to do edges instead of nodes.
-- Watch [this video to grok Distilbert-NER](https://www.youtube.com/watch?v=Q1i4bIIFOFc)
 - Evaluate quantized ONNX models after collecting sample data - test if smaller versions (int8: 63MB, q4: 112MB) are sufficient vs full model (249MB)
 - Constrain extraction prompts significantly, focus only on people first.
 - Implement [Contextual Retreival](https://www.anthropic.com/engineering/contextual-retrieval)
@@ -16,7 +14,6 @@
 
 ## Nice-to-haves
 
-- Move models to default location, out of project dir
 - Upgrade to python 3.14
 - [Count input tokens properly](https://www.perplexity.ai/search/does-qwen3-use-tiktoken-for-ca-APRBFEnXRPawkHgtv5EryQ#0)
 - Might have to use all-LLM entity extraction for non English/German due to Distilbert-NER only being trained on those two
