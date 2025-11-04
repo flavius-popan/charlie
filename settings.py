@@ -1,6 +1,9 @@
 """Configuration for graphiti-poc.py"""
 from pathlib import Path
 
+# Model
+DEFAULT_MODEL_PATH = "mlx-community/Qwen3-4B-Instruct-2507-8bit"
+
 # Database
 DB_PATH = Path("data/graphiti-poc.db")
 GRAPH_NAME = "phase1_poc"

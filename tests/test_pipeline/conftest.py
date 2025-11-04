@@ -16,14 +16,15 @@ from pipeline import db_utils
 
 
 @pytest.fixture(scope="session", autouse=True)
-def configure_dspy_for_pipeline() -> Iterator[None]:
+def configure_dspy_for_pipeline(request: pytest.FixtureRequest) -> Iterator[None]:
     """
     Configure DSPy once per test session with the Outlines+MLX backend.
 
     Uses deterministic sampling so integration assertions stay stable.
     """
+    model_path = request.config.getoption("--model")
     adapter = OutlinesAdapter()
-    lm = OutlinesLM(generation_config={"temp": 0.0})
+    lm = OutlinesLM(model_path=model_path, generation_config={"temp": 0.0})
     dspy.configure(lm=lm, adapter=adapter)
     yield
 
