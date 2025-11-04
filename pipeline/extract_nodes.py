@@ -6,28 +6,14 @@ while database queries are async to prevent blocking.
 """
 
 from __future__ import annotations
-
-import os
-import json
-import logging
 from dataclasses import dataclass
 from datetime import datetime
+import json
+import logging
 from typing import Any
-from pathlib import Path
-
-# Configure DSPy cache directory before importing dspy.
-_default_cache = Path("data") / "dspy_cache"
-cache_dir = os.environ.get("DSPY_CACHE_DIR")
-if cache_dir:
-    Path(cache_dir).mkdir(parents=True, exist_ok=True)
-else:
-    os.environ["DSPY_CACHE_DIR"] = str(_default_cache)
-    _default_cache.mkdir(parents=True, exist_ok=True)
 
 import dspy
-from pydantic import BaseModel, Field
-
-from graphiti_core.nodes import EntityNode, EpisodicNode, EpisodeType
+from graphiti_core.nodes import EntityNode, EpisodeType, EpisodicNode
 from graphiti_core.utils.datetime_utils import ensure_utc, utc_now
 from graphiti_core.utils.maintenance.dedup_helpers import (
     DedupCandidateIndexes,
@@ -35,7 +21,10 @@ from graphiti_core.utils.maintenance.dedup_helpers import (
     _build_candidate_indexes,
     _resolve_with_similarity,
 )
+from pydantic import BaseModel, Field
+
 from pipeline.db_utils import fetch_entities_by_group, fetch_recent_episodes
+
 
 logger = logging.getLogger(__name__)
 

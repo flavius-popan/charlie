@@ -39,7 +39,9 @@ async def test_extract_nodes_uses_recent_context(isolated_graph, seed_episode) -
 
 
 @pytest.mark.asyncio
-async def test_extract_nodes_resolves_against_existing_entities(isolated_graph, seed_entity) -> None:
+async def test_extract_nodes_resolves_against_existing_entities(
+    isolated_graph, seed_entity
+) -> None:
     """Prior entities in the graph should be reused when names match."""
     group_id = "extract-dedupe"
     existing_uuid = "22222222-2222-4222-8222-222222222222"
