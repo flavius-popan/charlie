@@ -235,7 +235,9 @@ def _serialize_relationships(relationships: Relationships | None) -> dict[str, A
 
 
 # Relationship inference function
-def infer_relationships(text: str, facts, entity_names: list[str], reference_time: datetime):
+def infer_relationships(
+    text: str, facts, entity_names: list[str], reference_time: datetime
+):
     """
     Infer relationships using DSPy.
 
@@ -250,7 +252,7 @@ def infer_relationships(text: str, facts, entity_names: list[str], reference_tim
             text=text,
             facts=facts,
             entities=entity_names,
-            reference_time=reference_time.isoformat()
+            reference_time=reference_time.isoformat(),
         ).relationships
 
         logger.info("Relationships: inferred %d items", len(relationships.items))
@@ -421,7 +423,9 @@ def _resolve_entities(
                             similarity = matching / len(node_sig)
 
                     if similarity == 0.0:
-                        similarity = _jaccard_similarity(node_shingles, existing_shingles)
+                        similarity = _jaccard_similarity(
+                            node_shingles, existing_shingles
+                        )
 
                     if similarity > best_similarity:
                         best_similarity = similarity
@@ -688,10 +692,13 @@ def _resolve_entity_edges(
         contradiction_candidates = [
             candidate
             for candidate in filtered_pool
-            if candidate.uuid != resolved_edge.uuid and candidate.name != resolved_edge.name
+            if candidate.uuid != resolved_edge.uuid
+            and candidate.name != resolved_edge.name
         ]
         if contradiction_candidates:
-            invalidated = resolve_edge_contradictions(resolved_edge, contradiction_candidates)
+            invalidated = resolve_edge_contradictions(
+                resolved_edge, contradiction_candidates
+            )
             for invalid_edge in invalidated:
                 if invalid_edge.uuid in invalidated_seen:
                     continue
@@ -739,7 +746,14 @@ def _enrich_temporal_metadata(
         "valid_markers": ["since", "from", "starting", "began", "as of"],
         "invalid_markers": ["until", "through", "ended", "stopped", "left"],
         "ongoing_markers": ["currently", "now", "present", "today"],
-        "terminated_markers": ["no longer", "formerly", "previously", "used to", "was", "were"]
+        "terminated_markers": [
+            "no longer",
+            "formerly",
+            "previously",
+            "used to",
+            "was",
+            "were",
+        ],
     }
 
     for edge in edges:
@@ -753,7 +767,7 @@ def _enrich_temporal_metadata(
             "dateparser_dates": [],
             "cues_detected": [],
             "action": "unchanged",
-            "confidence": "low"
+            "confidence": "low",
         }
 
         fact_attr = getattr(edge, "fact", None)
@@ -765,8 +779,7 @@ def _enrich_temporal_metadata(
 
         try:
             matches = search_dates(
-                fact_text,
-                settings={'RELATIVE_BASE': reference_time}
+                fact_text, settings={"RELATIVE_BASE": reference_time}
             )
             date_matches: list[tuple[str, datetime]] = []
             if matches:
@@ -803,9 +816,15 @@ def _enrich_temporal_metadata(
                 record["cues_detected"].append(f"terminated:{marker}")
 
         has_valid_cues = any(c.startswith("valid:") for c in record["cues_detected"])
-        has_invalid_cues = any(c.startswith("invalid:") for c in record["cues_detected"])
-        has_ongoing_cues = any(c.startswith("ongoing:") for c in record["cues_detected"])
-        has_terminated_cues = any(c.startswith("terminated:") for c in record["cues_detected"])
+        has_invalid_cues = any(
+            c.startswith("invalid:") for c in record["cues_detected"]
+        )
+        has_ongoing_cues = any(
+            c.startswith("ongoing:") for c in record["cues_detected"]
+        )
+        has_terminated_cues = any(
+            c.startswith("terminated:") for c in record["cues_detected"]
+        )
 
         if dates and len(dates) > 0:
             dateparser_dt = dates[0][1]
@@ -908,7 +927,9 @@ def build_graphiti_objects(
     # Input validation (mirrors graphiti-core add_episode lines 685-690)
     try:
         validate_entity_types(None)  # No custom entity types in current implementation
-        validate_excluded_entity_types(None, None)  # No exclusions in current implementation
+        validate_excluded_entity_types(
+            None, None
+        )  # No exclusions in current implementation
         validate_group_id(config.group_id)
     except Exception as exc:  # noqa: BLE001
         raise GraphitiPipelineError("Input Validation", str(exc)) from exc
@@ -955,7 +976,9 @@ def build_graphiti_objects(
             logger.info(
                 "Temporal enrichment: processed %d edges, %d enriched",
                 len(entity_edges),
-                sum(1 for r in temporal_enrichment_records if r["action"] != "unchanged")
+                sum(
+                    1 for r in temporal_enrichment_records if r["action"] != "unchanged"
+                ),
             )
         else:
             temporal_enrichment_records = []
@@ -1156,7 +1179,9 @@ class GraphitiPipeline:
             )
 
         # Relationship inference
-        relationships, rels_json = infer_relationships(text, facts, entities, reference_time)
+        relationships, rels_json = infer_relationships(
+            text, facts, entities, reference_time
+        )
         if relationships is None or ("error" in rels_json):
             raise GraphitiPipelineError(
                 "Relationships", rels_json.get("error", "Unknown error")
@@ -1184,9 +1209,7 @@ class GraphitiPipeline:
                     base_relationships,
                     llm_relationships,
                 )
-                final_relationships_json = _serialize_relationships(
-                    final_relationships
-                )
+                final_relationships_json = _serialize_relationships(final_relationships)
         else:
             artifacts.llm_relationships = None
             artifacts.llm_relationships_json = {"status": "disabled"}

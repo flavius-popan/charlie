@@ -12,14 +12,14 @@ This pipeline reimplements graphiti-core's ingestion stages using:
 
 ### Design Pattern
 
-Each stage is a `dspy.Module` that:
-1. **Accepts structured input** from previous stage (or plain text for entry point)
-2. **Performs ONE major LLM operation** via DSPy signature (if needed)
-3. **Returns typed output** compatible with next stage
-4. **Reuses graphiti-core code** wherever possible (only customize LLM extraction logic)
-5. **Uses async for I/O**, sync for LLM inference (MLX_LOCK handled by dspy_outlines)
+Each stage follows a **two-layer architecture** for DSPy optimization:
 
-**Episode-First Convention**: Following graphiti-core's pattern, create the full `EpisodicNode` object BEFORE any extraction begins. All downstream operations reference this episode.
+1. **Pure `dspy.Module`**: LLM extraction only (sync, no DB/async). Optimizable with teleprompters.
+2. **Orchestrator class**: Handles DB I/O, episode creation, post-processing. Accepts compiled modules.
+
+This separation makes optimization 10-100x faster (no DB overhead) and metrics clearer (no post-processing dilution).
+
+**Episode-First Convention**: Create full `EpisodicNode` BEFORE extraction begins (graphiti-core pattern).
 
 ## Quick Start
 
@@ -65,20 +65,26 @@ Journal Text → add_journal() → ExtractNodes → ExtractEdges → ExtractAttr
 
 ### Stage 1: Extract Nodes (✓ Implemented)
 
-**Module**: `extract_nodes.py` / `ExtractNodes`
+**Module**: `extract_nodes.py`
 **Analogous to**: graphiti-core's `extract_nodes()` + `resolve_extracted_nodes()`
 
-Creates episode, extracts entities via DSPy signature, resolves duplicates using graphiti-core's MinHash LSH.
-
-**LLM Call**: Entity extraction with type classification
-**Reused Code**: `_build_candidate_indexes()`, `_resolve_with_similarity()`, validators
-**Custom Code**: `EntityExtractionSignature`, episode creation, async DB wrappers
+**Architecture** (two-layer pattern):
+1. **`EntityExtractor`** (dspy.Module): Pure LLM extraction. Sync, no DB. Optimizable.
+2. **`ExtractNodes`** (orchestrator): Full pipeline with DB, episode creation, MinHash LSH resolution.
 
 ```python
-# Can be used standalone for testing
+# Standard usage
 extractor = ExtractNodes(group_id="user_123")
 result = await extractor(content="Today I met with Sarah...")
+
+# With optimized EntityExtractor
+entity_extractor = EntityExtractor()
+compiled = optimizer.compile(entity_extractor, trainset=examples)
+extractor = ExtractNodes(group_id="user_123", entity_extractor=compiled)
+result = await extractor(content="...")
 ```
+
+**Pattern for Future Stages**: Repeat this two-layer design. Create a pure `dspy.Module` for each LLM operation, inject into orchestrator.
 
 ### Stage 2: Extract Edges (TODO)
 

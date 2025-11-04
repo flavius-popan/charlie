@@ -1,4 +1,12 @@
-"""Integration tests for the ExtractNodes stage."""
+"""Integration tests for the ExtractNodes stage.
+
+Demonstrates the two-layer architecture:
+- EntityExtractor (dspy.Module): Pure LLM extraction, optimizable
+- ExtractNodes (orchestrator): Full pipeline with DB, resolution, metadata
+
+Tests use ExtractNodes directly (the orchestrator). To test optimization,
+compile EntityExtractor separately and inject into ExtractNodes.__init__().
+"""
 
 from __future__ import annotations
 

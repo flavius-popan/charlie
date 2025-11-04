@@ -1,8 +1,31 @@
 """Entity extraction and resolution module for Graphiti pipeline.
 
-Architecture Decision: Async for database I/O, sync for LLM inference.
-DSPy signatures remain synchronous (handled by dspy_outlines adapter),
-while database queries are async to prevent blocking.
+Two-Layer Architecture for DSPy Optimization:
+
+1. EntityExtractor (dspy.Module):
+   - Pure LLM extraction logic, no DB/async dependencies
+   - Optimizable with DSPy (MIPRO, GEPA, etc.)
+   - Input: episode_content (str), entity_types (JSON str)
+   - Output: ExtractedEntities (Pydantic model)
+
+2. ExtractNodes (orchestrator):
+   - Plain Python class that coordinates the full pipeline
+   - Handles DB I/O (async), episode creation, entity resolution
+   - Accepts pre-compiled EntityExtractor via dependency injection
+   - Returns ExtractNodesOutput with metadata
+
+Usage:
+    # Standard usage
+    extractor = ExtractNodes(group_id="user_123")
+    result = await extractor(content="Today I met with Sarah...")
+
+    # With optimization
+    entity_extractor = EntityExtractor()
+    compiled = optimizer.compile(entity_extractor, trainset=examples)
+    extractor = ExtractNodes(group_id="user_123", entity_extractor=compiled)
+    result = await extractor(content="...")
+
+This pattern enables fast optimization by isolating LLM calls from I/O.
 """
 
 from __future__ import annotations
@@ -51,7 +74,9 @@ class EntityExtractionSignature(dspy.Signature):
     """
 
     episode_content: str = dspy.InputField(desc="Text to extract entities from")
-    entity_types: str = dspy.InputField(desc="JSON schema of available entity types with descriptions")
+    entity_types: str = dspy.InputField(
+        desc="JSON schema of available entity types with descriptions"
+    )
 
     extracted_entities: ExtractedEntities = dspy.OutputField(
         desc="List of entities extracted from the text with entity_type_id classifications"
@@ -69,25 +94,77 @@ class ExtractNodesOutput:
     metadata: dict[str, Any]
 
 
-class ExtractNodes(dspy.Module):
-    """Extract and resolve entity nodes from episodes.
-
-    Two-stage pipeline:
-    1. DSPy signature extracts entities from episode content
-    2. Deterministic resolution using graphiti-core's fuzzy matching
+class EntityExtractor(dspy.Module):
+    """This module ONLY performs LLM-based entity extraction with no dependencies
+    on databases, async operations, or resolution logic. This design makes it
+    ideal for DSPy optimization (MIPRO, GEPA, etc.).
 
     Usage:
-        extractor = ExtractNodes(group_id="user_123")
-        result = await extractor(episode=my_episode)  # Call instance, NOT forward()
+        extractor = EntityExtractor()
+        entities = extractor(episode_content="...", entity_types="{...}")
     """
 
-    def __init__(self, group_id: str, dedupe_enabled: bool = True):
+    def __init__(self):
         super().__init__()
-        self.group_id = group_id
-        self.dedupe_enabled = dedupe_enabled
         self.extractor = dspy.ChainOfThought(EntityExtractionSignature)
 
-    async def forward(
+    def forward(
+        self,
+        episode_content: str,
+        entity_types: str,
+    ) -> ExtractedEntities:
+        """Extract entities from text content.
+
+        Args:
+            episode_content: Text to extract entities from
+            entity_types: JSON string of available entity type schemas
+
+        Returns:
+            ExtractedEntities with list of extracted entities and type IDs
+        """
+        result = self.extractor(
+            episode_content=episode_content,
+            entity_types=entity_types,
+        )
+        return result.extracted_entities
+
+
+class ExtractNodes:
+    """Extract and resolve entity nodes from episodes.
+
+    Pipeline orchestrator that coordinates:
+    1. Episode creation
+    2. Database context fetching (async)
+    3. Entity extraction via EntityExtractor (optimizable dspy.Module)
+    4. Entity resolution using graphiti-core's MinHash LSH
+    5. Metadata aggregation
+
+    This is a plain Python class (NOT dspy.Module) to separate orchestration
+    from the optimizable LLM logic in EntityExtractor.
+
+    Usage:
+        # Standard usage with default extractor
+        extractor = ExtractNodes(group_id="user_123")
+        result = await extractor(content="Today I met with Sarah...")
+
+        # With pre-optimized EntityExtractor
+        entity_extractor = EntityExtractor()
+        compiled = optimizer.compile(entity_extractor, trainset=examples)
+        extractor = ExtractNodes(group_id="user_123", entity_extractor=compiled)
+        result = await extractor(content="...")
+    """
+
+    def __init__(
+        self,
+        group_id: str,
+        dedupe_enabled: bool = True,
+        entity_extractor: EntityExtractor | None = None,
+    ):
+        self.group_id = group_id
+        self.dedupe_enabled = dedupe_enabled
+        self.entity_extractor = entity_extractor or EntityExtractor()
+
+    async def __call__(
         self,
         content: str,
         reference_time: datetime | None = None,
@@ -96,8 +173,6 @@ class ExtractNodes(dspy.Module):
         entity_types: dict | None = None,
     ) -> ExtractNodesOutput:
         """Extract and resolve entities from journal entry text.
-
-        Called internally via __call__(). Use: result = await extractor(content="...")
 
         Args:
             content: Journal entry text
@@ -132,7 +207,7 @@ class ExtractNodes(dspy.Module):
             "Retrieved %d previous episodes for context", len(previous_episodes)
         )
 
-        # Stage 1: Extract provisional entities (sync DSPy)
+        # Stage 1: Extract provisional entities via pure DSPy module
         provisional_nodes = self._extract_entities(
             episode, previous_episodes, entity_types
         )
@@ -185,21 +260,20 @@ class ExtractNodes(dspy.Module):
         previous_episodes: list[EpisodicNode],
         entity_types: dict | None,
     ) -> list[EntityNode]:
-        """Extract entities via DSPy signature with dspy_outlines adapter.
+        """Extract entities via EntityExtractor module.
 
         Note: previous_episodes are fetched for future use (reflexion, classification)
         but NOT used in initial entity extraction, following graphiti-core's approach.
         """
         entity_types_json = self._format_entity_types(entity_types)
 
-        result = self.extractor(
+        # Call the pure DSPy module (optimizable)
+        extracted = self.entity_extractor(
             episode_content=episode.content,
             entity_types=entity_types_json,
         )
 
-        # dspy_outlines adapter returns ExtractedEntities object (not JSON string)
-        extracted = result.extracted_entities
-
+        # Convert to EntityNode objects
         nodes = []
         for entity in extracted.extracted_entities:
             type_name = self._get_type_name(entity.entity_type_id, entity_types)
@@ -298,6 +372,10 @@ class ExtractNodes(dspy.Module):
         return types_list[idx] if 0 <= idx < len(types_list) else "Entity"
 
     # ========== Future Enhancements (Stubs) ==========
+    # These demonstrate where additional optimizable modules could be added:
+    # - EntityReflexionModule for iterative refinement
+    # - EntityDisambiguationModule for LLM-based resolution
+    # Each would follow the same pattern: pure dspy.Module, injected into orchestrator
 
     def _extract_with_reflexion(self, episode, previous_episodes, entity_types):
         """TODO: Add reflexion loop (EntityReflexionSignature, max 3 iterations)."""
@@ -312,4 +390,8 @@ class ExtractNodes(dspy.Module):
         return {node.uuid: node.uuid for node in unresolved}
 
 
-__all__ = ["ExtractNodes", "ExtractNodesOutput"]
+__all__ = [
+    "EntityExtractor",
+    "ExtractNodes",
+    "ExtractNodesOutput",
+]
