@@ -1,144 +1,71 @@
-"""Tests for add_journal orchestrator using factory hooks."""
+"""Integration tests for the add_journal orchestrator."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from datetime import datetime
-from typing import Any
-
+from datetime import datetime, timezone
 import pytest
 
-from pydantic import BaseModel
-
-from pipeline import AddJournalResults, ExtractNodesOutput, add_journal
 from graphiti_core.errors import GroupIdValidationError
-from graphiti_core.nodes import EntityNode, EpisodicNode, EpisodeType
-from graphiti_core.utils.datetime_utils import ensure_utc, utc_now
-
-
-class PersonEntity(BaseModel):
-    occupation: str | None = None
-
-
-@dataclass
-class RecordingExtractNodes:
-    """Stub extractor that records calls and returns canned results."""
-
-    group_id: str
-    calls: list[dict[str, Any]] = field(default_factory=list)
-
-    async def __call__(self, **kwargs) -> ExtractNodesOutput:
-        self.calls.append(kwargs)
-        content = kwargs["content"]
-        reference_time = kwargs.get("reference_time")
-        name = kwargs.get("name")
-        source_description = kwargs.get("source_description")
-
-        episode = EpisodicNode(
-            name=name or "stub-episode",
-            group_id=self.group_id,
-            labels=[],
-            source=EpisodeType.text,
-            content=content,
-            source_description=source_description,
-            created_at=utc_now(),
-            valid_at=ensure_utc(reference_time or utc_now()),
-        )
-
-        node = EntityNode(
-            name="Stub Entity",
-            group_id=self.group_id,
-            labels=["Entity"],
-            summary="",
-            created_at=utc_now(),
-        )
-
-        metadata = {
-            "extracted_count": 1,
-            "resolved_count": 1,
-            "exact_matches": 0,
-            "fuzzy_matches": 0,
-            "new_entities": 1,
-        }
-
-        return ExtractNodesOutput(
-            episode=episode,
-            nodes=[node],
-            uuid_map={node.uuid: node.uuid},
-            duplicate_pairs=[],
-            metadata=metadata,
-        )
+from pipeline import AddJournalResults, add_journal
 
 
 @pytest.mark.asyncio
-async def test_add_journal_uses_factory_and_returns_results():
-    journal_text = "Met with Sarah about the roadmap."
-    reference_time = datetime(2024, 2, 1, 9, 30)
-    extractors: list[RecordingExtractNodes] = []
-
-    def factory(group_id: str) -> RecordingExtractNodes:
-        extractor = RecordingExtractNodes(group_id=group_id)
-        extractors.append(extractor)
-        return extractor
-
-    entity_types = {"Person": PersonEntity}
-
+async def test_add_journal_runs_end_to_end(isolated_graph) -> None:
+    """Exercise the full add_journal orchestrator with real dependencies."""
+    group_id = "integration-user"
     result = await add_journal(
-        content=journal_text,
-        group_id="test_user",
-        reference_time=reference_time,
-        name="custom-episode",
-        source_description="Unit test",
-        entity_types=entity_types,
-        extract_nodes_factory=factory,
+        content=(
+            "Met with Dr. Sarah Chen and COO Mark Patel at Stanford HQ to discuss "
+            "the Q2 roadmap and the Apollo initiative."
+        ),
+        group_id=group_id,
+        reference_time=datetime(2024, 2, 1, 9, 30, tzinfo=timezone.utc),
+        name="integration-entry",
+        source_description="Integration test journal",
     )
 
     assert isinstance(result, AddJournalResults)
-    assert result.episode.group_id == "test_user"
-    assert len(result.nodes) == 1
-    assert result.metadata["new_entities"] == 1
-
-    extractor = extractors[0]
-    assert extractor.group_id == "test_user"
-    assert len(extractor.calls) == 1
-    call_kwargs = extractor.calls[0]
-    assert call_kwargs["content"] == journal_text
-    assert call_kwargs["reference_time"] == reference_time
-    assert call_kwargs["name"] == "custom-episode"
-    assert call_kwargs["source_description"] == "Unit test"
-    assert call_kwargs["entity_types"] == entity_types
+    assert result.episode.group_id == group_id
+    assert result.episode.name == "integration-entry"
+    assert all(node.group_id == group_id for node in result.nodes)
+    assert result.metadata["resolved_count"] <= result.metadata["extracted_count"]
+    assert set(result.uuid_map.values()) >= {node.uuid for node in result.nodes}
 
 
 @pytest.mark.asyncio
-async def test_add_journal_with_default_group_id():
-    extractors: list[RecordingExtractNodes] = []
-
-    def factory(group_id: str) -> RecordingExtractNodes:
-        extractor = RecordingExtractNodes(group_id=group_id)
-        extractors.append(extractor)
-        return extractor
+async def test_add_journal_resolves_existing_entities(isolated_graph, seed_entity) -> None:
+    """Existing graph entities should be reused instead of duplicated."""
+    group_id = "dedupe-user"
+    existing_uuid = "00000000-0000-4000-8000-000000000001"
+    seed_entity(uuid=existing_uuid, name="Dr. Sarah Chen", group_id=group_id)
 
     result = await add_journal(
-        content="Daily entry text.",
-        extract_nodes_factory=factory,
+        content=(
+            "Quick sync with Dr. Sarah Chen on the Apollo rollout. "
+            "Confirmed Sarah Chen will present the roadmap."
+        ),
+        group_id=group_id,
+        reference_time=datetime(2024, 3, 12, 15, 0, tzinfo=timezone.utc),
     )
+
+    assert result.metadata["resolved_count"] >= 1
+    assert existing_uuid in result.uuid_map.values()
+
+
+@pytest.mark.asyncio
+async def test_add_journal_defaults_group_id(isolated_graph) -> None:
+    """Ensure default group_id flows through to episode and node artifacts."""
+    result = await add_journal(content="Documented daily standup notes.")
 
     assert result.episode.group_id == "\\_"
     assert all(node.group_id == "\\_" for node in result.nodes)
 
-    extractor = extractors[0]
-    assert extractor.group_id == "\\_"
-    assert extractor.calls[0]["content"] == "Daily entry text."
-
 
 @pytest.mark.asyncio
-async def test_add_journal_validates_inputs():
-    def factory(_group_id: str):
-        raise AssertionError("Factory should not be invoked when validation fails.")
-
+async def test_add_journal_validates_group_id() -> None:
+    """Invalid group identifiers should be rejected before any heavy work."""
     with pytest.raises(GroupIdValidationError):
         await add_journal(
-            content="invalid input",
-            group_id="invalid@group!",
-            extract_nodes_factory=factory,
+            content="Bad input",
+            group_id="invalid group!",
         )

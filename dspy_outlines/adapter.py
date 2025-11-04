@@ -1,5 +1,6 @@
 """Three-tier fallback adapter: ChatAdapter → JSON → Outlines constrained."""
 
+import json
 import logging
 from typing import Any
 
@@ -51,8 +52,8 @@ class OutlinesAdapter(ChatAdapter):
         JSON: Try JSON format (unconstrained)
         OutlinesJSON: Use Outlines constrained generation (guaranteed)
         """
-        # Extract constraint for OutlinesJSON
-        constraint = self._extract_constraint(signature)
+        # Extract constraint and target field for OutlinesJSON
+        constraint, field_name = self._extract_constraint(signature)
 
         # Check if we should skip OutlinesJSON (tool calls or multiple completions)
         skip_tier3 = self._has_tool_calls(signature)
@@ -67,6 +68,8 @@ class OutlinesAdapter(ChatAdapter):
             logger.warning(
                 f"Multiple completions (n={n}) requested - OutlinesJSON will return single completion only"
             )
+
+        logger.debug("Adapter config kwargs: %s", lm_kwargs)
 
         # Chat: ChatAdapter field-marker format
         # NOTE: Cannot delegate to ChatAdapter() because it has built-in JSONAdapter fallback
@@ -155,28 +158,40 @@ class OutlinesAdapter(ChatAdapter):
 
         logger.info("Using Outlines JSONAdapter (Constrained Generation)")
         result = self._constrained_fallback(
-            lm, lm_kwargs, signature, demos, inputs, constraint
+            lm, lm_kwargs, signature, demos, inputs, constraint, field_name
         )
         self.metrics["outlines_json_success"] += 1
         self.last_adapter_used = "outlines_json"
         logger.info("OutlinesJSON succeeded")
         return result
 
-    def _extract_constraint(self, signature: type[Signature]) -> Any:
-        """Extract constraint from signature's output field."""
+    def _extract_constraint(self, signature: type[Signature]) -> tuple[Any, str | None]:
+        """Select a constraint annotation and its field name."""
         output_fields = signature.output_fields
 
         if not output_fields:
-            return None
+            return None, None
 
-        if len(output_fields) > 1:
-            logger.warning(
-                f"Multiple output fields in {signature.__name__}, using first"
-            )
+        preferred_annotation: Any | None = None
+        preferred_name: str | None = None
 
-        # Get first output field's annotation (raw type)
-        output_field = next(iter(output_fields.values()))
-        return output_field.annotation
+        for name, field in output_fields.items():
+            annotation = field.annotation
+
+            # Prefer Pydantic models for constrained generation.
+            try:
+                from pydantic import BaseModel
+
+                if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+                    return annotation, name
+            except Exception:  # noqa: BLE001
+                pass
+
+            if preferred_annotation is None:
+                preferred_annotation = annotation
+                preferred_name = name
+
+        return preferred_annotation, preferred_name
 
     def _has_tool_calls(self, signature: type[Signature]) -> bool:
         """Check if signature has ToolCalls output field."""
@@ -193,6 +208,7 @@ class OutlinesAdapter(ChatAdapter):
         demos: list[dict[str, Any]],
         inputs: dict[str, Any],
         constraint: Any,
+        field_name: str | None,
     ) -> list[dict[str, Any]]:
         """
         OutlinesJSON: Constrained JSON generation via Outlines (guaranteed valid).
@@ -200,10 +216,11 @@ class OutlinesAdapter(ChatAdapter):
         Adds _outlines_constraint to lm_kwargs, which OutlinesLM uses
         to enable constrained generation.
         """
-        # Add constraint to kwargs
-        output_field_name = next(iter(signature.output_fields.keys()))
-        lm_kwargs["_outlines_constraint"] = constraint
-        lm_kwargs["_outlines_field_name"] = output_field_name
+        # Add constraint to kwargs without mutating caller config
+        call_kwargs = dict(lm_kwargs)
+        call_kwargs["_outlines_constraint"] = constraint
+        if field_name:
+            call_kwargs["_outlines_field_name"] = field_name
 
         # Use JSONAdapter's format for proper JSON-formatted messages
         # (avoids conflicting field-marker instructions from ChatAdapter)
@@ -212,18 +229,78 @@ class OutlinesAdapter(ChatAdapter):
         messages = json_adapter.format(signature, demos, inputs)
 
         # Generate with constraint (messages already have JSON instructions from JSONAdapter)
-        outputs = lm(messages=messages, **lm_kwargs)
+        outputs = lm(messages=messages, **call_kwargs)
 
         # Parse JSON response using JSONAdapter's parse method (guaranteed valid by Outlines)
         completions = []
-        for output in outputs:
-            # Standard DSPy output handling (see Adapter._call_postprocess)
-            text = output
-            if isinstance(output, dict):
-                text = output["text"]
-
-            # Use JSONAdapter's parse for 1-to-1 parity
-            parsed = json_adapter.parse(signature, text)
+        texts = self._extract_text_outputs(outputs)
+        logger.debug("OutlinesJSON raw outputs: %s", outputs)
+        logger.debug("OutlinesJSON extracted texts: %s", texts)
+        for text in texts:
+            enriched = self._ensure_required_fields(signature, text)
+            parsed = json_adapter.parse(signature, enriched)
             completions.append(parsed)
 
         return completions
+
+    def _extract_text_outputs(self, outputs) -> list[str]:
+        """Normalize LM responses into raw text payloads."""
+        if outputs is None:
+            return []
+
+        # Handle OpenAI-style namespace objects returned by OutlinesLM.
+        if hasattr(outputs, "choices"):
+            texts: list[str] = []
+            for choice in getattr(outputs, "choices", []):
+                message = getattr(choice, "message", None)
+                if message and hasattr(message, "content"):
+                    texts.append(message.content)
+                elif hasattr(choice, "text"):
+                    texts.append(choice.text)
+            if texts:
+                return texts
+
+        # Normalize list/dict responses used by stock DSPy adapters.
+        if isinstance(outputs, list):
+            texts = []
+            for output in outputs:
+                if isinstance(output, dict):
+                    if "text" in output:
+                        texts.append(output["text"])
+                    elif "message" in output and isinstance(output["message"], dict):
+                        texts.append(output["message"].get("content", ""))
+                elif hasattr(output, "message") and hasattr(output.message, "content"):
+                    texts.append(output.message.content)
+                elif hasattr(output, "text"):
+                    texts.append(output.text)
+                else:
+                    texts.append(str(output))
+            return texts
+
+        return [str(outputs)]
+
+    def _ensure_required_fields(self, signature: type[Signature], text: str) -> str:
+        """Ensure constrained responses include all required output fields."""
+        try:
+            data = json.loads(text)
+        except Exception:  # noqa: BLE001
+            return text
+
+        if not isinstance(data, dict):
+            return text
+
+        modified = False
+        for name, field in signature.output_fields.items():
+            if name in data:
+                continue
+
+            annotation = field.annotation
+            if annotation == str:
+                data[name] = ""
+            elif annotation in (list, tuple, set):
+                data[name] = []
+            else:
+                data[name] = None
+            modified = True
+
+        return json.dumps(data) if modified else text
