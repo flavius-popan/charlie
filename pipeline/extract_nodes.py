@@ -7,17 +7,28 @@ while database queries are async to prevent blocking.
 
 from __future__ import annotations
 
+import os
 import json
 import logging
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
+from pathlib import Path
+
+# Configure DSPy cache directory before importing dspy.
+_default_cache = Path("data") / "dspy_cache"
+cache_dir = os.environ.get("DSPY_CACHE_DIR")
+if cache_dir:
+    Path(cache_dir).mkdir(parents=True, exist_ok=True)
+else:
+    os.environ["DSPY_CACHE_DIR"] = str(_default_cache)
+    _default_cache.mkdir(parents=True, exist_ok=True)
 
 import dspy
 from pydantic import BaseModel, Field
 
 from graphiti_core.nodes import EntityNode, EpisodicNode, EpisodeType
-from graphiti_core.utils.datetime_utils import utc_now
+from graphiti_core.utils.datetime_utils import ensure_utc, utc_now
 from graphiti_core.utils.maintenance.dedup_helpers import (
     DedupCandidateIndexes,
     DedupResolutionState,
@@ -112,7 +123,7 @@ class ExtractNodes(dspy.Module):
             ExtractNodesOutput with episode, resolved nodes, and UUID mappings
         """
         # Create episode (follows graphiti-core convention)
-        reference_time = reference_time or datetime.now()
+        reference_time = ensure_utc(reference_time or utc_now())
         episode = EpisodicNode(
             name=name or f"journal_{reference_time.isoformat()}",
             group_id=self.group_id,
@@ -148,6 +159,11 @@ class ExtractNodes(dspy.Module):
             provisional_nodes, existing_entities
         )
 
+        new_entities = sum(
+            1
+            for provisional_uuid, resolved_uuid in uuid_map.items()
+            if provisional_uuid == resolved_uuid
+        )
         metadata = {
             "extracted_count": len(provisional_nodes),
             "resolved_count": len(nodes),
@@ -157,7 +173,7 @@ class ExtractNodes(dspy.Module):
             "fuzzy_matches": len(
                 [p for p in duplicate_pairs if p[0].name.lower() != p[1].name.lower()]
             ),
-            "new_entities": len(provisional_nodes) - len(duplicate_pairs),
+            "new_entities": new_entities,
         }
 
         logger.info(
@@ -198,10 +214,13 @@ class ExtractNodes(dspy.Module):
         nodes = []
         for entity in extracted.extracted_entities:
             type_name = self._get_type_name(entity.entity_type_id, entity_types)
+            labels = ["Entity"]
+            if type_name != "Entity":
+                labels.append(type_name)
             node = EntityNode(
                 name=entity.name,
                 group_id=self.group_id,
-                labels=["Entity", type_name],
+                labels=labels,
                 summary="",
                 created_at=utc_now(),
             )
@@ -248,10 +267,15 @@ class ExtractNodes(dspy.Module):
             state.resolved_nodes[idx] = node
             state.uuid_map[node.uuid] = node.uuid
 
-        # Filter out None entries and build final lists
-        resolved_nodes = [node for node in state.resolved_nodes if node is not None]
+        # Filter out None entries and deduplicate by canonical UUID
+        unique_nodes: dict[str, EntityNode] = {}
+        for node in state.resolved_nodes:
+            if node is None:
+                continue
+            if node.uuid not in unique_nodes:
+                unique_nodes[node.uuid] = node
 
-        return resolved_nodes, state.uuid_map, state.duplicate_pairs
+        return list(unique_nodes.values()), state.uuid_map, state.duplicate_pairs
 
     def _format_entity_types(self, entity_types: dict | None) -> str:
         """Format entity type schemas for LLM prompt."""

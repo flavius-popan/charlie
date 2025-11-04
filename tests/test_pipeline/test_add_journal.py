@@ -1,88 +1,144 @@
-"""End-to-end tests for add_journal pipeline orchestrator."""
+"""Tests for add_journal orchestrator using factory hooks."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Any
 
 import pytest
-import dspy
-from dspy_outlines import OutlinesLM, OutlinesAdapter
 
-from pipeline import add_journal, AddJournalResults
-from graphiti_core.nodes import EntityNode, EpisodicNode
-from settings import MODEL_CONFIG
+from pydantic import BaseModel
+
+from pipeline import AddJournalResults, ExtractNodesOutput, add_journal
+from graphiti_core.errors import GroupIdValidationError
+from graphiti_core.nodes import EntityNode, EpisodicNode, EpisodeType
+from graphiti_core.utils.datetime_utils import ensure_utc, utc_now
 
 
-@pytest.fixture(scope="module")
-def configure_dspy():
-    """Configure DSPy once for all tests."""
-    dspy.settings.configure(
-        adapter=OutlinesAdapter(),
-        lm=OutlinesLM(generation_config=MODEL_CONFIG),
-    )
+class PersonEntity(BaseModel):
+    occupation: str | None = None
+
+
+@dataclass
+class RecordingExtractNodes:
+    """Stub extractor that records calls and returns canned results."""
+
+    group_id: str
+    calls: list[dict[str, Any]] = field(default_factory=list)
+
+    async def __call__(self, **kwargs) -> ExtractNodesOutput:
+        self.calls.append(kwargs)
+        content = kwargs["content"]
+        reference_time = kwargs.get("reference_time")
+        name = kwargs.get("name")
+        source_description = kwargs.get("source_description")
+
+        episode = EpisodicNode(
+            name=name or "stub-episode",
+            group_id=self.group_id,
+            labels=[],
+            source=EpisodeType.text,
+            content=content,
+            source_description=source_description,
+            created_at=utc_now(),
+            valid_at=ensure_utc(reference_time or utc_now()),
+        )
+
+        node = EntityNode(
+            name="Stub Entity",
+            group_id=self.group_id,
+            labels=["Entity"],
+            summary="",
+            created_at=utc_now(),
+        )
+
+        metadata = {
+            "extracted_count": 1,
+            "resolved_count": 1,
+            "exact_matches": 0,
+            "fuzzy_matches": 0,
+            "new_entities": 1,
+        }
+
+        return ExtractNodesOutput(
+            episode=episode,
+            nodes=[node],
+            uuid_map={node.uuid: node.uuid},
+            duplicate_pairs=[],
+            metadata=metadata,
+        )
 
 
 @pytest.mark.asyncio
-async def test_add_journal_basic(configure_dspy):
-    """Test end-to-end journal processing through add_journal()."""
-    journal_text = """Today I met with Dr. Sarah Chen at Stanford University
-    to discuss the AI ethics project. We agreed to collaborate with Microsoft."""
+async def test_add_journal_uses_factory_and_returns_results():
+    journal_text = "Met with Sarah about the roadmap."
+    reference_time = datetime(2024, 2, 1, 9, 30)
+    extractors: list[RecordingExtractNodes] = []
+
+    def factory(group_id: str) -> RecordingExtractNodes:
+        extractor = RecordingExtractNodes(group_id=group_id)
+        extractors.append(extractor)
+        return extractor
+
+    entity_types = {"Person": PersonEntity}
 
     result = await add_journal(
         content=journal_text,
         group_id="test_user",
+        reference_time=reference_time,
+        name="custom-episode",
+        source_description="Unit test",
+        entity_types=entity_types,
+        extract_nodes_factory=factory,
     )
 
-    # Validate output type
     assert isinstance(result, AddJournalResults)
-
-    # Validate episode created
-    assert isinstance(result.episode, EpisodicNode)
-    assert result.episode.content == journal_text
     assert result.episode.group_id == "test_user"
-    assert result.episode.uuid is not None
+    assert len(result.nodes) == 1
+    assert result.metadata["new_entities"] == 1
 
-    # Validate nodes extracted
-    assert isinstance(result.nodes, list)
-    assert all(isinstance(node, EntityNode) for node in result.nodes)
-    if result.nodes:
-        assert all(node.group_id == "test_user" for node in result.nodes)
-        assert all(node.uuid is not None for node in result.nodes)
-
-    # Validate UUID map
-    assert isinstance(result.uuid_map, dict)
-    assert all(
-        isinstance(k, str) and isinstance(v, str) for k, v in result.uuid_map.items()
-    )
-
-    # Validate metadata structure
-    assert isinstance(result.metadata, dict)
-    required_keys = {
-        "extracted_count",
-        "resolved_count",
-        "exact_matches",
-        "fuzzy_matches",
-        "new_entities",
-    }
-    assert required_keys.issubset(result.metadata.keys())
-    assert all(isinstance(result.metadata[k], int) for k in required_keys)
+    extractor = extractors[0]
+    assert extractor.group_id == "test_user"
+    assert len(extractor.calls) == 1
+    call_kwargs = extractor.calls[0]
+    assert call_kwargs["content"] == journal_text
+    assert call_kwargs["reference_time"] == reference_time
+    assert call_kwargs["name"] == "custom-episode"
+    assert call_kwargs["source_description"] == "Unit test"
+    assert call_kwargs["entity_types"] == entity_types
 
 
 @pytest.mark.asyncio
-async def test_add_journal_with_default_group_id(configure_dspy):
-    """Test add_journal() uses FalkorDB default group_id when not provided."""
-    journal_text = "Met with Bob to discuss the project timeline."
+async def test_add_journal_with_default_group_id():
+    extractors: list[RecordingExtractNodes] = []
 
-    result = await add_journal(content=journal_text)
+    def factory(group_id: str) -> RecordingExtractNodes:
+        extractor = RecordingExtractNodes(group_id=group_id)
+        extractors.append(extractor)
+        return extractor
 
-    # Should use FalkorDB default group_id '\\_'
+    result = await add_journal(
+        content="Daily entry text.",
+        extract_nodes_factory=factory,
+    )
+
     assert result.episode.group_id == "\\_"
     assert all(node.group_id == "\\_" for node in result.nodes)
 
+    extractor = extractors[0]
+    assert extractor.group_id == "\\_"
+    assert extractor.calls[0]["content"] == "Daily entry text."
+
 
 @pytest.mark.asyncio
-async def test_add_journal_validates_inputs(configure_dspy):
-    """Test add_journal() validates inputs using graphiti-core validators."""
-    from graphiti_core.errors import GroupIdValidationError
+async def test_add_journal_validates_inputs():
+    def factory(_group_id: str):
+        raise AssertionError("Factory should not be invoked when validation fails.")
 
-    journal_text = "Test content"
-
-    # Invalid group_id should raise error
     with pytest.raises(GroupIdValidationError):
-        await add_journal(content=journal_text, group_id="invalid@group!")
+        await add_journal(
+            content="invalid input",
+            group_id="invalid@group!",
+            extract_nodes_factory=factory,
+        )

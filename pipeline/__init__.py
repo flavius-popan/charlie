@@ -9,6 +9,7 @@ Each module represents a discrete stage in the knowledge graph ingestion pipelin
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -45,6 +46,7 @@ async def add_journal(
     source_description: str = "Journal entry",
     entity_types: dict | None = None,
     excluded_entity_types: list[str] | None = None,
+    extract_nodes_factory: Callable[[str], ExtractNodes] | None = None,
 ) -> AddJournalResults:
     """Process a journal entry and extract knowledge graph elements.
 
@@ -63,6 +65,7 @@ async def add_journal(
         source_description: Description of entry source
         entity_types: Custom entity type schemas
         excluded_entity_types: Entity types to exclude from extraction
+        extract_nodes_factory: Optional hook returning an ExtractNodes module for the given group_id
 
     Returns:
         AddJournalResults with episode, extracted nodes, UUID mappings, and metadata
@@ -92,7 +95,11 @@ async def add_journal(
     group_id = group_id or get_default_group_id(GraphProvider.FALKORDB)
 
     # Stage 1: Extract and resolve entity nodes
-    extractor = ExtractNodes(group_id=group_id, dedupe_enabled=True)
+    def _default_extract_nodes_factory(gid: str) -> ExtractNodes:
+        return ExtractNodes(group_id=gid, dedupe_enabled=True)
+
+    factory = extract_nodes_factory or _default_extract_nodes_factory
+    extractor = factory(group_id)
     extract_result = await extractor(
         content=content,
         reference_time=reference_time,
