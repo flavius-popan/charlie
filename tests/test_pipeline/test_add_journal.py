@@ -1,14 +1,10 @@
-"""Tests for ExtractNodes pipeline stage.
-
-Tests the Stage 1 implementation directly, not the end-to-end pipeline.
-For end-to-end tests, see test_add_journal.py.
-"""
+"""End-to-end tests for add_journal pipeline orchestrator."""
 
 import pytest
 import dspy
 from dspy_outlines import OutlinesLM, OutlinesAdapter
 
-from pipeline import ExtractNodes, ExtractNodesOutput
+from pipeline import add_journal, AddJournalResults
 from graphiti_core.nodes import EntityNode, EpisodicNode
 from settings import MODEL_CONFIG
 
@@ -23,17 +19,18 @@ def configure_dspy():
 
 
 @pytest.mark.asyncio
-async def test_extract_nodes_stage_output_structure(configure_dspy):
-    """Test ExtractNodes stage output structure is correct."""
-    extractor = ExtractNodes(group_id="test_user")
-
+async def test_add_journal_basic(configure_dspy):
+    """Test end-to-end journal processing through add_journal()."""
     journal_text = """Today I met with Dr. Sarah Chen at Stanford University
     to discuss the AI ethics project. We agreed to collaborate with Microsoft."""
 
-    result = await extractor(content=journal_text)
+    result = await add_journal(
+        content=journal_text,
+        group_id="test_user",
+    )
 
     # Validate output type
-    assert isinstance(result, ExtractNodesOutput)
+    assert isinstance(result, AddJournalResults)
 
     # Validate episode created
     assert isinstance(result.episode, EpisodicNode)
@@ -41,10 +38,10 @@ async def test_extract_nodes_stage_output_structure(configure_dspy):
     assert result.episode.group_id == "test_user"
     assert result.episode.uuid is not None
 
-    # Validate nodes extracted (don't check exact count or names)
+    # Validate nodes extracted
     assert isinstance(result.nodes, list)
     assert all(isinstance(node, EntityNode) for node in result.nodes)
-    if result.nodes:  # If any nodes extracted
+    if result.nodes:
         assert all(node.group_id == "test_user" for node in result.nodes)
         assert all(node.uuid is not None for node in result.nodes)
 
@@ -53,9 +50,6 @@ async def test_extract_nodes_stage_output_structure(configure_dspy):
     assert all(
         isinstance(k, str) and isinstance(v, str) for k, v in result.uuid_map.items()
     )
-
-    # Validate duplicate pairs
-    assert isinstance(result.duplicate_pairs, list)
 
     # Validate metadata structure
     assert isinstance(result.metadata, dict)
@@ -68,3 +62,27 @@ async def test_extract_nodes_stage_output_structure(configure_dspy):
     }
     assert required_keys.issubset(result.metadata.keys())
     assert all(isinstance(result.metadata[k], int) for k in required_keys)
+
+
+@pytest.mark.asyncio
+async def test_add_journal_with_default_group_id(configure_dspy):
+    """Test add_journal() uses FalkorDB default group_id when not provided."""
+    journal_text = "Met with Bob to discuss the project timeline."
+
+    result = await add_journal(content=journal_text)
+
+    # Should use FalkorDB default group_id '\\_'
+    assert result.episode.group_id == "\\_"
+    assert all(node.group_id == "\\_" for node in result.nodes)
+
+
+@pytest.mark.asyncio
+async def test_add_journal_validates_inputs(configure_dspy):
+    """Test add_journal() validates inputs using graphiti-core validators."""
+    from graphiti_core.errors import GroupIdValidationError
+
+    journal_text = "Test content"
+
+    # Invalid group_id should raise error
+    with pytest.raises(GroupIdValidationError):
+        await add_journal(content=journal_text, group_id="invalid@group!")

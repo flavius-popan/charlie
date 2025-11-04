@@ -1,8 +1,5 @@
 """Entity extraction and resolution module for Graphiti pipeline.
 
-This module replaces DistilBERT NER with DSPy-based extraction while reusing
-graphiti-core's battle-tested deduplication algorithms (MinHash + LSH).
-
 Architecture Decision: Async for database I/O, sync for LLM inference.
 DSPy signatures remain synchronous (handled by dspy_outlines adapter),
 while database queries are async to prevent blocking.
@@ -133,7 +130,9 @@ class ExtractNodes(dspy.Module):
         previous_episodes = await fetch_recent_episodes(
             self.group_id, reference_time, limit=5
         )
-        logger.info("Retrieved %d previous episodes for context", len(previous_episodes))
+        logger.info(
+            "Retrieved %d previous episodes for context", len(previous_episodes)
+        )
 
         # Stage 1: Extract provisional entities (sync DSPy)
         provisional_nodes = self._extract_entities(

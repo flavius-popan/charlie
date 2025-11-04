@@ -7,9 +7,118 @@ Each module represents a discrete stage in the knowledge graph ingestion pipelin
 - (Future) generate_summaries: Entity summarization
 """
 
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Any
+
+from graphiti_core.driver.driver import GraphProvider
+from graphiti_core.helpers import (
+    get_default_group_id,
+    validate_excluded_entity_types,
+    validate_group_id,
+)
+from graphiti_core.nodes import EntityNode, EpisodicNode
+from graphiti_core.utils.ontology_utils.entity_types_utils import validate_entity_types
+
 from .extract_nodes import ExtractNodes, ExtractNodesOutput
 
+# ========== Pipeline Orchestration ==========
+
+
+@dataclass
+class AddJournalResults:
+    """Results from processing a journal entry through the pipeline."""
+
+    episode: EpisodicNode
+    nodes: list[EntityNode]
+    uuid_map: dict[str, str]
+    metadata: dict[str, Any]
+
+
+async def add_journal(
+    content: str,
+    group_id: str | None = None,
+    reference_time: datetime | None = None,
+    name: str | None = None,
+    source_description: str = "Journal entry",
+    entity_types: dict | None = None,
+    excluded_entity_types: list[str] | None = None,
+) -> AddJournalResults:
+    """Process a journal entry and extract knowledge graph elements.
+
+    Entry point for the Graphiti pipeline. Accepts plain text journal content
+    and orchestrates all pipeline stages to extract entities, relationships,
+    and other graph elements.
+
+    Analogous to graphiti-core's add_episode() but optimized for local MLX inference
+    with DSPy modules.
+
+    Args:
+        content: Journal entry text
+        group_id: Graph partition identifier (defaults to FalkorDB default '\\_')
+        reference_time: When entry was written (defaults to now)
+        name: Episode identifier (defaults to generated name)
+        source_description: Description of entry source
+        entity_types: Custom entity type schemas
+        excluded_entity_types: Entity types to exclude from extraction
+
+    Returns:
+        AddJournalResults with episode, extracted nodes, UUID mappings, and metadata
+
+    Example:
+        ```python
+        import asyncio
+        from pipeline import add_journal
+
+        async def main():
+            result = await add_journal(
+                content="Today I met with Sarah at Stanford...",
+                group_id="user_123"
+            )
+            print(f"Episode: {result.episode.uuid}")
+            print(f"Extracted {len(result.nodes)} entities")
+
+        asyncio.run(main())
+        ```
+    """
+    # Validate inputs using graphiti-core validators
+    validate_entity_types(entity_types)
+    validate_excluded_entity_types(excluded_entity_types, entity_types)
+    validate_group_id(group_id)
+
+    # Use FalkorDB default group_id if not provided
+    group_id = group_id or get_default_group_id(GraphProvider.FALKORDB)
+
+    # Stage 1: Extract and resolve entity nodes
+    extractor = ExtractNodes(group_id=group_id, dedupe_enabled=True)
+    extract_result = await extractor(
+        content=content,
+        reference_time=reference_time,
+        name=name,
+        source_description=source_description,
+        entity_types=entity_types,
+    )
+
+    # TODO: Stage 2: Extract relationships between entities
+    # TODO: Stage 3: Extract entity attributes
+    # TODO: Stage 4: Generate entity summaries
+    # TODO: Stage 5: Save to database
+
+    return AddJournalResults(
+        episode=extract_result.episode,
+        nodes=extract_result.nodes,
+        uuid_map=extract_result.uuid_map,
+        metadata=extract_result.metadata,
+    )
+
+
+# ========== Module Exports ==========
+
 __all__ = [
+    "add_journal",
+    "AddJournalResults",
     "ExtractNodes",
     "ExtractNodesOutput",
 ]

@@ -11,41 +11,69 @@ Each module in this directory represents a discrete stage in the pipeline, desig
 - Maximize code reuse from graphiti-core utilities (deduplication, validation, etc.)
 - Use async for database I/O while keeping LLM inference synchronous
 
-## Modules
+## Quick Start
 
-### `extract_nodes.py` - Entity Extraction & Resolution
-
-Accepts journal text, creates episode, extracts entities, resolves against existing graph.
-
-**Input**: Journal text, optional reference time and entity types
-**Output**: `EpisodicNode`, resolved `EntityNode` objects, UUID mappings
-
-**Usage:**
 ```python
 import asyncio
-from pipeline import ExtractNodes
+from pipeline import add_journal
 
 async def main():
-    extractor = ExtractNodes(group_id="user_123")
-    result = await extractor(content="Today I met with Sarah at Stanford...")
+    result = await add_journal(
+        content="Today I met with Sarah at Stanford to discuss AI ethics...",
+        group_id="user_123"
+    )
     print(f"Episode: {result.episode.uuid}")
     print(f"Extracted {len(result.nodes)} entities")
 
 asyncio.run(main())
 ```
 
-## Architecture
+## Pipeline Entry Point
 
-- **Async modules**: Database I/O is async, DSPy signatures stay sync
-- **Episode-first**: Create full `EpisodicNode` before processing (follows graphiti-core)
-- **Code reuse**: Import graphiti-core helpers (dedup, validators), customize LLM logic only
-- **dspy_outlines**: Uses existing adapter, no modifications needed
-- **One event loop**: All modules share single async event loop (no conflicts)
+### `add_journal()` - Main Pipeline Orchestrator
+
+Entry point analogous to graphiti-core's `add_episode()`. Accepts plain text journal content and orchestrates all pipeline stages.
+
+**Input**: Journal text, optional group_id, reference time, entity types
+**Output**: `AddJournalResults` with episode, nodes, uuid_map, metadata
+
+**Usage:**
+```python
+from pipeline import add_journal
+
+result = await add_journal(
+    content="Journal entry text...",
+    group_id="user_123",  # Optional, defaults to FalkorDB default
+    entity_types=None,     # Optional custom entity schemas
+    excluded_entity_types=None  # Optional types to exclude
+)
+```
 
 ## Pipeline Stages
 
 ```
-Episode → ExtractNodes → ExtractEdges → ExtractAttributes → GenerateSummaries → Database
+add_journal() → ExtractNodes → ExtractEdges → ExtractAttributes → GenerateSummaries → Database
 ```
 
-Each stage is a `dspy.Module` with async `forward()` method. Call with `await module(input)`, not `module.forward(input)`.
+### Stage 1: `extract_nodes.py` - Entity Extraction & Resolution
+
+Accepts journal text, creates episode, extracts entities, resolves against existing graph.
+
+**Input**: Journal text, optional reference time and entity types
+**Output**: `ExtractNodesOutput` with episode, resolved nodes, UUID mappings
+
+Internal stage called by `add_journal()`. Can also be used standalone:
+```python
+from pipeline import ExtractNodes
+
+extractor = ExtractNodes(group_id="user_123")
+result = await extractor(content="Today I met with Sarah...")
+```
+
+## Architecture
+
+- **Async modules**: Database I/O is async, DSPy signatures stay sync
+- **Episode-first**: Create full `EpisodicNode` before processing (follows graphiti-core)
+- **Code reuse**: Import graphiti-core validators, dedup helpers, minimize custom code
+- **dspy_outlines**: Uses existing adapter, no modifications needed
+- **One event loop**: All modules share single async event loop (no conflicts)
