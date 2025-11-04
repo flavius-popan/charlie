@@ -72,18 +72,17 @@ class ExtractedEntities(BaseModel):
 
 # DSPy signature for entity extraction
 class EntityExtractionSignature(dspy.Signature):
-    """Extract entity nodes from text.
+    """Extract significant entities from personal journal entries focusing on people and emotions."""
 
-    Extract entities that are explicitly or implicitly mentioned in the provided text.
-    """
-
-    episode_content: str = dspy.InputField(desc="Text to extract entities from")
+    episode_content: str = dspy.InputField(
+        desc="personal journal entry describing the author's experiences and feelings"
+    )
     entity_types: str = dspy.InputField(
-        desc="JSON schema of available entity types with descriptions"
+        desc="available entity types: Person (people author interacts with), Emotion (feelings author experiences), Entity (rare fallback)"
     )
 
     extracted_entities: ExtractedEntities = dspy.OutputField(
-        desc="List of entities extracted from the text with entity_type_id classifications"
+        desc="significant entities: people (type_id=1) and emotions (type_id=2); avoid objects, places, activities"
     )
 
 
@@ -347,24 +346,33 @@ class ExtractNodes:
         return list(unique_nodes.values()), state.uuid_map, state.duplicate_pairs
 
     def _format_entity_types(self, entity_types: dict | None) -> str:
-        """Format entity type schemas for LLM prompt."""
+        """Format entity type schemas for entity_types input field."""
         base_type = {
             "entity_type_id": 0,
             "entity_type_name": "Entity",
-            "entity_type_description": "Default entity classification",
+            "entity_type_description": "fallback for significant entities that don't fit Person or Emotion types",
         }
 
         if not entity_types:
             return json.dumps([base_type])
 
-        types_list = [base_type] + [
-            {
+        types_list = [base_type]
+        for i, (name, model) in enumerate(entity_types.items()):
+            base_desc = model.__doc__ or ""
+
+            # Enhance with extraction guidance for journal-specific types
+            if name == "Person":
+                desc = f"{base_desc} Extract people the author interacts with: friends, family, colleagues, professionals."
+            elif name == "Emotion":
+                desc = f"{base_desc} Extract emotional states the author experiences: anxious, joyful, content, frustrated, etc."
+            else:
+                desc = base_desc
+
+            types_list.append({
                 "entity_type_id": i + 1,
                 "entity_type_name": name,
-                "entity_type_description": model.__doc__ or "",
-            }
-            for i, (name, model) in enumerate(entity_types.items())
-        ]
+                "entity_type_description": desc,
+            })
 
         return json.dumps(types_list)
 
