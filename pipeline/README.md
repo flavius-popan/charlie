@@ -1,15 +1,25 @@
 # Graphiti Pipeline Modules
 
-Modular DSPy-based implementation of the Graphiti knowledge graph ingestion pipeline for local MLX inference.
+**Goal**: Completely local MLX inference pipeline for knowledge graph ingestion, replicating graphiti-core's functionality without remote LLM APIs.
 
-## Overview
+## Architecture
 
-Each module in this directory represents a discrete stage in the pipeline, designed to:
-- Accept structured inputs (follows graphiti-core's episode-first convention)
-- Process data through DSPy signatures with Outlines structured output
-- Return typed outputs compatible with downstream stages
-- Maximize code reuse from graphiti-core utilities (deduplication, validation, etc.)
-- Use async for database I/O while keeping LLM inference synchronous
+This pipeline reimplements graphiti-core's ingestion stages using:
+- **DSPy modules** for each pipeline stage
+- **dspy_outlines adapter** for structured output via Outlines constrained generation
+- **MLX** for local LLM inference (no API calls)
+- **graphiti-core utilities** for validators, deduplication, and graph operations (maximize code reuse)
+
+### Design Pattern
+
+Each stage is a `dspy.Module` that:
+1. **Accepts structured input** from previous stage (or plain text for entry point)
+2. **Performs ONE major LLM operation** via DSPy signature (if needed)
+3. **Returns typed output** compatible with next stage
+4. **Reuses graphiti-core code** wherever possible (only customize LLM extraction logic)
+5. **Uses async for I/O**, sync for LLM inference (MLX_LOCK handled by dspy_outlines)
+
+**Episode-First Convention**: Following graphiti-core's pattern, create the full `EpisodicNode` object BEFORE any extraction begins. All downstream operations reference this episode.
 
 ## Quick Start
 
@@ -30,12 +40,9 @@ asyncio.run(main())
 
 ## Pipeline Entry Point
 
-### `add_journal()` - Main Pipeline Orchestrator
+### `add_journal()` - Orchestrator
 
-Entry point analogous to graphiti-core's `add_episode()`. Accepts plain text journal content and orchestrates all pipeline stages.
-
-**Input**: Journal text, optional group_id, reference time, entity types
-**Output**: `AddJournalResults` with episode, nodes, uuid_map, metadata
+Analogous to graphiti-core's `add_episode()`. Entry point that accepts plain text and orchestrates all stages.
 
 **Usage:**
 ```python
@@ -43,37 +50,62 @@ from pipeline import add_journal
 
 result = await add_journal(
     content="Journal entry text...",
-    group_id="user_123",  # Optional, defaults to FalkorDB default
+    group_id="user_123",  # Optional, defaults to FalkorDB default '\\_'
     entity_types=None,     # Optional custom entity schemas
     excluded_entity_types=None  # Optional types to exclude
 )
+# Returns: AddJournalResults(episode, nodes, uuid_map, metadata)
 ```
 
 ## Pipeline Stages
 
 ```
-add_journal() → ExtractNodes → ExtractEdges → ExtractAttributes → GenerateSummaries → Database
+Journal Text → add_journal() → ExtractNodes → ExtractEdges → ExtractAttributes → GenerateSummaries → Database
 ```
 
-### Stage 1: `extract_nodes.py` - Entity Extraction & Resolution
+### Stage 1: Extract Nodes (✓ Implemented)
 
-Accepts journal text, creates episode, extracts entities, resolves against existing graph.
+**Module**: `extract_nodes.py` / `ExtractNodes`
+**Analogous to**: graphiti-core's `extract_nodes()` + `resolve_extracted_nodes()`
 
-**Input**: Journal text, optional reference time and entity types
-**Output**: `ExtractNodesOutput` with episode, resolved nodes, UUID mappings
+Creates episode, extracts entities via DSPy signature, resolves duplicates using graphiti-core's MinHash LSH.
 
-Internal stage called by `add_journal()`. Can also be used standalone:
+**LLM Call**: Entity extraction with type classification
+**Reused Code**: `_build_candidate_indexes()`, `_resolve_with_similarity()`, validators
+**Custom Code**: `EntityExtractionSignature`, episode creation, async DB wrappers
+
 ```python
-from pipeline import ExtractNodes
-
+# Can be used standalone for testing
 extractor = ExtractNodes(group_id="user_123")
 result = await extractor(content="Today I met with Sarah...")
 ```
 
-## Architecture
+### Stage 2: Extract Edges (TODO)
 
-- **Async modules**: Database I/O is async, DSPy signatures stay sync
-- **Episode-first**: Create full `EpisodicNode` before processing (follows graphiti-core)
-- **Code reuse**: Import graphiti-core validators, dedup helpers, minimize custom code
-- **dspy_outlines**: Uses existing adapter, no modifications needed
-- **One event loop**: All modules share single async event loop (no conflicts)
+**Analogous to**: graphiti-core's `extract_edges()` + `resolve_extracted_edges()`
+
+Extract relationships between resolved entities.
+
+### Stage 3: Extract Attributes (TODO)
+
+**Analogous to**: graphiti-core's `extract_attributes_from_nodes()`
+
+Enrich entity nodes with attributes.
+
+### Stage 4: Generate Summaries (TODO)
+
+**Analogous to**: graphiti-core's summary generation in node operations
+
+Generate entity summaries.
+
+### Stage 5: Database Persistence (TODO)
+
+Save all graph elements to FalkorDB.
+
+## Implementation Notes
+
+- **One DSPy config**: Configure once at module import, shared across all stages
+- **Async/sync hybrid**: Database queries async, DSPy signatures sync (MLX_LOCK in adapter)
+- **Single event loop**: All async stages share one event loop (no conflicts)
+- **Code reuse first**: Import graphiti-core utilities before writing custom code
+- **Test coverage**: Both end-to-end (`test_add_journal.py`) and per-stage (`test_extract_nodes.py`) tests
