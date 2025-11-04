@@ -106,7 +106,7 @@ class EntityExtractor(dspy.Module):
 
     def __init__(self):
         super().__init__()
-        self.extractor = dspy.ChainOfThought(EntityExtractionSignature)
+        self.extractor = dspy.Predict(EntityExtractionSignature)
 
     def forward(
         self,
