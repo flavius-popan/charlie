@@ -128,7 +128,7 @@ class OutlinesLM(dspy.BaseLM):
         Returns:
             OpenAI-format response dict
         """
-        max_tokens = kwargs.get("max_tokens", 512)
+        max_tokens = kwargs.get("max_tokens", self.generation_config.get("max_tokens", 512))
         constraint = kwargs.pop("_outlines_constraint", None)
         field_name = kwargs.pop("_outlines_field_name", None)
 
@@ -138,11 +138,12 @@ class OutlinesLM(dspy.BaseLM):
         else:
             formatted_prompt = prompt
 
-        # Log cache statistics before generation
+        # Log generation parameters at debug level
         cache_size = self._get_cache_size()
-        logger.info(
-            f"Generating with constraint: {constraint.__name__ if constraint else 'None'}, "
-            f"cache_size={cache_size} tokens"
+        logger.debug(
+            f"Generation params: constraint={constraint.__name__ if constraint else 'None'}, "
+            f"cache_size={cache_size} tokens, prompt_length={len(formatted_prompt)} chars, "
+            f"max_tokens={max_tokens}"
         )
 
         # Create sampler from generation config (outside lock - can run concurrently)
@@ -167,6 +168,7 @@ class OutlinesLM(dspy.BaseLM):
 
             if constraint:
                 # Use Outlines wrapper for constrained generation
+                logger.debug(f"Using constrained generation: {constraint.__name__}")
                 result_json = self.outlines_model(
                     formatted_prompt,
                     output_type=constraint,
@@ -184,9 +186,27 @@ class OutlinesLM(dspy.BaseLM):
 
         # Process results outside lock (can run concurrently)
         if constraint:
+            logger.debug(f"Constrained generation complete: {len(result_json)} chars")
+
             # Check if constraint is a Pydantic model (requires JSON parsing)
             if isinstance(constraint, type) and issubclass(constraint, BaseModel):
-                parsed = constraint.model_validate_json(result_json)
+                try:
+                    parsed = constraint.model_validate_json(result_json)
+                except Exception as e:
+                    # Save failed output to debug/ for inspection
+                    from pathlib import Path
+                    from datetime import datetime
+                    debug_dir = Path("debug")
+                    debug_dir.mkdir(exist_ok=True)
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    debug_file = debug_dir / f"failed_generation_{timestamp}.json"
+                    debug_file.write_text(result_json)
+
+                    logger.error(f"Failed to parse constrained output: {e}")
+                    logger.error(f"Full output saved to: {debug_file}")
+                    logger.debug(f"Output preview: {result_json[:500]}...")
+                    logger.debug(f"Output suffix: ...{result_json[-200:]}")
+                    raise
                 if field_name:
                     completion = json.dumps({field_name: parsed.model_dump()})
                 else:

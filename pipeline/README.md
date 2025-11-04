@@ -102,6 +102,56 @@ Generate entity summaries.
 
 Save all graph elements to FalkorDB.
 
+## Testing UI
+
+### Gradio Interactive UI
+
+Test individual pipeline stages interactively with `pipeline/gradio_ui.py`:
+
+```bash
+python -m pipeline.gradio_ui
+```
+
+**Features:**
+- Extract entities from journal text
+- Toggle deduplication on/off
+- View extraction statistics (exact/fuzzy matches, new entities)
+- Inspect UUID mappings (provisional → resolved)
+- Write results to database
+- Reset database for clean testing
+
+**Use cases:**
+- Validate entity extraction accuracy
+- Test deduplication behavior with/without existing graph data
+- Inspect DSPy signature outputs before committing to database
+
+## Debugging
+
+### Debug Logging
+
+Set log level to see detailed execution:
+
+```python
+import logging
+logging.basicConfig(level=logging.DEBUG)  # Shows DSPy adapter fallbacks, generation params
+logging.basicConfig(level=logging.INFO)   # Default: shows stage progress, extraction results
+```
+
+### Failed Generations
+
+When constrained generation fails (truncated JSON, validation errors), the full output is saved to:
+
+```
+debug/failed_generation_YYYYMMDD_HHMMSS.json
+```
+
+**Common issues:**
+- **Truncated JSON**: Check if `max_tokens` in `settings.py` is too low
+- **Invalid schema**: Model may need better prompt or examples
+- **Hallucinations**: Model extracting entities from `previous_context` instead of `episode_content`
+
+The `debug/` directory is gitignored.
+
 ## Implementation Notes
 
 - **One DSPy config**: Configure once at module import, shared across all stages

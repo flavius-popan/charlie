@@ -45,18 +45,16 @@ class ExtractedEntities(BaseModel):
 
 # DSPy signature for entity extraction
 class EntityExtractionSignature(dspy.Signature):
-    """Extract named entities from episode content.
+    """Extract entity nodes from text.
 
-    Identifies people, organizations, locations, and other noteworthy entities.
-    Uses context from recent episodes to maintain naming consistency.
+    Extract entities that are explicitly or implicitly mentioned in the provided text.
     """
 
-    episode_content: str = dspy.InputField(desc="Episode text to analyze")
-    previous_context: str = dspy.InputField(desc="Recent episode content")
-    entity_types: str = dspy.InputField(desc="JSON schema of entity types")
+    episode_content: str = dspy.InputField(desc="Text to extract entities from")
+    entity_types: str = dspy.InputField(desc="JSON schema of available entity types with descriptions")
 
     extracted_entities: ExtractedEntities = dspy.OutputField(
-        desc="Structured list of entities with type IDs"
+        desc="List of entities extracted from the text with entity_type_id classifications"
     )
 
 
@@ -187,13 +185,15 @@ class ExtractNodes(dspy.Module):
         previous_episodes: list[EpisodicNode],
         entity_types: dict | None,
     ) -> list[EntityNode]:
-        """Extract entities via DSPy signature with dspy_outlines adapter."""
+        """Extract entities via DSPy signature with dspy_outlines adapter.
+
+        Note: previous_episodes are fetched for future use (reflexion, classification)
+        but NOT used in initial entity extraction, following graphiti-core's approach.
+        """
         entity_types_json = self._format_entity_types(entity_types)
-        previous_context = "\n".join(ep.content for ep in previous_episodes)
 
         result = self.extractor(
             episode_content=episode.content,
-            previous_context=previous_context,
             entity_types=entity_types_json,
         )
 

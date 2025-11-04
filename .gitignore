@@ -25,3 +25,6 @@ data/*.db
 data/*.rdb
 data/dump.rdb
 data/*.db.settings
+
+# Debug output
+debug/

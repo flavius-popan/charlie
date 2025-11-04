@@ -278,4 +278,178 @@ async def fetch_entities_by_group(group_id: str) -> dict[str, EntityNode]:
     return await asyncio.to_thread(_fetch_entities_by_group_sync, group_id)
 
 
-__all__ = ["fetch_entities_by_group", "fetch_recent_episodes"]
+def _get_db_stats_sync() -> dict[str, int]:
+    """Query database statistics (sync)."""
+    graph = _ensure_graph()
+    if graph is None:
+        return {"episodes": 0, "entities": 0}
+
+    try:
+        episodic_result = graph.query("MATCH (e:Episodic) RETURN count(e)")
+        episodic_count = 0
+        if episodic_result.statistics and episodic_result.statistics[0]:
+            col = episodic_result.statistics[0][0]
+            val = col[1] if len(col) > 1 else col[0]
+            episodic_count = int(_decode_value(val) or 0)
+
+        entity_result = graph.query("MATCH (n:Entity) RETURN count(n)")
+        entity_count = 0
+        if entity_result.statistics and entity_result.statistics[0]:
+            col = entity_result.statistics[0][0]
+            val = col[1] if len(col) > 1 else col[0]
+            entity_count = int(_decode_value(val) or 0)
+
+        return {"episodes": episodic_count, "entities": entity_count}
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Failed to get database stats: %s", exc)
+        return {"episodes": 0, "entities": 0}
+
+
+async def get_db_stats() -> dict[str, int]:
+    """Get database statistics (episode and entity counts)."""
+    return await asyncio.to_thread(_get_db_stats_sync)
+
+
+def _reset_database_sync() -> str:
+    """Clear all graph data (DESTRUCTIVE, sync)."""
+    graph = _ensure_graph()
+    if graph is None:
+        return "Database unavailable"
+
+    try:
+        graph.query("MATCH (n) DETACH DELETE n")
+        return "Database cleared successfully"
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Failed to reset database: %s", exc)
+        return f"Database reset failed: {exc}"
+
+
+async def reset_database() -> str:
+    """Clear all graph data (DESTRUCTIVE)."""
+    return await asyncio.to_thread(_reset_database_sync)
+
+
+def _write_episode_and_nodes_sync(
+    episode: EpisodicNode,
+    nodes: list[EntityNode],
+) -> dict[str, Any]:
+    """Write episode and entity nodes to database (sync)."""
+    graph = _ensure_graph()
+    if graph is None:
+        return {"error": "Database unavailable"}
+
+    try:
+        from graphiti_core.utils.datetime_utils import convert_datetimes_to_strings
+
+        episode_dict = convert_datetimes_to_strings(
+            {
+                "uuid": episode.uuid,
+                "name": episode.name,
+                "group_id": episode.group_id,
+                "source": episode.source.value,
+                "source_description": episode.source_description,
+                "content": episode.content,
+                "valid_at": episode.valid_at,
+                "created_at": episode.created_at,
+                "entity_edges": episode.entity_edges or [],
+                "labels": episode.labels or [],
+            }
+        )
+
+        episode_props = {
+            "uuid": episode_dict["uuid"],
+            "name": episode_dict["name"],
+            "group_id": episode_dict["group_id"],
+            "source": episode_dict["source"],
+            "source_description": episode_dict["source_description"],
+            "content": episode_dict["content"],
+            "valid_at": episode_dict["valid_at"],
+            "created_at": episode_dict["created_at"],
+            "entity_edges": json.dumps(episode_dict["entity_edges"]),
+            "labels": json.dumps(episode_dict["labels"]),
+        }
+
+        episode_set_clause = ", ".join(
+            [f"e.{key} = {to_cypher_literal(value)}" for key, value in episode_props.items()]
+        )
+
+        episode_query = f"""
+        MERGE (e:Episodic {{uuid: {to_cypher_literal(episode_dict['uuid'])}}})
+        SET {episode_set_clause}
+        RETURN e.uuid AS uuid
+        """
+
+        graph.query(episode_query)
+        logger.info("Wrote episode node: %s", episode.uuid)
+
+        nodes_created = 0
+        node_uuids = []
+
+        for node in nodes:
+            node_dict = convert_datetimes_to_strings(
+                {
+                    "uuid": node.uuid,
+                    "name": node.name,
+                    "group_id": node.group_id,
+                    "created_at": node.created_at,
+                    "labels": node.labels or ["Entity"],
+                    "summary": node.summary or "",
+                    "attributes": node.attributes or {},
+                    "name_embedding": node.name_embedding or [],
+                }
+            )
+
+            props = {
+                "uuid": node_dict["uuid"],
+                "name": node_dict["name"],
+                "group_id": node_dict["group_id"],
+                "created_at": node_dict["created_at"],
+                "labels": json.dumps(node_dict["labels"]),
+                "summary": node_dict["summary"],
+                "attributes": json.dumps(node_dict["attributes"]),
+            }
+
+            set_clause = ", ".join([f"n.{key} = {to_cypher_literal(value)}" for key, value in props.items()])
+
+            embedding_literal = json.dumps(node_dict["name_embedding"])
+
+            node_query = f"""
+            MERGE (n:Entity {{uuid: {to_cypher_literal(node_dict['uuid'])}}})
+            SET {set_clause}
+            SET n.name_embedding = vecf32({embedding_literal})
+            RETURN n.uuid AS uuid
+            """
+
+            result = graph.query(node_query)
+            if result.result_set:
+                nodes_created += 1
+                node_uuids.append(node_dict["uuid"])
+
+        logger.info("Wrote %d entity nodes", nodes_created)
+
+        return {
+            "episode_uuid": episode.uuid,
+            "nodes_created": nodes_created,
+            "node_uuids": node_uuids,
+        }
+
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Failed to write episode and nodes")
+        return {"error": str(exc)}
+
+
+async def write_episode_and_nodes(
+    episode: EpisodicNode,
+    nodes: list[EntityNode],
+) -> dict[str, Any]:
+    """Write episode and entity nodes to database."""
+    return await asyncio.to_thread(_write_episode_and_nodes_sync, episode, nodes)
+
+
+__all__ = [
+    "fetch_entities_by_group",
+    "fetch_recent_episodes",
+    "get_db_stats",
+    "reset_database",
+    "write_episode_and_nodes",
+]
