@@ -45,6 +45,7 @@ from graphiti_core.utils.maintenance.dedup_helpers import (
     _build_candidate_indexes,
     _resolve_with_similarity,
 )
+from graphiti_core.utils.ontology_utils.entity_types_utils import validate_entity_types
 from pydantic import BaseModel, Field
 
 from pipeline.db_utils import fetch_entities_by_group, fetch_recent_episodes
@@ -92,9 +93,10 @@ class ExtractNodesOutput:
     """Results from node extraction and resolution."""
 
     episode: EpisodicNode
-    nodes: list[EntityNode]
-    uuid_map: dict[str, str]
-    duplicate_pairs: list[tuple[EntityNode, EntityNode]]
+    extracted_nodes: list[EntityNode]  # Nodes with original UUIDs (for Stage 2 edge extraction)
+    nodes: list[EntityNode]  # Resolved nodes with canonical UUIDs
+    uuid_map: dict[str, str]  # provisional_uuid → canonical_uuid
+    duplicate_pairs: list[tuple[EntityNode, EntityNode]]  # Consumed in Stage 5 for DUPLICATE_OF edges
     metadata: dict[str, Any]
 
 
@@ -196,6 +198,8 @@ class ExtractNodes:
         Returns:
             ExtractNodesOutput with episode, resolved nodes, and UUID mappings
         """
+        # Validate entity types using graphiti-core validator
+        validate_entity_types(entity_types)
         # Create episode (follows graphiti-core convention)
         reference_time = ensure_utc(reference_time or utc_now())
         episode = EpisodicNode(
@@ -260,6 +264,7 @@ class ExtractNodes:
 
         return ExtractNodesOutput(
             episode=episode,
+            extracted_nodes=provisional_nodes,
             nodes=nodes,
             uuid_map=uuid_map,
             duplicate_pairs=duplicate_pairs,

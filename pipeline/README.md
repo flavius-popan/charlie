@@ -57,6 +57,88 @@ result = await add_journal(
 # Returns: AddJournalResults(episode, nodes, uuid_map, metadata)
 ```
 
+## Stage Data Flow
+
+Based on verified graphiti-core implementation (`graphiti.py:611-813`):
+
+### Previous Episodes Context
+
+**Fetched ONCE** at the start of add_journal() and reused by all stages:
+```python
+previous_episodes = await fetch_recent_episodes(
+    group_id,
+    reference_time,
+    limit=5  # RELEVANT_SCHEMA_LIMIT in graphiti-core
+)
+```
+
+### Stage 1: Extract Nodes
+
+**Returns:**
+```python
+@dataclass
+class ExtractNodesOutput:
+    episode: EpisodicNode
+    extracted_nodes: list[EntityNode]  # Nodes with original UUIDs (for Stage 2 edge extraction)
+    nodes: list[EntityNode]            # RESOLVED entities (canonical UUIDs)
+    uuid_map: dict[str, str]           # provisional_uuid → canonical_uuid
+    duplicate_pairs: list[tuple]       # For DUPLICATE_OF edges (Stage 5)
+    metadata: dict[str, Any]           # Statistics: extracted_count, exact_matches, fuzzy_matches, new_entities
+```
+
+### Stage 2: Extract Edges - CRITICAL REQUIREMENTS
+
+**graphiti-core signature** (`edge_operations.py:89-97`):
+```python
+async def extract_edges(
+    episode: EpisodicNode,
+    nodes: list[EntityNode],           # EXTRACTED nodes (original UUIDs)
+    previous_episodes: list[EpisodicNode],
+    edge_type_map: dict[tuple[str, str], list[str]],
+    edge_types: dict[str, type[BaseModel]] | None = None,
+) -> list[EntityEdge]:
+```
+
+**What Stage 2 needs:**
+1. **Extracted nodes** (with original UUIDs before resolution) - returned in `result.extracted_nodes`
+2. **Resolved nodes** (with canonical UUIDs) - returned in `result.nodes`
+3. **UUID map** - returned in `result.uuid_map`
+4. **Previous episodes** - reused from add_journal()
+5. **Episode** - returned in `result.episode`
+
+**Edge resolution flow** (graphiti-core `graphiti.py:378-411`):
+```python
+# 1. Extract edges using EXTRACTED nodes
+extracted_edges = await extract_edges(episode, extracted_nodes, ...)
+
+# 2. Remap edge UUIDs: extracted → canonical
+edges = resolve_edge_pointers(extracted_edges, uuid_map)
+
+# 3. Resolve edges using RESOLVED nodes
+resolved_edges, invalidated_edges = await resolve_extracted_edges(
+    edges, episode, resolved_nodes, ...
+)
+```
+
+### Stage 3: Extract Attributes
+
+**graphiti-core signature** (`node_operations.py:453-460`):
+```python
+async def extract_attributes_from_nodes(
+    nodes: list[EntityNode],           # RESOLVED nodes from Stage 1
+    episode: EpisodicNode | None = None,
+    previous_episodes: list[EpisodicNode] | None = None,
+    entity_types: dict[str, type[BaseModel]] | None = None,
+) -> list[EntityNode]:
+```
+
+**What Stage 3 needs:**
+- Resolved nodes from Stage 1
+- Episode and previous episodes (reused)
+- Entity type schemas
+
+**Note:** Creates embeddings internally. Returns nodes with attributes, summaries, and embeddings populated.
+
 ## Pipeline Stages
 
 ```
@@ -121,6 +203,38 @@ Extract relationships between resolved entities.
 ```
 
 **Critical**: This stage follows graphiti-core's separation of concerns. Entity names/types are extracted in Stage 1, attributes in Stage 3. This enables optimizing each stage independently and matches graphiti-core's architecture.
+
+**Example Flow:**
+
+Stage 1 extracts:
+```python
+EntityNode(name="Sarah", labels=["Entity", "Person"], attributes={})
+EntityNode(name="anxiety", labels=["Entity", "Emotion"], attributes={})
+```
+
+Stage 3 enriches with type-specific attributes:
+```python
+# For episode: "Today I met with my friend Sarah. Feeling anxious about the presentation."
+
+# Person entity enriched:
+EntityNode(
+    name="Sarah",
+    labels=["Entity", "Person"],
+    attributes={"relationship_type": "friend"}  # Extracted from "my friend Sarah"
+)
+
+# Emotion entity enriched:
+EntityNode(
+    name="anxiety",
+    labels=["Entity", "Emotion"],
+    attributes={
+        "specific_emotion": "anxiety",
+        "category": "negative"
+    }
+)
+```
+
+The AttributeExtractor DSPy signature will receive each entity + episode context and return the appropriate Pydantic model (Person or Emotion) from `entity_edge_models.py`.
 
 ### Stage 4: Generate Summaries (TODO)
 
@@ -231,6 +345,59 @@ debug/failed_generation_YYYYMMDD_HHMMSS.json
 - **Hallucinations**: Model extracting entities from `previous_context` instead of `episode_content`
 
 The `debug/` directory is gitignored.
+
+## Code Reuse Guidelines
+
+When implementing pipeline stages, follow these rules to maximize graphiti-core code reuse:
+
+### Always Import from graphiti-core
+
+**Data structures:**
+- `EntityNode`, `EpisodicNode`, `EntityEdge` - Core graph objects
+- `EpisodeType` - Episode source classification
+- Pydantic models for entity/edge types
+
+**Utilities:**
+- DateTime: `ensure_utc()`, `utc_now()`
+- Deduplication: `_build_candidate_indexes()`, `_resolve_with_similarity()`
+- Entity operations: `resolve_edge_pointers()`
+- Validation: `validate_entity_types()` from `graphiti_core.utils.ontology_utils.entity_types_utils`
+- Validation: `validate_group_id()`, `validate_excluded_entity_types()` from `graphiti_core.helpers`
+
+**When to use graphiti-core vs. custom:**
+
+| Scenario | Use graphiti-core | Write custom |
+|----------|-------------------|--------------|
+| Deterministic algorithms | ✓ (deduplication, UUID resolution) | Never |
+| Data validation | ✓ (type validators) | Never |
+| LLM prompts | Never (DSPy signatures) | ✓ |
+| Database I/O | Custom (FalkorDB-specific) | ✓ |
+| Graph queries | Custom (no Neo4j driver) | ✓ |
+| Embeddings | Future (local Qwen) | ✓ when ready |
+
+**Example decision tree:**
+```
+Need to deduplicate entities?
+  → Import _resolve_with_similarity() from graphiti-core
+
+Need to extract entities from text?
+  → Write custom dspy.Module (LLM logic differs)
+
+Need to validate entity type schema?
+  → Import validate_entity_types() from graphiti-core
+
+Need to fetch entities from database?
+  → Write custom async function using FalkorDB driver
+```
+
+### DSPy Signature Design
+
+For each LLM operation, create a custom `dspy.Signature`:
+- **Input fields:** Episode content, context, type schemas (as strings or JSON)
+- **Output fields:** Pydantic models compatible with graphiti-core (e.g., `ExtractedEntities`)
+- **Descriptions:** Tailored for journal entry processing
+
+**Do not** try to reuse graphiti-core's OpenAI prompt strings - DSPy signatures are structurally different.
 
 ## Implementation Notes
 
