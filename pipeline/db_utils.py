@@ -10,6 +10,7 @@ from datetime import datetime
 from threading import Lock
 from typing import Any, Iterable
 
+from graphiti_core.edges import EntityEdge
 from graphiti_core.nodes import EntityNode, EpisodicNode, EpisodeType
 from graphiti_core.utils.datetime_utils import utc_now
 
@@ -278,6 +279,77 @@ async def fetch_entities_by_group(group_id: str) -> dict[str, EntityNode]:
     return await asyncio.to_thread(_fetch_entities_by_group_sync, group_id)
 
 
+def _fetch_entity_edges_by_group_sync(group_id: str) -> dict[str, EntityEdge]:
+    graph = _ensure_graph()
+    if graph is None:
+        return {}
+
+    group_literal = to_cypher_literal(group_id)
+    query = f"""
+    MATCH (source:Entity)-[edge:RELATES_TO]->(target:Entity)
+    WHERE edge.group_id = {group_literal}
+    RETURN edge.uuid, edge.name, edge.fact, edge.fact_embedding,
+           edge.episodes, edge.created_at, edge.expired_at,
+           edge.valid_at, edge.invalid_at, edge.attributes,
+           source.uuid, target.uuid
+    """
+
+    try:
+        result = graph.query(query)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("FalkorDB query failed (fetch_entity_edges_by_group): %s", exc)
+        return {}
+
+    edges: dict[str, EntityEdge] = {}
+    for (
+        uuid,
+        name,
+        fact,
+        fact_embedding,
+        episodes,
+        created_at,
+        expired_at,
+        valid_at,
+        invalid_at,
+        attributes,
+        source_uuid,
+        target_uuid,
+    ) in _iter_statistics_rows(result):
+        edge_kwargs: dict[str, Any] = {
+            "name": str(name or ""),
+            "fact": str(fact or ""),
+            "fact_embedding": _decode_json(fact_embedding, None),
+            "episodes": _normalize_string_list(_decode_json(episodes, [])),
+            "created_at": _parse_datetime(created_at) or utc_now(),
+            "expired_at": _parse_datetime(expired_at),
+            "valid_at": _parse_datetime(valid_at),
+            "invalid_at": _parse_datetime(invalid_at),
+            "attributes": _decode_json(attributes, {}),
+            "source_node_uuid": str(source_uuid or ""),
+            "target_node_uuid": str(target_uuid or ""),
+            "group_id": group_id,
+        }
+        if uuid:
+            edge_kwargs["uuid"] = str(uuid)
+
+        edge = EntityEdge(**edge_kwargs)
+        edges[edge.uuid] = edge
+
+    return edges
+
+
+async def fetch_entity_edges_by_group(group_id: str) -> dict[str, EntityEdge]:
+    """Fetch all entity edges for a group from FalkorDB.
+
+    Args:
+        group_id: Graph partition identifier
+
+    Returns:
+        Dict mapping edge_uuid -> EntityEdge
+    """
+    return await asyncio.to_thread(_fetch_entity_edges_by_group_sync, group_id)
+
+
 def _get_db_stats_sync() -> dict[str, int]:
     """Query database statistics (sync)."""
     graph = _ensure_graph()
@@ -370,11 +442,14 @@ def _write_episode_and_nodes_sync(
         }
 
         episode_set_clause = ", ".join(
-            [f"e.{key} = {to_cypher_literal(value)}" for key, value in episode_props.items()]
+            [
+                f"e.{key} = {to_cypher_literal(value)}"
+                for key, value in episode_props.items()
+            ]
         )
 
         episode_query = f"""
-        MERGE (e:Episodic {{uuid: {to_cypher_literal(episode_dict['uuid'])}}})
+        MERGE (e:Episodic {{uuid: {to_cypher_literal(episode_dict["uuid"])}}})
         SET {episode_set_clause}
         RETURN e.uuid AS uuid
         """
@@ -409,12 +484,17 @@ def _write_episode_and_nodes_sync(
                 "attributes": json.dumps(node_dict["attributes"]),
             }
 
-            set_clause = ", ".join([f"n.{key} = {to_cypher_literal(value)}" for key, value in props.items()])
+            set_clause = ", ".join(
+                [
+                    f"n.{key} = {to_cypher_literal(value)}"
+                    for key, value in props.items()
+                ]
+            )
 
             embedding_literal = json.dumps(node_dict["name_embedding"])
 
             node_query = f"""
-            MERGE (n:Entity {{uuid: {to_cypher_literal(node_dict['uuid'])}}})
+            MERGE (n:Entity {{uuid: {to_cypher_literal(node_dict["uuid"])}}})
             SET {set_clause}
             SET n.name_embedding = vecf32({embedding_literal})
             RETURN n.uuid AS uuid
@@ -448,6 +528,7 @@ async def write_episode_and_nodes(
 
 __all__ = [
     "fetch_entities_by_group",
+    "fetch_entity_edges_by_group",
     "fetch_recent_episodes",
     "get_db_stats",
     "reset_database",

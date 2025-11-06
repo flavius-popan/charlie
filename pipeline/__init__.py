@@ -20,11 +20,13 @@ from graphiti_core.helpers import (
     validate_excluded_entity_types,
     validate_group_id,
 )
+from graphiti_core.edges import EntityEdge
 from graphiti_core.nodes import EntityNode, EpisodicNode
 from graphiti_core.utils.ontology_utils.entity_types_utils import validate_entity_types
 
 from .extract_nodes import ExtractNodes, ExtractNodesOutput
-from .entity_edge_models import entity_types
+from .extract_edges import ExtractEdges, ExtractEdgesOutput
+from .entity_edge_models import entity_types, edge_types, edge_type_map
 
 # ========== Pipeline Orchestration ==========
 
@@ -35,6 +37,7 @@ class AddJournalResults:
 
     episode: EpisodicNode
     nodes: list[EntityNode]
+    edges: list[EntityEdge]
     uuid_map: dict[str, str]
     metadata: dict[str, Any]
 
@@ -48,6 +51,8 @@ async def add_journal(
     entity_types: dict | None = entity_types,
     excluded_entity_types: list[str] | None = None,
     extract_nodes_factory: Callable[[str], ExtractNodes] | None = None,
+    edge_types: dict | None = edge_types,
+    edge_type_map: dict | None = edge_type_map,
 ) -> AddJournalResults:
     """Process a journal entry and extract knowledge graph elements.
 
@@ -67,6 +72,8 @@ async def add_journal(
         entity_types: Custom entity type schemas
         excluded_entity_types: Entity types to exclude from extraction
         extract_nodes_factory: Optional hook returning an ExtractNodes module for the given group_id
+        edge_types: Custom edge type schemas (for future Stage 2 enhancement)
+        edge_type_map: Maps (source_label, target_label) to allowed edge types
 
     Returns:
         AddJournalResults with episode, extracted nodes, UUID mappings, and metadata
@@ -83,6 +90,7 @@ async def add_journal(
             )
             print(f"Episode: {result.episode.uuid}")
             print(f"Extracted {len(result.nodes)} entities")
+            print(f"Extracted {len(result.edges)} relationships")
 
         asyncio.run(main())
         ```
@@ -109,7 +117,22 @@ async def add_journal(
         entity_types=entity_types,
     )
 
-    # TODO: Stage 2: Extract relationships between entities
+    # Stage 2: Extract relationships between entities
+    edge_extractor = ExtractEdges(
+        group_id=group_id,
+        dedupe_enabled=True,
+        edge_types=edge_types,
+        edge_type_map=edge_type_map,
+    )
+    extract_edges_result = await edge_extractor(
+        episode=extract_result.episode,
+        extracted_nodes=extract_result.extracted_nodes,
+        resolved_nodes=extract_result.nodes,
+        uuid_map=extract_result.uuid_map,
+        previous_episodes=extract_result.previous_episodes,
+        entity_types=entity_types,
+    )
+
     # TODO: Stage 3: Extract entity attributes
     # TODO: Stage 4: Generate entity summaries
     # TODO: Stage 5: Save to database
@@ -117,8 +140,12 @@ async def add_journal(
     return AddJournalResults(
         episode=extract_result.episode,
         nodes=extract_result.nodes,
+        edges=extract_edges_result.edges,
         uuid_map=extract_result.uuid_map,
-        metadata=extract_result.metadata,
+        metadata={
+            **extract_result.metadata,
+            "edges": extract_edges_result.metadata,
+        },
     )
 
 
@@ -129,4 +156,6 @@ __all__ = [
     "AddJournalResults",
     "ExtractNodes",
     "ExtractNodesOutput",
+    "ExtractEdges",
+    "ExtractEdgesOutput",
 ]

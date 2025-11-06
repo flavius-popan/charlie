@@ -34,6 +34,7 @@ async def main():
     )
     print(f"Episode: {result.episode.uuid}")
     print(f"Extracted {len(result.nodes)} entities")
+    print(f"Extracted {len(result.edges)} relationships")
 
 asyncio.run(main())
 ```
@@ -86,39 +87,24 @@ class ExtractNodesOutput:
     metadata: dict[str, Any]           # Statistics: extracted_count, exact_matches, fuzzy_matches, new_entities
 ```
 
-### Stage 2: Extract Edges - CRITICAL REQUIREMENTS
+### Stage 2: Extract Edges
 
-**graphiti-core signature** (`edge_operations.py:89-97`):
+**Input** (from Stage 1):
+- episode: EpisodicNode
+- extracted_nodes: list[EntityNode] (original UUIDs for LLM indexing)
+- resolved_nodes: list[EntityNode] (canonical UUIDs for validation)
+- uuid_map: dict[str, str] (for edge pointer remapping)
+- previous_episodes: list[EpisodicNode] (context, unused currently)
+
+**Returns:**
 ```python
-async def extract_edges(
-    episode: EpisodicNode,
-    nodes: list[EntityNode],           # EXTRACTED nodes (original UUIDs)
-    previous_episodes: list[EpisodicNode],
-    edge_type_map: dict[tuple[str, str], list[str]],
-    edge_types: dict[str, type[BaseModel]] | None = None,
-) -> list[EntityEdge]:
+@dataclass
+class ExtractEdgesOutput:
+    edges: list[EntityEdge]      # Resolved edges
+    metadata: dict[str, Any]     # Statistics: extracted, new, merged counts
 ```
 
-**What Stage 2 needs:**
-1. **Extracted nodes** (with original UUIDs before resolution) - returned in `result.extracted_nodes`
-2. **Resolved nodes** (with canonical UUIDs) - returned in `result.nodes`
-3. **UUID map** - returned in `result.uuid_map`
-4. **Previous episodes** - reused from add_journal()
-5. **Episode** - returned in `result.episode`
-
-**Edge resolution flow** (graphiti-core `graphiti.py:378-411`):
-```python
-# 1. Extract edges using EXTRACTED nodes
-extracted_edges = await extract_edges(episode, extracted_nodes, ...)
-
-# 2. Remap edge UUIDs: extracted → canonical
-edges = resolve_edge_pointers(extracted_edges, uuid_map)
-
-# 3. Resolve edges using RESOLVED nodes
-resolved_edges, invalidated_edges = await resolve_extracted_edges(
-    edges, episode, resolved_nodes, ...
-)
-```
+**Key requirement**: Edge extraction uses `extracted_nodes` (original UUIDs), then `resolve_edge_pointers()` remaps to canonical UUIDs from `uuid_map`.
 
 ### Stage 3: Extract Attributes
 
@@ -170,11 +156,77 @@ result = await extractor(content="...")
 
 **Pattern for Future Stages**: Repeat this two-layer design. Create a pure `dspy.Module` for each LLM operation, inject into orchestrator.
 
-### Stage 2: Extract Edges (TODO)
+### Stage 2: Extract Edges
 
+**Module**: `extract_edges.py`
 **Analogous to**: graphiti-core's `extract_edges()` + `resolve_extracted_edges()`
 
-Extract relationships between resolved entities.
+**Purpose**: Extract relationships between resolved entities with supporting facts.
+
+**Architecture** (two-layer pattern):
+1. **`EdgeExtractor`** (dspy.Module): Pure LLM extraction. Sync, no DB. Optimizable.
+2. **`ExtractEdges`** (orchestrator): Full pipeline with DB, edge building, exact match resolution.
+
+**Design**:
+- Extracts relationships + facts inline
+- Follows graphiti-core's 3-step flow: extract → remap → resolve
+- Uses exact match deduplication only (no fuzzy matching, no semantic search)
+- Temporal metadata (valid_at/invalid_at) extracted via LLM
+- Returns edges in-memory (persistence deferred to Stage 5)
+
+**Data Flow**:
+```
+ExtractNodesOutput (from Stage 1)
+    ↓ extracted_nodes (original UUIDs)
+EdgeExtractor (DSPy) → ExtractedRelationships
+    ↓
+build_entity_edges() → EntityEdges with provisional UUIDs
+    ↓ uuid_map (from Stage 1)
+resolve_edge_pointers() → EntityEdges with canonical UUIDs
+    ↓ existing_edges (from DB)
+resolve_edges() → Deduplicated edges
+    ↓
+ExtractEdgesOutput(edges, metadata)
+```
+
+**Usage:**
+```python
+# Standard usage
+edge_extractor = ExtractEdges(group_id="user_123")
+result = await edge_extractor(
+    episode=extract_result.episode,
+    extracted_nodes=extract_result.extracted_nodes,
+    resolved_nodes=extract_result.nodes,
+    uuid_map=extract_result.uuid_map,
+    previous_episodes=extract_result.previous_episodes,
+)
+
+# With optimized EdgeExtractor
+edge_extractor_module = EdgeExtractor()
+compiled = optimizer.compile(edge_extractor_module, trainset=examples)
+extractor = ExtractEdges(group_id="user_123", edge_extractor=compiled)
+result = await extractor(...)
+```
+
+**Important Implementation Details**:
+
+1. **Node Indexing**: LLM extracts edges using `extracted_nodes` (original UUIDs) because indices must match the node list passed to the LLM.
+
+2. **UUID Remapping**: After extraction, `resolve_edge_pointers(edges, uuid_map)` remaps edge source/target UUIDs from provisional → canonical.
+
+3. **Exact Match Deduplication**: Edges keyed by `(source_uuid, target_uuid, edge_name)`. If match exists, merge episode IDs. No fuzzy matching.
+
+4. **Temporal Metadata**: LLM extracts `valid_at` and `invalid_at` as ISO 8601 strings. Simple datetime parsing only (no dateparser validation).
+
+5. **Facts Inline**: Relationships and facts extracted in single LLM call.
+
+**Deferred Features** (for later optimization):
+- Contradiction detection (stub: import available but not called)
+- Fuzzy edge matching (requires embeddings)
+- LLM-based deduplication (requires embeddings)
+- Reflexion loop for missed relationships
+
+**Pattern for Future Stages**: Repeat this two-layer design. Create pure `dspy.Module` for each LLM operation, inject into orchestrator.
 
 ### Stage 3: Extract Attributes (TODO)
 

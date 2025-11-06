@@ -93,11 +93,16 @@ class ExtractNodesOutput:
     """Results from node extraction and resolution."""
 
     episode: EpisodicNode
-    extracted_nodes: list[EntityNode]  # Nodes with original UUIDs (for Stage 2 edge extraction)
+    extracted_nodes: list[
+        EntityNode
+    ]  # Nodes with original UUIDs (for Stage 2 edge extraction)
     nodes: list[EntityNode]  # Resolved nodes with canonical UUIDs
     uuid_map: dict[str, str]  # provisional_uuid → canonical_uuid
-    duplicate_pairs: list[tuple[EntityNode, EntityNode]]  # Consumed in Stage 5 for DUPLICATE_OF edges
+    duplicate_pairs: list[
+        tuple[EntityNode, EntityNode]
+    ]  # Consumed in Stage 5 for DUPLICATE_OF edges
     metadata: dict[str, Any]
+    previous_episodes: list[EpisodicNode]  # For Stage 2 edge extraction context
 
 
 class EntityExtractor(dspy.Module):
@@ -112,7 +117,7 @@ class EntityExtractor(dspy.Module):
 
     def __init__(self):
         super().__init__()
-        self.extractor = dspy.Predict(EntityExtractionSignature)
+        self.extractor = dspy.ChainOfThought(EntityExtractionSignature)
 
         # Auto-load optimized prompts if they exist
         prompt_path = Path(__file__).parent / "prompts" / "extract_nodes.json"
@@ -269,6 +274,7 @@ class ExtractNodes:
             uuid_map=uuid_map,
             duplicate_pairs=duplicate_pairs,
             metadata=metadata,
+            previous_episodes=previous_episodes,
         )
 
     def _extract_entities(

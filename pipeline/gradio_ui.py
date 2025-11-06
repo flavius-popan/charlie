@@ -13,7 +13,7 @@ import gradio as gr
 import dspy
 from dspy_outlines import OutlinesAdapter, OutlinesLM
 
-from pipeline.extract_nodes import ExtractNodes
+from pipeline import add_journal
 from pipeline.db_utils import (
     fetch_entities_by_group,
     fetch_recent_episodes,
@@ -113,6 +113,39 @@ def _format_uuid_map(uuid_map: dict, nodes) -> str:
     return "\n".join(lines)
 
 
+def _format_edge_list(edges) -> str:
+    """Format entity edges as readable list."""
+    if not edges:
+        return "(no edges extracted)"
+
+    lines = []
+    for edge in edges:
+        source_short = edge.source_node_uuid[:8]
+        target_short = edge.target_node_uuid[:8]
+        fact_preview = edge.fact[:150] + "..." if len(edge.fact) > 150 else edge.fact
+
+        valid_str = edge.valid_at.isoformat() if edge.valid_at else "N/A"
+        invalid_str = edge.invalid_at.isoformat() if edge.invalid_at else "N/A"
+
+        lines.append(
+            f"- {source_short}... → {target_short}... [{edge.name}]\n"
+            f"  Fact: {fact_preview}\n"
+            f"  Valid: {valid_str} | Invalid: {invalid_str}"
+        )
+
+    return "\n\n".join(lines)
+
+
+def _format_edge_stats(metadata: dict) -> str:
+    """Format edge extraction statistics."""
+    edges_meta = metadata.get("edges", {})
+    return f"""Extracted: {edges_meta.get('extracted_count', 0)} relationships
+Built: {edges_meta.get('built_count', 0)} edges
+Resolved: {edges_meta.get('resolved_count', 0)} edges
+New: {edges_meta.get('new_count', 0)}
+Merged: {edges_meta.get('merged_count', 0)}"""
+
+
 def _format_episode(episode) -> str:
     """Format episode details."""
     if not episode:
@@ -135,13 +168,15 @@ def on_extract(
     episode_name: str,
     dedupe_enabled: bool,
 ):
-    """Extract entities from journal entry text."""
+    """Extract entities and relationships from journal entry text."""
     if not content or not content.strip():
         return (
             "(enter journal text to extract entities)",
             "(no statistics)",
             "(no UUID map)",
             "(no episode)",
+            "(no edges extracted)",
+            "(no edge statistics)",
             None,
             None,
             None,
@@ -150,16 +185,15 @@ def on_extract(
     reference_time = _parse_reference_time(reference_time_str)
     name = episode_name.strip() if episode_name and episode_name.strip() else None
 
-    logger.info("Extracting entities from journal entry")
+    logger.info("Processing journal entry through pipeline")
     logger.info("Reference time: %s", reference_time)
     logger.info("Dedupe enabled: %s", dedupe_enabled)
 
     try:
-        extractor = ExtractNodes(group_id=GROUP_ID, dedupe_enabled=dedupe_enabled)
-
         result = asyncio.run(
-            extractor(
+            add_journal(
                 content=content,
+                group_id=GROUP_ID,
                 reference_time=reference_time,
                 name=name,
             )
@@ -169,23 +203,29 @@ def on_extract(
         stats = _format_stats(result.metadata)
         uuid_map = _format_uuid_map(result.uuid_map, result.nodes)
         episode_details = _format_episode(result.episode)
+        edge_list = _format_edge_list(result.edges)
+        edge_stats = _format_edge_stats(result.metadata)
 
-        logger.info("Extraction complete: %d nodes", len(result.nodes))
+        logger.info("Pipeline complete: %d nodes, %d edges", len(result.nodes), len(result.edges))
 
         return (
             entity_list,
             stats,
             uuid_map,
             episode_details,
+            edge_list,
+            edge_stats,
             result.episode,
             result.nodes,
             result.uuid_map,
         )
 
     except Exception as exc:
-        logger.exception("Extraction failed")
+        logger.exception("Pipeline failed")
         error_msg = f"ERROR: {exc}"
         return (
+            error_msg,
+            error_msg,
             error_msg,
             error_msg,
             error_msg,
@@ -342,6 +382,19 @@ Test the entity extraction and resolution pipeline.
             lines=8,
         )
 
+    with gr.Row():
+        edge_list_output = gr.Textbox(
+            label="Extracted Edges",
+            interactive=False,
+            lines=12,
+        )
+
+        edge_stats_output = gr.Textbox(
+            label="Edge Statistics",
+            interactive=False,
+            lines=8,
+        )
+
     episode_state = gr.State(None)
     nodes_state = gr.State(None)
     uuid_map_state = gr.State(None)
@@ -359,6 +412,8 @@ Test the entity extraction and resolution pipeline.
             stats_output,
             uuid_map_output,
             episode_output,
+            edge_list_output,
+            edge_stats_output,
             episode_state,
             nodes_state,
             uuid_map_state,
