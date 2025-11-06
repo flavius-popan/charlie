@@ -117,7 +117,7 @@ class EntityExtractor(dspy.Module):
 
     def __init__(self):
         super().__init__()
-        self.extractor = dspy.ChainOfThought(EntityExtractionSignature)
+        self.extractor = dspy.Predict(EntityExtractionSignature)
 
         # Auto-load optimized prompts if they exist
         prompt_path = Path(__file__).parent / "prompts" / "extract_nodes.json"

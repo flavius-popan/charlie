@@ -69,3 +69,23 @@ async def test_add_journal_validates_group_id() -> None:
             content="Bad input",
             group_id="invalid group!",
         )
+
+
+@pytest.mark.asyncio
+async def test_add_journal_extracts_edges(isolated_graph) -> None:
+    """Edges should be extracted between entities in the journal content."""
+    group_id = "edge-extraction"
+    result = await add_journal(
+        content=(
+            "Sarah works at Stanford University. "
+            "Mark is the director of the AI lab at Stanford."
+        ),
+        group_id=group_id,
+        reference_time=datetime(2024, 2, 15, 10, 0, tzinfo=timezone.utc),
+    )
+
+    assert isinstance(result, AddJournalResults)
+    assert len(result.edges) >= 1
+    assert all(e.group_id == group_id for e in result.edges)
+    assert "edges" in result.metadata
+    assert result.metadata["edges"]["extracted_count"] >= 1
