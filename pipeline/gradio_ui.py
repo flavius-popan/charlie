@@ -12,8 +12,15 @@ from datetime import datetime
 import gradio as gr
 import dspy
 from dspy_outlines import OutlinesAdapter, OutlinesLM
+from graphiti_core.nodes import EpisodicNode, EpisodeType
+from graphiti_core.utils.datetime_utils import ensure_utc, utc_now
 
-from pipeline import add_journal
+from pipeline import (
+    ExtractNodes,
+    ExtractEdges,
+    ExtractAttributes,
+    GenerateSummaries,
+)
 from pipeline.db_utils import (
     fetch_entities_by_group,
     fetch_recent_episodes,
@@ -21,6 +28,7 @@ from pipeline.db_utils import (
     reset_database,
     write_episode_and_nodes,
 )
+from pipeline.entity_edge_models import entity_types
 from settings import DB_PATH, GROUP_ID, MODEL_CONFIG, DEFAULT_MODEL_PATH
 
 logging.basicConfig(
@@ -41,23 +49,8 @@ dspy.configure(lm=lm, adapter=adapter)
 logger.info("DSPy configured with OutlinesLM")
 
 
-def _parse_reference_time(value: str | None) -> datetime:
-    """Parse reference time from ISO8601 string, default to now."""
-    if not value or not value.strip():
-        return datetime.now()
-    try:
-        return datetime.fromisoformat(value.strip())
-    except ValueError:
-        logger.warning("Invalid reference time: %s, using now()", value)
-        return datetime.now()
-
-
 def _format_entity_list(nodes) -> str:
-    """Format entity nodes as readable list with custom attributes.
-
-    Note: Attributes will be populated once Stage 3 (extract_attributes) is implemented.
-    Currently, Stage 1 extracts only entity names and types, following graphiti-core's pattern.
-    """
+    """Format entity nodes as readable list."""
     if not nodes:
         return "(no entities extracted)"
 
@@ -65,22 +58,6 @@ def _format_entity_list(nodes) -> str:
     for node in nodes:
         labels = ", ".join(node.labels) if node.labels else "Entity"
         base_info = f"- {node.name} [{labels}]"
-
-        if node.attributes:
-            attrs = []
-            if "Person" in node.labels:
-                if relationship := node.attributes.get("relationship_type"):
-                    attrs.append(relationship)
-            elif "Emotion" in node.labels:
-                if emotion := node.attributes.get("specific_emotion"):
-                    attrs.append(emotion)
-                if category := node.attributes.get("category"):
-                    attrs.append(category)
-
-            if attrs:
-                base_info += f" ({', '.join(attrs)})"
-
-        base_info += f" (UUID: {node.uuid[:8]}...)"
         lines.append(base_info)
 
     return "\n".join(lines)
@@ -113,24 +90,24 @@ def _format_uuid_map(uuid_map: dict, nodes) -> str:
     return "\n".join(lines)
 
 
-def _format_edge_list(edges) -> str:
+def _format_edge_list(edges, nodes=None) -> str:
     """Format entity edges as readable list."""
     if not edges:
         return "(no edges extracted)"
 
+    uuid_to_name = {}
+    if nodes:
+        uuid_to_name = {node.uuid: node.name for node in nodes}
+
     lines = []
     for edge in edges:
-        source_short = edge.source_node_uuid[:8]
-        target_short = edge.target_node_uuid[:8]
-        fact_preview = edge.fact[:150] + "..." if len(edge.fact) > 150 else edge.fact
-
-        valid_str = edge.valid_at.isoformat() if edge.valid_at else "N/A"
-        invalid_str = edge.invalid_at.isoformat() if edge.invalid_at else "N/A"
+        source_name = uuid_to_name.get(edge.source_node_uuid, edge.source_node_uuid[:8] + "...")
+        target_name = uuid_to_name.get(edge.target_node_uuid, edge.target_node_uuid[:8] + "...")
+        fact_preview = edge.fact[:100] + "..." if len(edge.fact) > 100 else edge.fact
 
         lines.append(
-            f"- {source_short}... → {target_short}... [{edge.name}]\n"
-            f"  Fact: {fact_preview}\n"
-            f"  Valid: {valid_str} | Invalid: {invalid_str}"
+            f"- {source_name} → {target_name} [{edge.name}]\n"
+            f"  {fact_preview}"
         )
 
     return "\n\n".join(lines)
@@ -144,6 +121,72 @@ Built: {edges_meta.get('built_count', 0)} edges
 Resolved: {edges_meta.get('resolved_count', 0)} edges
 New: {edges_meta.get('new_count', 0)}
 Merged: {edges_meta.get('merged_count', 0)}"""
+
+
+def _format_attributes_output(nodes) -> str:
+    """Format extracted attributes by entity."""
+    if not nodes:
+        return "(no nodes to display attributes)"
+
+    lines = []
+    for node in nodes:
+        if not node.attributes:
+            continue
+
+        entity_type = next((item for item in node.labels if item != 'Entity'), 'Entity')
+        lines.append(f"- {node.name} [{entity_type}]")
+
+        for key, value in node.attributes.items():
+            lines.append(f"  {key}: {value}")
+
+    if not lines:
+        return "(no attributes extracted)"
+
+    return "\n".join(lines)
+
+
+def _format_attributes_stats(metadata: dict) -> str:
+    """Format attribute extraction statistics."""
+    attrs_meta = metadata.get("attributes", {})
+    by_type = attrs_meta.get("attributes_extracted_by_type", {})
+
+    by_type_str = "\n".join([f"  {typ}: {count}" for typ, count in by_type.items()])
+    if not by_type_str:
+        by_type_str = "  (none)"
+
+    return f"""Processed: {attrs_meta.get('nodes_processed', 0)} nodes
+Skipped: {attrs_meta.get('nodes_skipped', 0)} nodes
+By type:
+{by_type_str}"""
+
+
+def _format_summaries_output(nodes) -> str:
+    """Format generated summaries by entity."""
+    if not nodes:
+        return "(no nodes to display summaries)"
+
+    lines = []
+    for node in nodes:
+        if not node.summary:
+            continue
+
+        entity_type = next((item for item in node.labels if item != 'Entity'), 'Entity')
+        lines.append(f"- {node.name} [{entity_type}]")
+        lines.append(f"  {node.summary}")
+        lines.append("")
+
+    if not lines:
+        return "(no summaries generated)"
+
+    return "\n".join(lines)
+
+
+def _format_summaries_stats(metadata: dict) -> str:
+    """Format summary generation statistics."""
+    summ_meta = metadata.get("summaries", {})
+    return f"""Processed: {summ_meta.get('nodes_processed', 0)} nodes
+Avg length: {summ_meta.get('avg_summary_length', 0)} chars
+Truncated: {summ_meta.get('truncated_count', 0)} summaries"""
 
 
 def _format_episode(episode) -> str:
@@ -162,68 +205,188 @@ Source: {episode.source.value}
 Content: {content_preview}"""
 
 
-def on_extract(
-    content: str,
-    reference_time_str: str,
-    episode_name: str,
-    dedupe_enabled: bool,
-):
-    """Extract entities and relationships from journal entry text."""
+def on_extract(content: str):
+    """Extract entities and relationships from journal entry text with progressive updates."""
     if not content or not content.strip():
-        return (
+        empty_result = (
             "(enter journal text to extract entities)",
             "(no statistics)",
             "(no UUID map)",
             "(no episode)",
             "(no edges extracted)",
             "(no edge statistics)",
+            "(no attributes extracted)",
+            "(no attribute statistics)",
+            "(no summaries generated)",
+            "(no summary statistics)",
             None,
             None,
             None,
         )
-
-    reference_time = _parse_reference_time(reference_time_str)
-    name = episode_name.strip() if episode_name and episode_name.strip() else None
+        yield empty_result
+        return
 
     logger.info("Processing journal entry through pipeline")
-    logger.info("Reference time: %s", reference_time)
-    logger.info("Dedupe enabled: %s", dedupe_enabled)
 
     try:
-        result = asyncio.run(
-            add_journal(
+        reference_time = ensure_utc(utc_now())
+        episode = EpisodicNode(
+            name=f"journal_{reference_time.isoformat()}",
+            group_id=GROUP_ID,
+            labels=[],
+            source=EpisodeType.text,
+            content=content,
+            source_description="Journal entry",
+            created_at=utc_now(),
+            valid_at=reference_time,
+        )
+
+        logger.info("Created episode %s", episode.uuid)
+
+        previous_episodes = asyncio.run(
+            fetch_recent_episodes(GROUP_ID, reference_time, limit=5)
+        )
+
+        logger.info("Starting Stage 1: Extract Nodes")
+        extractor = ExtractNodes(group_id=GROUP_ID, dedupe_enabled=True)
+        extract_result = asyncio.run(
+            extractor(
                 content=content,
-                group_id=GROUP_ID,
                 reference_time=reference_time,
-                name=name,
+                entity_types=entity_types,
             )
         )
 
-        entity_list = _format_entity_list(result.nodes)
-        stats = _format_stats(result.metadata)
-        uuid_map = _format_uuid_map(result.uuid_map, result.nodes)
-        episode_details = _format_episode(result.episode)
-        edge_list = _format_edge_list(result.edges)
-        edge_stats = _format_edge_stats(result.metadata)
+        entity_list = _format_entity_list(extract_result.nodes)
+        stats = _format_stats(extract_result.metadata)
+        uuid_map = _format_uuid_map(extract_result.uuid_map, extract_result.nodes)
+        episode_details = _format_episode(extract_result.episode)
 
-        logger.info("Pipeline complete: %d nodes, %d edges", len(result.nodes), len(result.edges))
+        logger.info("Stage 1 complete: %d nodes extracted", len(extract_result.nodes))
 
-        return (
+        yield (
+            entity_list,
+            stats,
+            uuid_map,
+            episode_details,
+            "(stage 2 running...)",
+            "(stage 2 running...)",
+            "(stage 3 pending...)",
+            "(stage 3 pending...)",
+            "(stage 4 pending...)",
+            "(stage 4 pending...)",
+            extract_result.episode,
+            extract_result.nodes,
+            extract_result.uuid_map,
+        )
+
+        logger.info("Starting Stage 2: Extract Edges")
+        edge_extractor = ExtractEdges(group_id=GROUP_ID, dedupe_enabled=True)
+        edges_result = asyncio.run(
+            edge_extractor(
+                episode=extract_result.episode,
+                extracted_nodes=extract_result.extracted_nodes,
+                resolved_nodes=extract_result.nodes,
+                uuid_map=extract_result.uuid_map,
+                previous_episodes=extract_result.previous_episodes,
+                entity_types=entity_types,
+            )
+        )
+
+        edge_list = _format_edge_list(edges_result.edges, extract_result.nodes)
+        edge_stats = _format_edge_stats({"edges": edges_result.metadata})
+
+        logger.info("Stage 2 complete: %d edges extracted", len(edges_result.edges))
+
+        yield (
             entity_list,
             stats,
             uuid_map,
             episode_details,
             edge_list,
             edge_stats,
-            result.episode,
-            result.nodes,
-            result.uuid_map,
+            "(stage 3 running...)",
+            "(stage 3 running...)",
+            "(stage 4 pending...)",
+            "(stage 4 pending...)",
+            extract_result.episode,
+            extract_result.nodes,
+            extract_result.uuid_map,
         )
+
+        logger.info("Starting Stage 3: Extract Attributes")
+        attribute_extractor = ExtractAttributes(group_id=GROUP_ID)
+        attributes_result = asyncio.run(
+            attribute_extractor(
+                nodes=extract_result.nodes,
+                episode=extract_result.episode,
+                previous_episodes=extract_result.previous_episodes,
+                entity_types=entity_types,
+            )
+        )
+
+        attributes_output = _format_attributes_output(attributes_result.nodes)
+        attributes_stats = _format_attributes_stats({"attributes": attributes_result.metadata})
+
+        logger.info("Stage 3 complete: %d nodes processed", attributes_result.metadata['nodes_processed'])
+
+        yield (
+            entity_list,
+            stats,
+            uuid_map,
+            episode_details,
+            edge_list,
+            edge_stats,
+            attributes_output,
+            attributes_stats,
+            "(stage 4 running...)",
+            "(stage 4 running...)",
+            extract_result.episode,
+            attributes_result.nodes,
+            extract_result.uuid_map,
+        )
+
+        logger.info("Starting Stage 4: Generate Summaries")
+        summary_generator = GenerateSummaries(group_id=GROUP_ID)
+        summaries_result = asyncio.run(
+            summary_generator(
+                nodes=attributes_result.nodes,
+                episode=extract_result.episode,
+                previous_episodes=extract_result.previous_episodes,
+            )
+        )
+
+        summaries_output = _format_summaries_output(summaries_result.nodes)
+        summaries_stats = _format_summaries_stats({"summaries": summaries_result.metadata})
+
+        logger.info("Stage 4 complete: %d nodes processed", summaries_result.metadata['nodes_processed'])
+
+        yield (
+            entity_list,
+            stats,
+            uuid_map,
+            episode_details,
+            edge_list,
+            edge_stats,
+            attributes_output,
+            attributes_stats,
+            summaries_output,
+            summaries_stats,
+            extract_result.episode,
+            summaries_result.nodes,
+            extract_result.uuid_map,
+        )
+
+        logger.info("Pipeline complete: %d nodes, %d edges", len(summaries_result.nodes), len(edges_result.edges))
 
     except Exception as exc:
         logger.exception("Pipeline failed")
         error_msg = f"ERROR: {exc}"
-        return (
+        yield (
+            error_msg,
+            error_msg,
+            error_msg,
+            error_msg,
             error_msg,
             error_msg,
             error_msg,
@@ -295,67 +458,29 @@ def get_initial_stats():
         return "Database unavailable"
 
 
-with gr.Blocks(title="ExtractNodes Testing UI") as app:
-    gr.Markdown("# ExtractNodes Testing UI")
+with gr.Blocks(title="Graphiti Pipeline Testing UI") as app:
+    gr.Markdown("# Graphiti Pipeline Testing UI")
     gr.Markdown(f"""
-Test the entity extraction and resolution pipeline.
+Test the complete knowledge graph extraction pipeline with progressive stage updates.
 
 **Database**: `{DB_PATH}`
 **Model**: `{DEFAULT_MODEL_PATH}`
 **Group ID**: `{GROUP_ID}`
 """)
 
-    with gr.Row():
-        with gr.Column(scale=2):
-            gr.Markdown("## Input")
+    gr.Markdown("## Input")
 
-            content_input = gr.Textbox(
-                label="Journal Entry Text",
-                placeholder="Enter journal entry text here...",
-                lines=10,
-            )
+    content_input = gr.Textbox(
+        label="Journal Entry Text",
+        placeholder="Enter journal entry text here...",
+        lines=10,
+    )
 
-            with gr.Row():
-                reference_time_input = gr.Textbox(
-                    label="Reference Time (ISO8601, optional)",
-                    placeholder="Defaults to now",
-                    scale=2,
-                )
-                episode_name_input = gr.Textbox(
-                    label="Episode Name (optional)",
-                    placeholder="Auto-generated if empty",
-                    scale=2,
-                )
-
-            dedupe_toggle = gr.Checkbox(
-                label="Enable entity deduplication",
-                value=True,
-                info="Match extracted entities against existing graph entities",
-            )
-
-            extract_btn = gr.Button("Extract Entities", variant="primary", size="lg")
-
-        with gr.Column(scale=1):
-            gr.Markdown("## Database Controls")
-
-            db_stats_display = gr.Textbox(
-                label="Database Statistics",
-                value=get_initial_stats(),
-                interactive=False,
-                lines=2,
-            )
-
-            write_btn = gr.Button("Write to Database", variant="secondary")
-            reset_btn = gr.Button("Reset Database", variant="stop")
-
-            write_result_display = gr.Textbox(
-                label="Write Result",
-                interactive=False,
-                lines=8,
-            )
+    extract_btn = gr.Button("Extract Entities & Relationships", variant="primary", size="lg")
 
     gr.Markdown("## Output")
 
+    gr.Markdown("### Stage 1: Entity Extraction")
     with gr.Row():
         entity_list_output = gr.Textbox(
             label="Extracted Entities",
@@ -369,6 +494,49 @@ Test the entity extraction and resolution pipeline.
             lines=8,
         )
 
+    gr.Markdown("### Stage 2: Relationship Extraction")
+    with gr.Row():
+        edge_list_output = gr.Textbox(
+            label="Extracted Relationships",
+            interactive=False,
+            lines=10,
+        )
+
+        edge_stats_output = gr.Textbox(
+            label="Relationship Statistics",
+            interactive=False,
+            lines=8,
+        )
+
+    gr.Markdown("### Stage 3: Attribute Extraction")
+    with gr.Row():
+        attributes_output = gr.Textbox(
+            label="Extracted Attributes",
+            interactive=False,
+            lines=10,
+        )
+
+        attributes_stats_output = gr.Textbox(
+            label="Attribute Statistics",
+            interactive=False,
+            lines=8,
+        )
+
+    gr.Markdown("### Stage 4: Summary Generation")
+    with gr.Row():
+        summaries_output = gr.Textbox(
+            label="Generated Summaries",
+            interactive=False,
+            lines=10,
+        )
+
+        summaries_stats_output = gr.Textbox(
+            label="Summary Statistics",
+            interactive=False,
+            lines=8,
+        )
+
+    gr.Markdown("### Debug Information")
     with gr.Row():
         uuid_map_output = gr.Textbox(
             label="UUID Mapping (Provisional → Resolved)",
@@ -382,18 +550,26 @@ Test the entity extraction and resolution pipeline.
             lines=8,
         )
 
-    with gr.Row():
-        edge_list_output = gr.Textbox(
-            label="Extracted Edges",
-            interactive=False,
-            lines=12,
-        )
+    gr.Markdown("## Database Controls")
 
-        edge_stats_output = gr.Textbox(
-            label="Edge Statistics",
-            interactive=False,
-            lines=8,
-        )
+    with gr.Row():
+        with gr.Column(scale=2):
+            db_stats_display = gr.Textbox(
+                label="Database Statistics",
+                value=get_initial_stats(),
+                interactive=False,
+                lines=2,
+            )
+
+        with gr.Column(scale=1):
+            write_btn = gr.Button("Write to Database", variant="secondary")
+            reset_btn = gr.Button("Reset Database", variant="stop")
+
+    write_result_display = gr.Textbox(
+        label="Write Result",
+        interactive=False,
+        lines=6,
+    )
 
     episode_state = gr.State(None)
     nodes_state = gr.State(None)
@@ -401,12 +577,7 @@ Test the entity extraction and resolution pipeline.
 
     extract_btn.click(
         on_extract,
-        inputs=[
-            content_input,
-            reference_time_input,
-            episode_name_input,
-            dedupe_toggle,
-        ],
+        inputs=[content_input],
         outputs=[
             entity_list_output,
             stats_output,
@@ -414,6 +585,10 @@ Test the entity extraction and resolution pipeline.
             episode_output,
             edge_list_output,
             edge_stats_output,
+            attributes_output,
+            attributes_stats_output,
+            summaries_output,
+            summaries_stats_output,
             episode_state,
             nodes_state,
             uuid_map_state,
