@@ -128,7 +128,7 @@ async def extract_attributes_from_nodes(
 ## Pipeline Stages
 
 ```
-Journal Text → add_journal() → ExtractNodes → ExtractEdges → ExtractAttributes → GenerateSummaries → Database
+Journal Text → add_journal() → ExtractNodes → ExtractEdges → ExtractAttributes → GenerateSummaries → [Future: Database]
 ```
 
 ### Stage 1: Extract Nodes (✓ Implemented)
@@ -228,33 +228,55 @@ result = await extractor(...)
 
 **Pattern for Future Stages**: Repeat this two-layer design. Create pure `dspy.Module` for each LLM operation, inject into orchestrator.
 
-### Stage 3: Extract Attributes (TODO)
+### Stage 3: Extract Attributes
 
-**Module**: `extract_attributes.py` (not yet implemented)
+**Module**: `extract_attributes.py`
 **Analogous to**: graphiti-core's `extract_attributes_from_nodes()`
 
 **Purpose**: Extract custom entity attributes based on entity type and episode context.
+
+**Architecture** (two-layer pattern):
+1. **`AttributeExtractor`** (dspy.Module): Pure LLM extraction. Sync, no DB. Optimizable.
+2. **`ExtractAttributes`** (orchestrator): Full pipeline with entity type resolution, attribute merging.
 
 **Design**:
 - For each resolved entity from Stage 1, extract type-specific attributes:
   - **Person**: `relationship_type` (e.g., "friend", "colleague", "family")
   - **Emotion**: `specific_emotion` (e.g., "anxiety", "joy"), `category` (e.g., "positive", "negative")
 - Pass entity's Pydantic model (from `entity_edge_models.py`) as `response_model` to LLM
-- LLM extracts attributes based on episode context
+- LLM extracts attributes based on episode context and previous_episodes
 - Results merged into `EntityNode.attributes` dict
+- Validation: Pydantic model validation before merging
 
-**Architecture** (follows two-layer pattern):
-1. **`AttributeExtractor`** (dspy.Module): Pure LLM extraction. Takes entity name, type, and episode context. Returns Pydantic model with attributes.
-2. **`ExtractAttributes`** (orchestrator): Iterates over resolved entities, calls AttributeExtractor for each, merges results.
-
-**Example**:
-```python
-# For a Person entity "Sarah" in episode "Today I met with my friend Sarah"
-# LLM extracts: {"relationship_type": "friend"}
-# Merged into: EntityNode(name="Sarah", labels=["Entity", "Person"], attributes={"relationship_type": "friend"})
+**Data Flow**:
+```
+ExtractNodesOutput (from Stage 1)
+    ↓ nodes (resolved entities)
+    ↓ episode, previous_episodes
+AttributeExtractor (DSPy) → Extracted attributes per entity
+    ↓
+Merge attributes into node.attributes dict
+    ↓
+ExtractAttributesOutput(nodes, metadata)
 ```
 
-**Critical**: This stage follows graphiti-core's separation of concerns. Entity names/types are extracted in Stage 1, attributes in Stage 3. This enables optimizing each stage independently and matches graphiti-core's architecture.
+**Usage:**
+```python
+# Standard usage
+attribute_extractor = ExtractAttributes(group_id="user_123")
+result = await attribute_extractor(
+    nodes=extract_result.nodes,
+    episode=extract_result.episode,
+    previous_episodes=extract_result.previous_episodes,
+    entity_types=entity_types,
+)
+
+# With optimized AttributeExtractor
+attribute_extractor_module = AttributeExtractor()
+compiled = optimizer.compile(attribute_extractor_module, trainset=examples)
+extractor = ExtractAttributes(group_id="user_123", attribute_extractor=compiled)
+result = await extractor(...)
+```
 
 **Example Flow:**
 
@@ -281,22 +303,116 @@ EntityNode(
     labels=["Entity", "Emotion"],
     attributes={
         "specific_emotion": "anxiety",
-        "category": "negative"
+        "category": "high_energy_unpleasant"
     }
 )
 ```
 
-The AttributeExtractor DSPy signature will receive each entity + episode context and return the appropriate Pydantic model (Person or Emotion) from `entity_edge_models.py`.
+**Important Implementation Details**:
 
-### Stage 4: Generate Summaries (TODO)
+1. **Entity Type Resolution**: Extract custom type from node.labels (skip "Entity" base label)
 
-**Analogous to**: graphiti-core's summary generation in node operations
+2. **Schema Checking**: Skip nodes with entity types that have no custom fields (`len(model.model_fields) == 0`)
 
-Generate entity summaries.
+3. **Context Building**: Format episode content and previous_episodes as context for LLM
+
+4. **Attribute Merging**: Use `node.attributes.update()` to preserve existing attributes
+
+5. **Validation**: Validate extracted attributes against Pydantic model before merging
+
+6. **Embeddings**: Deferred to future integration (stub with TODO comment for local Qwen embedder)
+
+**Pattern for Future Stages**: Repeat this two-layer design. Create pure `dspy.Module` for each LLM operation, inject into orchestrator.
+
+### Stage 4: Generate Summaries
+
+**Module**: `generate_summaries.py`
+**Analogous to**: graphiti-core's summary generation in `extract_attributes_from_nodes()`
+
+**Purpose**: Generate concise, factual summaries for all entities based on episode context and attributes.
+
+**Architecture** (two-layer pattern):
+1. **`SummaryGenerator`** (dspy.Module): Pure LLM extraction. Sync, no DB. Optimizable.
+2. **`GenerateSummaries`** (orchestrator): Full pipeline with summary generation, truncation, and validation.
+
+**Design**:
+- Generate summaries for ALL entities (not filtered by type)
+- Summaries combine information from:
+  - Current episode content
+  - Previous episodes context
+  - Entity attributes (extracted in Stage 3)
+  - Existing summary (for updates)
+- LLM follows strict guidelines:
+  - Output only factual content (no meta-commentary)
+  - State facts directly in under 250 characters
+  - Combine new info with existing summary
+- Summaries truncated at sentence boundaries using graphiti-core utility
+
+**Data Flow**:
+```
+ExtractAttributesOutput (from Stage 3)
+    ↓ nodes (with attributes populated)
+    ↓ episode, previous_episodes
+SummaryGenerator (DSPy) → EntitySummary per entity
+    ↓
+Truncate summary to 250 chars (sentence boundary)
+    ↓
+Update node.summary field
+    ↓
+GenerateSummariesOutput(nodes, metadata)
+```
+
+**Usage:**
+```python
+# Standard usage
+summary_generator = GenerateSummaries(group_id="user_123")
+result = await summary_generator(
+    nodes=attributes_result.nodes,
+    episode=extract_result.episode,
+    previous_episodes=extract_result.previous_episodes,
+)
+
+# With optimized SummaryGenerator
+summary_generator_module = SummaryGenerator()
+compiled = optimizer.compile(summary_generator_module, trainset=examples)
+generator = GenerateSummaries(group_id="user_123", summary_generator=compiled)
+result = await generator(...)
+```
+
+**Example Summaries:**
+
+```python
+# Good summaries (factual, concise, under 250 chars)
+"Sarah is a friend. Met on 2025-01-06 to discuss AI ethics at Stanford."
+
+"Anxiety about presentation. High energy unpleasant emotion. Experienced on 2025-01-06."
+
+# Bad summaries (avoid)
+"This is the only activity in the context. The user met with Sarah. No other details were provided."
+"Based on the messages, Sarah is mentioned. Due to length constraints, other details are omitted."
+```
+
+**Important Implementation Details**:
+
+1. **Summary Guidelines**: Embedded directly in DSPy signature from graphiti-core's snippets.py
+
+2. **Truncation**: Double truncation approach:
+   - Truncate existing_summary on input (for context)
+   - Truncate LLM output on storage (for consistency)
+
+3. **Reuse graphiti-core utilities**:
+   - `truncate_at_sentence()` from `graphiti_core.utils.text_utils`
+   - `MAX_SUMMARY_CHARS = 250` constant
+
+4. **Process all entities**: No filtering by entity type (summaries for Person, Emotion, and Entity)
+
+5. **Metadata tracking**: Nodes processed, average summary length, truncation count
+
+6. **Embeddings**: Deferred to future integration (stub with TODO for name embedding generation after summaries)
 
 ### Stage 5: Database Persistence (TODO)
 
-Save all graph elements to FalkorDB.
+Save all graph elements (episode, nodes with attributes/summaries, edges) to FalkorDB.
 
 ## Optimization
 

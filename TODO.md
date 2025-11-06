@@ -1,4 +1,5 @@
 ## Technical
+- ADD ORGS & LOC INTO NODE EXTRACTOR!
 - Would entity extraction work better by summarizing the text and extracting that?
 - Check if you can use MLX batch()
 - Evaluate quantized ONNX models after collecting sample data - test if smaller versions (int8: 63MB, q4: 112MB) are sufficient vs full model (249MB)

@@ -26,6 +26,8 @@ from graphiti_core.utils.ontology_utils.entity_types_utils import validate_entit
 
 from .extract_nodes import ExtractNodes, ExtractNodesOutput
 from .extract_edges import ExtractEdges, ExtractEdgesOutput
+from .extract_attributes import ExtractAttributes, ExtractAttributesOutput
+from .generate_summaries import GenerateSummaries, GenerateSummariesOutput
 from .entity_edge_models import entity_types, edge_types, edge_type_map
 
 # ========== Pipeline Orchestration ==========
@@ -133,18 +135,35 @@ async def add_journal(
         entity_types=entity_types,
     )
 
-    # TODO: Stage 3: Extract entity attributes
-    # TODO: Stage 4: Generate entity summaries
+    # Stage 3: Extract entity attributes
+    attribute_extractor = ExtractAttributes(group_id=group_id)
+    attributes_result = await attribute_extractor(
+        nodes=extract_result.nodes,
+        episode=extract_result.episode,
+        previous_episodes=extract_result.previous_episodes,
+        entity_types=entity_types,
+    )
+
+    # Stage 4: Generate entity summaries
+    summary_generator = GenerateSummaries(group_id=group_id)
+    summaries_result = await summary_generator(
+        nodes=attributes_result.nodes,
+        episode=extract_result.episode,
+        previous_episodes=extract_result.previous_episodes,
+    )
+
     # TODO: Stage 5: Save to database
 
     return AddJournalResults(
         episode=extract_result.episode,
-        nodes=extract_result.nodes,
+        nodes=summaries_result.nodes,
         edges=extract_edges_result.edges,
         uuid_map=extract_result.uuid_map,
         metadata={
             **extract_result.metadata,
             "edges": extract_edges_result.metadata,
+            "attributes": attributes_result.metadata,
+            "summaries": summaries_result.metadata,
         },
     )
 
@@ -158,4 +177,8 @@ __all__ = [
     "ExtractNodesOutput",
     "ExtractEdges",
     "ExtractEdgesOutput",
+    "ExtractAttributes",
+    "ExtractAttributesOutput",
+    "GenerateSummaries",
+    "GenerateSummariesOutput",
 ]
