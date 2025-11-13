@@ -60,6 +60,7 @@ async def add_journal(
     entity_types: dict | None = entity_types,
     excluded_entity_types: list[str] | None = None,
     extract_nodes_factory: Callable[[str], ExtractNodes] | None = None,
+    use_ner_extractor: bool = False,
     edge_types: dict | None = None,
     edge_type_map: dict | None = None,
     persist: bool = True,
@@ -82,6 +83,7 @@ async def add_journal(
         entity_types: Custom entity type schemas
         excluded_entity_types: Entity types to exclude from extraction
         extract_nodes_factory: Optional hook returning an ExtractNodes module for the given group_id
+        use_ner_extractor: When True, use the DistilBERT+Reflexion path for Stage 1
         edge_types: Custom edge type schemas (for future Stage 2 enhancement)
         edge_type_map: Maps (source_label, target_label) to allowed edge types
         persist: Whether to write results to FalkorDB (defaults to True)
@@ -116,7 +118,11 @@ async def add_journal(
 
     # Stage 1: Extract and resolve entity nodes
     def _default_extract_nodes_factory(gid: str) -> ExtractNodes:
-        return ExtractNodes(group_id=gid, dedupe_enabled=True)
+        return ExtractNodes(
+            group_id=gid,
+            dedupe_enabled=True,
+            use_ner_extractor=use_ner_extractor,
+        )
 
     factory = extract_nodes_factory or _default_extract_nodes_factory
     extractor = factory(group_id)

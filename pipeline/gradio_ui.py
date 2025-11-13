@@ -72,6 +72,51 @@ Fuzzy matches: {metadata.get('fuzzy_matches', 0)}
 New entities: {metadata.get('new_entities', 0)}"""
 
 
+def _format_ner_details(metadata: dict | None) -> str:
+    """Format DistilBERT + Reflexion diagnostics when enabled."""
+    if not metadata or metadata.get("extractor") != "distilbert":
+        return "DistilBERT extractor disabled (DSPy entity module in use). Enable the checkbox above to view NER details."
+
+    ner_entities = metadata.get("ner_entities") or []
+    reflexion_added = metadata.get("reflexion_added", 0)
+    reflexion_iterations = metadata.get("reflexion_iterations", 0)
+    reflexion_entities = metadata.get("reflexion_entities") or []
+
+    lines = [
+        "Mode: DistilBERT + Reflexion",
+        f"DistilBERT entities: {len(ner_entities)}",
+        f"Reflexion iterations: {reflexion_iterations} (added {reflexion_added})",
+    ]
+
+    if reflexion_entities:
+        lines.append("Reflexion additions:")
+        for name in reflexion_entities:
+            lines.append(f"  • {name}")
+
+    if ner_entities:
+        lines.append("")
+        lines.append("DistilBERT pass:")
+        for entry in ner_entities:
+            name = entry.get("name") or "(unnamed)"
+            details: list[str] = []
+            label = entry.get("ner_label")
+            mapped = entry.get("mapped_type")
+            confidence = entry.get("confidence")
+            if label:
+                details.append(label)
+            if mapped and mapped != "Entity":
+                details.append(f"→{mapped}")
+            if isinstance(confidence, (int, float)):
+                details.append(f"{int(confidence * 100)}%")
+
+            detail_str = f" [{' | '.join(details)}]" if details else ""
+            lines.append(f"- {name}{detail_str}")
+    else:
+        lines.append("(NER pass returned no entities)")
+
+    return "\n".join(lines)
+
+
 def _format_uuid_map(uuid_map: dict, nodes) -> str:
     """Format UUID mapping table."""
     if not uuid_map:
@@ -205,12 +250,13 @@ Source: {episode.source.value}
 Content: {content_preview}"""
 
 
-def on_extract(content: str):
+def on_extract(content: str, use_ner_extractor: bool):
     """Extract entities and relationships from journal entry text with progressive updates."""
     if not content or not content.strip():
         empty_result = (
             "(enter journal text to extract entities)",
             "(no statistics)",
+            "DistilBERT extractor disabled (DSPy entity module in use). Enable the checkbox above to view NER details.",
             "(no UUID map)",
             "(no episode)",
             "(no edges extracted)",
@@ -247,8 +293,15 @@ def on_extract(content: str):
             fetch_recent_episodes(GROUP_ID, reference_time, limit=5)
         )
 
-        logger.info("Starting Stage 1: Extract Nodes")
-        extractor = ExtractNodes(group_id=GROUP_ID, dedupe_enabled=True)
+        logger.info(
+            "Starting Stage 1: Extract Nodes (mode=%s)",
+            "DistilBERT+Reflexion" if use_ner_extractor else "DSPy",
+        )
+        extractor = ExtractNodes(
+            group_id=GROUP_ID,
+            dedupe_enabled=True,
+            use_ner_extractor=use_ner_extractor,
+        )
         extract_result = asyncio.run(
             extractor(
                 content=content,
@@ -259,6 +312,7 @@ def on_extract(content: str):
 
         entity_list = _format_entity_list(extract_result.nodes)
         stats = _format_stats(extract_result.metadata)
+        ner_details = _format_ner_details(extract_result.metadata)
         uuid_map = _format_uuid_map(extract_result.uuid_map, extract_result.nodes)
         episode_details = _format_episode(extract_result.episode)
 
@@ -267,6 +321,7 @@ def on_extract(content: str):
         yield (
             entity_list,
             stats,
+            ner_details,
             uuid_map,
             episode_details,
             "(stage 2 running...)",
@@ -301,6 +356,7 @@ def on_extract(content: str):
         yield (
             entity_list,
             stats,
+            ner_details,
             uuid_map,
             episode_details,
             edge_list,
@@ -333,6 +389,7 @@ def on_extract(content: str):
         yield (
             entity_list,
             stats,
+            ner_details,
             uuid_map,
             episode_details,
             edge_list,
@@ -364,6 +421,7 @@ def on_extract(content: str):
         yield (
             entity_list,
             stats,
+            ner_details,
             uuid_map,
             episode_details,
             edge_list,
@@ -383,6 +441,7 @@ def on_extract(content: str):
         logger.exception("Pipeline failed")
         error_msg = f"ERROR: {exc}"
         yield (
+            error_msg,
             error_msg,
             error_msg,
             error_msg,
@@ -475,6 +534,10 @@ Test the complete knowledge graph extraction pipeline with progressive stage upd
         placeholder="Enter journal entry text here...",
         lines=10,
     )
+    use_ner_checkbox = gr.Checkbox(
+        label="Use DistilBERT + Reflexion for entity extraction (Stage 1)",
+        value=False,
+    )
 
     extract_btn = gr.Button("Extract Entities & Relationships", variant="primary", size="lg")
 
@@ -490,6 +553,12 @@ Test the complete knowledge graph extraction pipeline with progressive stage upd
 
         stats_output = gr.Textbox(
             label="Extraction Statistics",
+            interactive=False,
+            lines=8,
+        )
+    with gr.Row():
+        ner_details_output = gr.Textbox(
+            label="DistilBERT / Reflexion Details",
             interactive=False,
             lines=8,
         )
@@ -577,10 +646,11 @@ Test the complete knowledge graph extraction pipeline with progressive stage upd
 
     extract_btn.click(
         on_extract,
-        inputs=[content_input],
+        inputs=[content_input, use_ner_checkbox],
         outputs=[
             entity_list_output,
             stats_output,
+            ner_details_output,
             uuid_map_output,
             episode_output,
             edge_list_output,
