@@ -12,7 +12,7 @@ from pathlib import Path
 import logging
 import json
 import dspy
-from dspy.teleprompt import BootstrapFewShot
+from dspy.teleprompt import MIPROv2
 
 from dspy_outlines import OutlinesAdapter, OutlinesLM
 from pipeline.extract_nodes import EntityExtractor
@@ -35,16 +35,16 @@ def configure_dspy():
     logger.info("Configured DSPy with OutlinesLM (model: %s)", DEFAULT_MODEL_PATH)
 
 
-def build_trainset() -> list[dspy.Example]:
-    """Build training examples for entity extraction optimization.
+def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
+    """Build training and validation examples for entity extraction optimization.
 
-    Creates 20 realistic personal journal entries covering:
+    Creates 10 realistic personal journal entries covering:
     - Entity types: Person, Place, Organization, Concept, Activity
     - Contexts: hanging out with friends, family time, going places, doing hobbies, appointments, life reflections
     - Tone: casual, authentic, human (not robotic business language)
 
     Returns:
-        List of dspy.Example objects with episode_content and expected entities
+        Tuple of (trainset, valset) with 8 training and 2 validation examples
     """
 
     entity_types_json = json.dumps(
@@ -82,10 +82,10 @@ def build_trainset() -> list[dspy.Example]:
         ]
     )
 
-    examples = []
+    all_examples = []
 
     # Example 1: Coffee shop hangout with friend
-    examples.append(
+    all_examples.append(
         dspy.Example(
             episode_content="Met Sarah at Blue Bottle Coffee this morning. We talked about our career goals and how we're both feeling stuck. It's nice to have someone who gets it.",
             entity_types=entity_types_json,
@@ -100,7 +100,7 @@ def build_trainset() -> list[dspy.Example]:
     )
 
     # Example 2: Therapy session about relationships
-    examples.append(
+    all_examples.append(
         dspy.Example(
             episode_content="Had my session with Dr. Martinez today. We talked about my relationship patterns and why I keep pushing people away. Heavy stuff but necessary.",
             entity_types=entity_types_json,
@@ -114,23 +114,8 @@ def build_trainset() -> list[dspy.Example]:
         ).with_inputs("episode_content", "entity_types")
     )
 
-    # Example 3: Family dinner at home
-    examples.append(
-        dspy.Example(
-            episode_content="Mom and Dad came over for dinner. We actually had a good time for once, no arguments. Maybe things are getting better between us.",
-            entity_types=entity_types_json,
-            extracted_entities=ExtractedEntities(
-                extracted_entities=[
-                    ExtractedEntity(name="Mom", entity_type_id=1),
-                    ExtractedEntity(name="Dad", entity_type_id=1),
-                    ExtractedEntity(name="dinner", entity_type_id=5),
-                ]
-            ),
-        ).with_inputs("episode_content", "entity_types")
-    )
-
-    # Example 4: Yoga class and self-care
-    examples.append(
+    # Example 3: Yoga class and self-care
+    all_examples.append(
         dspy.Example(
             episode_content="Finally went back to yoga at Mindful Movement. Haven't been in weeks. My instructor Emma noticed and welcomed me back warmly. Need to prioritize self-care more.",
             entity_types=entity_types_json,
@@ -145,8 +130,8 @@ def build_trainset() -> list[dspy.Example]:
         ).with_inputs("episode_content", "entity_types")
     )
 
-    # Example 5: Work stress and deadline
-    examples.append(
+    # Example 4: Work stress and deadline
+    all_examples.append(
         dspy.Example(
             episode_content="Insane day at TechCorp. The product launch is next week and everything's on fire. My manager Lisa says I'm doing great but I feel like I'm barely keeping up.",
             entity_types=entity_types_json,
@@ -160,8 +145,8 @@ def build_trainset() -> list[dspy.Example]:
         ).with_inputs("episode_content", "entity_types")
     )
 
-    # Example 6: Weekend hike with friends
-    examples.append(
+    # Example 5: Weekend hike with friends
+    all_examples.append(
         dspy.Example(
             episode_content="Went hiking at Mount Tam with Jake and Priya. The views were incredible and we talked about life and meaning. Sometimes I forget how important nature is for my mental health.",
             entity_types=entity_types_json,
@@ -177,24 +162,8 @@ def build_trainset() -> list[dspy.Example]:
         ).with_inputs("episode_content", "entity_types")
     )
 
-    # Example 7: Book club meeting
-    examples.append(
-        dspy.Example(
-            episode_content="Book club at Marcus's place tonight. We discussed 'The Midnight Library' and got into this deep conversation about regret and second chances. Love this group.",
-            entity_types=entity_types_json,
-            extracted_entities=ExtractedEntities(
-                extracted_entities=[
-                    ExtractedEntity(name="Marcus", entity_type_id=1),
-                    ExtractedEntity(name="book club", entity_type_id=5),
-                    ExtractedEntity(name="regret", entity_type_id=4),
-                    ExtractedEntity(name="second chances", entity_type_id=4),
-                ]
-            ),
-        ).with_inputs("episode_content", "entity_types")
-    )
-
-    # Example 8: Doctor appointment about anxiety
-    examples.append(
+    # Example 6: Doctor appointment about anxiety
+    all_examples.append(
         dspy.Example(
             episode_content="Checkup with Dr. Chen. Told her about my anxiety getting worse. She referred me to a psychiatrist and we talked about medication. Scary but probably time.",
             entity_types=entity_types_json,
@@ -208,70 +177,8 @@ def build_trainset() -> list[dspy.Example]:
         ).with_inputs("episode_content", "entity_types")
     )
 
-    # Example 9: Art class at community center
-    examples.append(
-        dspy.Example(
-            episode_content="Started that watercolor class at the Community Arts Center. The teacher, Ana, is so patient and the other students are friendly. Been wanting to try something creative for ages.",
-            entity_types=entity_types_json,
-            extracted_entities=ExtractedEntities(
-                extracted_entities=[
-                    ExtractedEntity(name="Community Arts Center", entity_type_id=3),
-                    ExtractedEntity(name="Ana", entity_type_id=1),
-                    ExtractedEntity(name="watercolor class", entity_type_id=5),
-                    ExtractedEntity(name="creativity", entity_type_id=4),
-                ]
-            ),
-        ).with_inputs("episode_content", "entity_types")
-    )
-
-    # Example 10: Late night conversation with partner
-    examples.append(
-        dspy.Example(
-            episode_content="Had a real talk with Alex tonight about our future. Kids, marriage, where we want to live. It's intense thinking about commitment like this but also exciting?",
-            entity_types=entity_types_json,
-            extracted_entities=ExtractedEntities(
-                extracted_entities=[
-                    ExtractedEntity(name="Alex", entity_type_id=1),
-                    ExtractedEntity(name="future", entity_type_id=4),
-                    ExtractedEntity(name="commitment", entity_type_id=4),
-                ]
-            ),
-        ).with_inputs("episode_content", "entity_types")
-    )
-
-    # Example 11: Gym session and fitness journey
-    examples.append(
-        dspy.Example(
-            episode_content="Finally hit a new PR at CrossFit Westside! My coach Ryan was pumped. Been working towards this for months. Proof that consistency pays off I guess.",
-            entity_types=entity_types_json,
-            extracted_entities=ExtractedEntities(
-                extracted_entities=[
-                    ExtractedEntity(name="CrossFit Westside", entity_type_id=3),
-                    ExtractedEntity(name="Ryan", entity_type_id=1),
-                    ExtractedEntity(name="gym workout", entity_type_id=5),
-                    ExtractedEntity(name="consistency", entity_type_id=4),
-                ]
-            ),
-        ).with_inputs("episode_content", "entity_types")
-    )
-
-    # Example 12: Brunch with sibling
-    examples.append(
-        dspy.Example(
-            episode_content="Brunch with my brother at Flour Bakery. He's going through a breakup and needed to vent. I'm glad we're close enough now that he feels comfortable talking to me about this stuff.",
-            entity_types=entity_types_json,
-            extracted_entities=ExtractedEntities(
-                extracted_entities=[
-                    ExtractedEntity(name="brother", entity_type_id=1),
-                    ExtractedEntity(name="Flour Bakery", entity_type_id=2),
-                    ExtractedEntity(name="brunch", entity_type_id=5),
-                ]
-            ),
-        ).with_inputs("episode_content", "entity_types")
-    )
-
-    # Example 13: Volunteering at shelter
-    examples.append(
+    # Example 7: Volunteering at shelter
+    all_examples.append(
         dspy.Example(
             episode_content="Volunteered at Food For All this morning. Met a woman named Rosa who reminded me how lucky I am. The work is hard but gives me perspective on my own problems.",
             entity_types=entity_types_json,
@@ -286,24 +193,8 @@ def build_trainset() -> list[dspy.Example]:
         ).with_inputs("episode_content", "entity_types")
     )
 
-    # Example 14: Concert with friends
-    examples.append(
-        dspy.Example(
-            episode_content="Saw Phoebe Bridgers at the Fillmore with Nina and Jordan. We sang every word and I cried during 'I Know The End'. Music hits different when you're with the right people.",
-            entity_types=entity_types_json,
-            extracted_entities=ExtractedEntities(
-                extracted_entities=[
-                    ExtractedEntity(name="the Fillmore", entity_type_id=2),
-                    ExtractedEntity(name="Nina", entity_type_id=1),
-                    ExtractedEntity(name="Jordan", entity_type_id=1),
-                    ExtractedEntity(name="concert", entity_type_id=5),
-                ]
-            ),
-        ).with_inputs("episode_content", "entity_types")
-    )
-
-    # Example 15: First day at new job
-    examples.append(
+    # Example 8: First day at new job
+    all_examples.append(
         dspy.Example(
             episode_content="First day at DataFlow Inc. Everyone seems nice but I'm overwhelmed trying to remember names. My team lead Miguel walked me through the codebase. Imposter syndrome is real.",
             entity_types=entity_types_json,
@@ -318,72 +209,24 @@ def build_trainset() -> list[dspy.Example]:
         ).with_inputs("episode_content", "entity_types")
     )
 
-    # Example 16: Poetry slam event
-    examples.append(
+    # Validation Example 1: Book club meeting
+    all_examples.append(
         dspy.Example(
-            episode_content="Went to the poetry slam at Cafe Luna. My friend Zara performed and killed it. Made me want to write again. Art really does heal something in me.",
+            episode_content="Book club at Marcus's place tonight. We discussed 'The Midnight Library' and got into this deep conversation about regret and second chances. Love this group.",
             entity_types=entity_types_json,
             extracted_entities=ExtractedEntities(
                 extracted_entities=[
-                    ExtractedEntity(name="Cafe Luna", entity_type_id=2),
-                    ExtractedEntity(name="Zara", entity_type_id=1),
-                    ExtractedEntity(name="poetry slam", entity_type_id=5),
-                    ExtractedEntity(name="creativity", entity_type_id=4),
+                    ExtractedEntity(name="Marcus", entity_type_id=1),
+                    ExtractedEntity(name="book club", entity_type_id=5),
+                    ExtractedEntity(name="regret", entity_type_id=4),
+                    ExtractedEntity(name="second chances", entity_type_id=4),
                 ]
             ),
         ).with_inputs("episode_content", "entity_types")
     )
 
-    # Example 17: Sunday morning farmers market
-    examples.append(
-        dspy.Example(
-            episode_content="Farmers market with Sam. Got fresh flowers and talked to the vendor about her farm. These simple Sunday mornings are what life's about.",
-            entity_types=entity_types_json,
-            extracted_entities=ExtractedEntities(
-                extracted_entities=[
-                    ExtractedEntity(name="Sam", entity_type_id=1),
-                    ExtractedEntity(name="farmers market", entity_type_id=5),
-                    ExtractedEntity(name="simple living", entity_type_id=4),
-                ]
-            ),
-        ).with_inputs("episode_content", "entity_types")
-    )
-
-    # Example 18: Running club meetup
-    examples.append(
-        dspy.Example(
-            episode_content="Joined the Bay Area Runners group this morning. Met Hassan and Priya who are also training for the half marathon. Having accountability partners makes this less scary.",
-            entity_types=entity_types_json,
-            extracted_entities=ExtractedEntities(
-                extracted_entities=[
-                    ExtractedEntity(name="Bay Area Runners", entity_type_id=3),
-                    ExtractedEntity(name="Hassan", entity_type_id=1),
-                    ExtractedEntity(name="Priya", entity_type_id=1),
-                    ExtractedEntity(name="running", entity_type_id=5),
-                    ExtractedEntity(name="accountability", entity_type_id=4),
-                ]
-            ),
-        ).with_inputs("episode_content", "entity_types")
-    )
-
-    # Example 19: Parent-teacher conference
-    examples.append(
-        dspy.Example(
-            episode_content="Parent-teacher conference at Riverside Elementary for Lily. Ms. Johnson says she's doing great but seems anxious about tests. Guess she gets that from me.",
-            entity_types=entity_types_json,
-            extracted_entities=ExtractedEntities(
-                extracted_entities=[
-                    ExtractedEntity(name="Riverside Elementary", entity_type_id=3),
-                    ExtractedEntity(name="Lily", entity_type_id=1),
-                    ExtractedEntity(name="Ms. Johnson", entity_type_id=1),
-                    ExtractedEntity(name="parent-teacher conference", entity_type_id=5),
-                ]
-            ),
-        ).with_inputs("episode_content", "entity_types")
-    )
-
-    # Example 20: Game night with chosen family
-    examples.append(
+    # Validation Example 2: Game night with chosen family
+    all_examples.append(
         dspy.Example(
             episode_content="Game night at our place. Emma, Devon, and Kai came over for Catan. We laughed so hard. These people are my chosen family and I'm grateful for them every day.",
             entity_types=entity_types_json,
@@ -399,8 +242,11 @@ def build_trainset() -> list[dspy.Example]:
         ).with_inputs("episode_content", "entity_types")
     )
 
-    logger.info("Built training set with %d examples", len(examples))
-    return examples
+    trainset = all_examples[:8]
+    valset = all_examples[8:]
+
+    logger.info("Built trainset with %d examples, valset with %d examples", len(trainset), len(valset))
+    return trainset, valset
 
 
 def entity_extraction_metric(example, prediction, trace=None) -> float:
@@ -424,16 +270,45 @@ def entity_extraction_metric(example, prediction, trace=None) -> float:
         for e in example.extracted_entities.extracted_entities
     }
 
-    # Extract predicted entities (handle both object and dict formats)
+    # Extract predicted entities (handle multiple adapter formats)
     pred_entities = getattr(prediction, "extracted_entities", None)
     if pred_entities is None:
+        logger.warning("Prediction has no extracted_entities attribute")
         return 0.0
 
+    # Handle ExtractedEntities object
     if isinstance(pred_entities, ExtractedEntities):
         predicted = {
             (e.name.lower(), e.entity_type_id) for e in pred_entities.extracted_entities
         }
+    # Handle dict format from adapters
+    elif isinstance(pred_entities, dict) and "extracted_entities" in pred_entities:
+        try:
+            predicted = {
+                (e["name"].lower(), e["entity_type_id"])
+                for e in pred_entities["extracted_entities"]
+            }
+        except (KeyError, TypeError) as e:
+            logger.warning(f"Failed to parse dict format: {e}")
+            return 0.0
+    # Handle list format from some adapters (can be list of dicts or ExtractedEntity objects)
+    elif isinstance(pred_entities, list):
+        try:
+            predicted = set()
+            for e in pred_entities:
+                if isinstance(e, ExtractedEntity):
+                    predicted.add((e.name.lower(), e.entity_type_id))
+                elif isinstance(e, dict):
+                    predicted.add((e["name"].lower(), e["entity_type_id"]))
+                else:
+                    logger.warning(f"Unknown entity format in list: {type(e)}")
+            if not predicted:
+                return 0.0
+        except (KeyError, TypeError, AttributeError) as e:
+            logger.warning(f"Failed to parse list format: {e}")
+            return 0.0
     else:
+        logger.warning(f"Unknown prediction format: {type(pred_entities)}")
         return 0.0
 
     if not expected:
@@ -453,34 +328,45 @@ def entity_extraction_metric(example, prediction, trace=None) -> float:
     return f1
 
 
-def optimize(
-    trainset: list[dspy.Example], max_bootstrapped_demos: int = 5
-) -> EntityExtractor:
-    """Run BootstrapFewShot optimization.
+def optimize(trainset: list[dspy.Example]) -> EntityExtractor:
+    """Run MIPROv2 optimization with deepcopy-compatible OutlinesLM.
 
-    Uses DSPy's BootstrapFewShot optimizer to improve EntityExtractor prompts
-    by generating effective few-shot examples based on the training set.
+    MIPROv2 optimizes both instructions and few-shot examples:
+    - init_temperature=1.0: Standard temperature for instruction diversity
+    - num_candidates=5: Generate 5 instruction variants per predictor
+    - num_trials=10: Run 10 optimization trials
+    - metric_threshold=0.85: Filter low-quality bootstrapped examples
+    - max_bootstrapped_demos=2: Minimal demos (MIPROv2 focuses on instructions)
+    - max_labeled_demos=3: Use labeled examples as-is
 
     Args:
-        trainset: List of training examples
-        max_bootstrapped_demos: Maximum number of demonstrations to generate
+        trainset: List of training examples (8 recommended for speed)
 
     Returns:
-        Optimized EntityExtractor module
+        Optimized EntityExtractor module with tuned instructions and demos
     """
-    logger.info(
-        "Starting BootstrapFewShot optimization with %d examples", len(trainset)
-    )
+    logger.info("Starting MIPROv2 optimization with %d examples", len(trainset))
 
-    optimizer = BootstrapFewShot(
+    optimizer = MIPROv2(
         metric=entity_extraction_metric,
-        max_bootstrapped_demos=max_bootstrapped_demos,
+        auto=None,
+        num_candidates=5,
+        init_temperature=1.0,
+        metric_threshold=0.85,
     )
 
     student = EntityExtractor()
-    optimized = optimizer.compile(student=student, trainset=trainset)
+    optimized = optimizer.compile(
+        student=student,
+        trainset=trainset,
+        num_trials=10,
+        max_bootstrapped_demos=2,
+        max_labeled_demos=3,
+        minibatch_size=2,
+        requires_permission_to_run=False,
+    )
 
-    logger.info("Optimization completed")
+    logger.info("MIPROv2 optimization completed")
     return optimized
 
 
@@ -508,33 +394,33 @@ def evaluate(module: EntityExtractor, dataset: list[dspy.Example]) -> float:
 
 
 def main():
-    """Main optimization workflow.
+    """Main optimization workflow with MIPROv2.
 
-    1. Configure DSPy with OutlinesLM
-    2. Build training set
-    3. Evaluate baseline performance
-    4. Optimize prompts with BootstrapFewShot
-    5. Evaluate optimized performance
+    1. Configure DSPy with OutlinesLM (temp=0.0 for inference, temp=1.0 for optimization)
+    2. Build training and validation sets (8 train, 2 val)
+    3. Evaluate baseline on validation set
+    4. Optimize with MIPROv2 (instruction + demo tuning, deepcopy-compatible)
+    5. Evaluate optimized on validation set
     6. Save optimized prompts to file
     """
     logging.basicConfig(level=logging.INFO)
 
     configure_dspy()
 
-    trainset = build_trainset()
-    logger.info("Built trainset with %d examples", len(trainset))
+    trainset, valset = build_trainset()
+    logger.info("Built trainset with %d examples, valset with %d examples", len(trainset), len(valset))
 
-    # Baseline evaluation
+    # Baseline evaluation on validation set
     baseline_module = EntityExtractor()
-    baseline_score = evaluate(baseline_module, trainset)
-    logger.info("Baseline score: %.3f", baseline_score)
+    baseline_score = evaluate(baseline_module, valset)
+    logger.info("Baseline score (valset): %.3f", baseline_score)
 
-    # Optimize
-    optimized_module = optimize(trainset, max_bootstrapped_demos=5)
+    # Optimize using trainset
+    optimized_module = optimize(trainset)
 
-    # Optimized evaluation
-    optimized_score = evaluate(optimized_module, trainset)
-    logger.info("Optimized score: %.3f", optimized_score)
+    # Optimized evaluation on validation set
+    optimized_score = evaluate(optimized_module, valset)
+    logger.info("Optimized score (valset): %.3f", optimized_score)
 
     # Save prompts
     PROMPT_OUTPUT.parent.mkdir(parents=True, exist_ok=True)

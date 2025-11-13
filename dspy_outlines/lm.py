@@ -15,6 +15,7 @@ import threading
 from typing import Any
 import json
 from types import SimpleNamespace
+import copy
 
 import dspy
 import mlx_lm
@@ -37,10 +38,16 @@ class AttrDict(dict):
     """Dict that allows attribute-style access (needed for DSPy compatibility)."""
 
     def __getattr__(self, key):
-        return self[key]
+        try:
+            return self[key]
+        except KeyError:
+            raise AttributeError(f"'{type(self).__name__}' object has no attribute '{key}'")
 
     def __setattr__(self, key, value):
         self[key] = value
+
+    def __deepcopy__(self, memo):
+        return AttrDict(copy.deepcopy(dict(self), memo))
 
 
 class OutlinesLM(dspy.BaseLM):
