@@ -74,17 +74,17 @@ class ExtractedEntities(BaseModel):
 
 # DSPy signature for entity extraction
 class EntityExtractionSignature(dspy.Signature):
-    """Extract significant entities from personal journal entries focusing on people and emotions."""
+    """Extract significant entities from personal journal entries: people, places, organizations, concepts, and activities."""
 
     episode_content: str = dspy.InputField(
-        desc="personal journal entry describing the author's experiences and feelings"
+        desc="personal journal entry describing experiences, relationships, locations, and reflections"
     )
     entity_types: str = dspy.InputField(
-        desc="available entity types: Person (people author interacts with), Emotion (feelings author experiences), Entity (rare fallback)"
+        desc="available entity types: Person, Place, Organization, Concept, Activity, and Entity (fallback for others)"
     )
 
     extracted_entities: ExtractedEntities = dspy.OutputField(
-        desc="significant entities: people (type_id=1) and emotions (type_id=2); avoid objects, places, activities"
+        desc="entities mentioned: individuals, specific venues/locations, institutions/groups, abstract topics/themes, and activities/events"
     )
 
 
@@ -191,14 +191,14 @@ class ExtractNodes:
     ) -> ExtractNodesOutput:
         """Extract and resolve entities from journal entry text.
 
-        By default, extracts Person and Emotion entities with custom attributes.
+        By default, extracts Person, Place, Organization, Concept, and Activity entities.
 
         Args:
             content: Journal entry text
             reference_time: When entry was written (defaults to now)
             name: Episode identifier (defaults to generated name)
             source_description: Description of source
-            entity_types: Custom entity type schemas (defaults to Person and Emotion)
+            entity_types: Custom entity type schemas (defaults to Person, Place, Organization, Concept, Activity)
 
         Returns:
             ExtractNodesOutput with episode, resolved nodes, and UUID mappings
@@ -368,7 +368,7 @@ class ExtractNodes:
         base_type = {
             "entity_type_id": 0,
             "entity_type_name": "Entity",
-            "entity_type_description": "fallback for significant entities that don't fit Person or Emotion types",
+            "entity_type_description": "fallback for significant entities that don't fit custom types",
         }
 
         if not entity_types:
@@ -378,11 +378,17 @@ class ExtractNodes:
         for i, (name, model) in enumerate(entity_types.items()):
             base_desc = model.__doc__ or ""
 
-            # Enhance with extraction guidance for journal-specific types
+            # Enhance with extraction guidance for personal journaling
             if name == "Person":
-                desc = f"{base_desc} Extract people the author interacts with: friends, family, colleagues, professionals."
-            elif name == "Emotion":
-                desc = f"{base_desc} Extract emotional states the author experiences: anxious, joyful, content, frustrated, etc."
+                desc = f"{base_desc} Extract individuals mentioned: friends, family, colleagues, romantic partners, professionals (therapists/doctors), acquaintances."
+            elif name == "Place":
+                desc = f"{base_desc} Extract specific places visited or mentioned: coffee shops, parks, restaurants, cities, neighborhoods, venues, landmarks."
+            elif name == "Organization":
+                desc = f"{base_desc} Extract organizations engaged with: workplaces, schools, clubs, community groups, institutions, companies."
+            elif name == "Concept":
+                desc = f"{base_desc} Extract life themes and topics reflected on: personal growth, relationships, mental health, career, identity, values, beliefs."
+            elif name == "Activity":
+                desc = f"{base_desc} Extract specific activities and events: appointments, outings, hobbies, social gatherings, daily routines, significant moments."
             else:
                 desc = base_desc
 
@@ -403,7 +409,10 @@ class ExtractNodes:
 
         types_list = list(entity_types.keys())
         idx = type_id - 1
-        return types_list[idx] if 0 <= idx < len(types_list) else "Entity"
+        if not (0 <= idx < len(types_list)):
+            logger.warning("Invalid entity_type_id %d, falling back to 'Entity'", type_id)
+            return "Entity"
+        return types_list[idx]
 
     # ========== Future Enhancements (Stubs) ==========
     # These demonstrate where additional optimizable modules could be added:

@@ -1,7 +1,7 @@
 """Optimizer for pipeline/extract_nodes.py using DSPy's BootstrapFewShot.
 
 This script optimizes the EntityExtractor module's prompts using a training set
-of journal entries focused on Person and Emotion entities.
+of personal journal entries extracting Person, Place, Organization, Concept, and Activity entities.
 
 Usage:
     python -m pipeline.optimizers.extract_nodes_optimizer
@@ -38,11 +38,10 @@ def configure_dspy():
 def build_trainset() -> list[dspy.Example]:
     """Build training examples for entity extraction optimization.
 
-    Creates 20 diverse journal-focused examples covering various:
-    - Age groups (teens, young adults, middle-aged, seniors)
-    - Relationships (friends, family, colleagues, professionals)
-    - Emotions (positive, negative, complex/mixed)
-    - Scenarios (daily life, challenges, celebrations, reflections)
+    Creates 20 realistic personal journal entries covering:
+    - Entity types: Person, Place, Organization, Concept, Activity
+    - Contexts: hanging out with friends, family time, going places, doing hobbies, appointments, life reflections
+    - Tone: casual, authentic, human (not robotic business language)
 
     Returns:
         List of dspy.Example objects with episode_content and expected entities
@@ -58,327 +57,343 @@ def build_trainset() -> list[dspy.Example]:
             {
                 "entity_type_id": 1,
                 "entity_type_name": "Person",
-                "entity_type_description": "people author interacts with",
+                "entity_type_description": "individuals mentioned in the journal. Extract individuals mentioned: friends, family, colleagues, romantic partners, professionals (therapists/doctors), acquaintances.",
             },
             {
                 "entity_type_id": 2,
-                "entity_type_name": "Emotion",
-                "entity_type_description": "emotional states author experiences",
+                "entity_type_name": "Place",
+                "entity_type_description": "specific locations and venues. Extract specific places visited or mentioned: coffee shops, parks, restaurants, cities, neighborhoods, venues, landmarks.",
+            },
+            {
+                "entity_type_id": 3,
+                "entity_type_name": "Organization",
+                "entity_type_description": "companies, institutions, groups. Extract organizations engaged with: workplaces, schools, clubs, community groups, institutions, companies.",
+            },
+            {
+                "entity_type_id": 4,
+                "entity_type_name": "Concept",
+                "entity_type_description": "abstract topics and life themes. Extract life themes and topics reflected on: personal growth, relationships, mental health, career, identity, values, beliefs.",
+            },
+            {
+                "entity_type_id": 5,
+                "entity_type_name": "Activity",
+                "entity_type_description": "events, activities, and experiences. Extract specific activities and events: appointments, outings, hobbies, social gatherings, daily routines, significant moments.",
             },
         ]
     )
 
     examples = []
 
-    # Example 1: Teen - nervousness before presentation
+    # Example 1: Coffee shop hangout with friend
     examples.append(
         dspy.Example(
-            episode_content="Today I met with Sarah at the coffee shop. Feeling anxious about tomorrow's presentation.",
+            episode_content="Met Sarah at Blue Bottle Coffee this morning. We talked about our career goals and how we're both feeling stuck. It's nice to have someone who gets it.",
             entity_types=entity_types_json,
             extracted_entities=ExtractedEntities(
                 extracted_entities=[
                     ExtractedEntity(name="Sarah", entity_type_id=1),
-                    ExtractedEntity(name="anxious", entity_type_id=2),
+                    ExtractedEntity(name="Blue Bottle Coffee", entity_type_id=2),
+                    ExtractedEntity(name="career goals", entity_type_id=4),
                 ]
             ),
         ).with_inputs("episode_content", "entity_types")
     )
 
-    # Example 2: Young adult - job interview excitement
+    # Example 2: Therapy session about relationships
     examples.append(
         dspy.Example(
-            episode_content="Had coffee with Emma this morning. She gave me interview tips and now I'm feeling confident and excited!",
+            episode_content="Had my session with Dr. Martinez today. We talked about my relationship patterns and why I keep pushing people away. Heavy stuff but necessary.",
             entity_types=entity_types_json,
             extracted_entities=ExtractedEntities(
                 extracted_entities=[
-                    ExtractedEntity(name="Emma", entity_type_id=1),
-                    ExtractedEntity(name="confident", entity_type_id=2),
-                    ExtractedEntity(name="excited", entity_type_id=2),
+                    ExtractedEntity(name="Dr. Martinez", entity_type_id=1),
+                    ExtractedEntity(name="therapy session", entity_type_id=5),
+                    ExtractedEntity(name="relationship patterns", entity_type_id=4),
                 ]
             ),
         ).with_inputs("episode_content", "entity_types")
     )
 
-    # Example 3: Teen - friendship tension
+    # Example 3: Family dinner at home
     examples.append(
         dspy.Example(
-            episode_content="Marcus hasn't responded to my texts in days. Feeling hurt and confused about what I did wrong.",
+            episode_content="Mom and Dad came over for dinner. We actually had a good time for once, no arguments. Maybe things are getting better between us.",
+            entity_types=entity_types_json,
+            extracted_entities=ExtractedEntities(
+                extracted_entities=[
+                    ExtractedEntity(name="Mom", entity_type_id=1),
+                    ExtractedEntity(name="Dad", entity_type_id=1),
+                    ExtractedEntity(name="dinner", entity_type_id=5),
+                ]
+            ),
+        ).with_inputs("episode_content", "entity_types")
+    )
+
+    # Example 4: Yoga class and self-care
+    examples.append(
+        dspy.Example(
+            episode_content="Finally went back to yoga at Mindful Movement. Haven't been in weeks. My instructor Emma noticed and welcomed me back warmly. Need to prioritize self-care more.",
+            entity_types=entity_types_json,
+            extracted_entities=ExtractedEntities(
+                extracted_entities=[
+                    ExtractedEntity(name="Mindful Movement", entity_type_id=3),
+                    ExtractedEntity(name="Emma", entity_type_id=1),
+                    ExtractedEntity(name="yoga class", entity_type_id=5),
+                    ExtractedEntity(name="self-care", entity_type_id=4),
+                ]
+            ),
+        ).with_inputs("episode_content", "entity_types")
+    )
+
+    # Example 5: Work stress and deadline
+    examples.append(
+        dspy.Example(
+            episode_content="Insane day at TechCorp. The product launch is next week and everything's on fire. My manager Lisa says I'm doing great but I feel like I'm barely keeping up.",
+            entity_types=entity_types_json,
+            extracted_entities=ExtractedEntities(
+                extracted_entities=[
+                    ExtractedEntity(name="TechCorp", entity_type_id=3),
+                    ExtractedEntity(name="Lisa", entity_type_id=1),
+                    ExtractedEntity(name="product launch", entity_type_id=5),
+                ]
+            ),
+        ).with_inputs("episode_content", "entity_types")
+    )
+
+    # Example 6: Weekend hike with friends
+    examples.append(
+        dspy.Example(
+            episode_content="Went hiking at Mount Tam with Jake and Priya. The views were incredible and we talked about life and meaning. Sometimes I forget how important nature is for my mental health.",
+            entity_types=entity_types_json,
+            extracted_entities=ExtractedEntities(
+                extracted_entities=[
+                    ExtractedEntity(name="Mount Tam", entity_type_id=2),
+                    ExtractedEntity(name="Jake", entity_type_id=1),
+                    ExtractedEntity(name="Priya", entity_type_id=1),
+                    ExtractedEntity(name="hiking", entity_type_id=5),
+                    ExtractedEntity(name="mental health", entity_type_id=4),
+                ]
+            ),
+        ).with_inputs("episode_content", "entity_types")
+    )
+
+    # Example 7: Book club meeting
+    examples.append(
+        dspy.Example(
+            episode_content="Book club at Marcus's place tonight. We discussed 'The Midnight Library' and got into this deep conversation about regret and second chances. Love this group.",
             entity_types=entity_types_json,
             extracted_entities=ExtractedEntities(
                 extracted_entities=[
                     ExtractedEntity(name="Marcus", entity_type_id=1),
-                    ExtractedEntity(name="hurt", entity_type_id=2),
-                    ExtractedEntity(name="confused", entity_type_id=2),
+                    ExtractedEntity(name="book club", entity_type_id=5),
+                    ExtractedEntity(name="regret", entity_type_id=4),
+                    ExtractedEntity(name="second chances", entity_type_id=4),
                 ]
             ),
         ).with_inputs("episode_content", "entity_types")
     )
 
-    # Example 4: Parent - family joy
+    # Example 8: Doctor appointment about anxiety
     examples.append(
         dspy.Example(
-            episode_content="Watched my daughter Lily perform in the school play tonight. Dad was there too. Feeling so proud and grateful.",
+            episode_content="Checkup with Dr. Chen. Told her about my anxiety getting worse. She referred me to a psychiatrist and we talked about medication. Scary but probably time.",
             entity_types=entity_types_json,
             extracted_entities=ExtractedEntities(
                 extracted_entities=[
-                    ExtractedEntity(name="Lily", entity_type_id=1),
-                    ExtractedEntity(name="Dad", entity_type_id=1),
-                    ExtractedEntity(name="proud", entity_type_id=2),
-                    ExtractedEntity(name="grateful", entity_type_id=2),
+                    ExtractedEntity(name="Dr. Chen", entity_type_id=1),
+                    ExtractedEntity(name="doctor appointment", entity_type_id=5),
+                    ExtractedEntity(name="anxiety", entity_type_id=4),
                 ]
             ),
         ).with_inputs("episode_content", "entity_types")
     )
 
-    # Example 5: College student - stress and support
+    # Example 9: Art class at community center
     examples.append(
         dspy.Example(
-            episode_content="Finals week is crushing me. Professor Chen extended my deadline after I told her about Mom's surgery. Feeling overwhelmed but relieved.",
+            episode_content="Started that watercolor class at the Community Arts Center. The teacher, Ana, is so patient and the other students are friendly. Been wanting to try something creative for ages.",
             entity_types=entity_types_json,
             extracted_entities=ExtractedEntities(
                 extracted_entities=[
-                    ExtractedEntity(name="Professor Chen", entity_type_id=1),
-                    ExtractedEntity(name="Mom", entity_type_id=1),
-                    ExtractedEntity(name="overwhelmed", entity_type_id=2),
-                    ExtractedEntity(name="relieved", entity_type_id=2),
+                    ExtractedEntity(name="Community Arts Center", entity_type_id=3),
+                    ExtractedEntity(name="Ana", entity_type_id=1),
+                    ExtractedEntity(name="watercolor class", entity_type_id=5),
+                    ExtractedEntity(name="creativity", entity_type_id=4),
                 ]
             ),
         ).with_inputs("episode_content", "entity_types")
     )
 
-    # Example 6: Young professional - career milestone
+    # Example 10: Late night conversation with partner
     examples.append(
         dspy.Example(
-            episode_content="Got the promotion! Called Aisha immediately and she screamed with joy. My manager David said I earned it. Feeling accomplished and validated.",
-            entity_types=entity_types_json,
-            extracted_entities=ExtractedEntities(
-                extracted_entities=[
-                    ExtractedEntity(name="Aisha", entity_type_id=1),
-                    ExtractedEntity(name="David", entity_type_id=1),
-                    ExtractedEntity(name="accomplished", entity_type_id=2),
-                    ExtractedEntity(name="validated", entity_type_id=2),
-                ]
-            ),
-        ).with_inputs("episode_content", "entity_types")
-    )
-
-    # Example 7: Middle-aged - relationship conflict
-    examples.append(
-        dspy.Example(
-            episode_content="Another argument with Jordan about finances. Dr. Martinez says we need to work on communication. Feeling frustrated and hopeful at the same time.",
-            entity_types=entity_types_json,
-            extracted_entities=ExtractedEntities(
-                extracted_entities=[
-                    ExtractedEntity(name="Jordan", entity_type_id=1),
-                    ExtractedEntity(name="Dr. Martinez", entity_type_id=1),
-                    ExtractedEntity(name="frustrated", entity_type_id=2),
-                    ExtractedEntity(name="hopeful", entity_type_id=2),
-                ]
-            ),
-        ).with_inputs("episode_content", "entity_types")
-    )
-
-    # Example 8: Senior - nostalgia and connection
-    examples.append(
-        dspy.Example(
-            episode_content="My granddaughter Sophie visited today. We looked at old photos and she asked about my childhood. Feeling nostalgic and warm inside.",
-            entity_types=entity_types_json,
-            extracted_entities=ExtractedEntities(
-                extracted_entities=[
-                    ExtractedEntity(name="Sophie", entity_type_id=1),
-                    ExtractedEntity(name="nostalgic", entity_type_id=2),
-                    ExtractedEntity(name="warm", entity_type_id=2),
-                ]
-            ),
-        ).with_inputs("episode_content", "entity_types")
-    )
-
-    # Example 9: Teen - social anxiety
-    examples.append(
-        dspy.Example(
-            episode_content="First day at the new school. Maya showed me around and introduced me to her friends. Still feeling nervous but less alone now.",
-            entity_types=entity_types_json,
-            extracted_entities=ExtractedEntities(
-                extracted_entities=[
-                    ExtractedEntity(name="Maya", entity_type_id=1),
-                    ExtractedEntity(name="nervous", entity_type_id=2),
-                    ExtractedEntity(name="less alone", entity_type_id=2),
-                ]
-            ),
-        ).with_inputs("episode_content", "entity_types")
-    )
-
-    # Example 10: Young adult - betrayal and anger
-    examples.append(
-        dspy.Example(
-            episode_content="Found out that Rachel told my secrets to everyone at work. Talked to my therapist Dr. Kim about it. Feeling betrayed and angry.",
-            entity_types=entity_types_json,
-            extracted_entities=ExtractedEntities(
-                extracted_entities=[
-                    ExtractedEntity(name="Rachel", entity_type_id=1),
-                    ExtractedEntity(name="Dr. Kim", entity_type_id=1),
-                    ExtractedEntity(name="betrayed", entity_type_id=2),
-                    ExtractedEntity(name="angry", entity_type_id=2),
-                ]
-            ),
-        ).with_inputs("episode_content", "entity_types")
-    )
-
-    # Example 11: Parent - worry and love
-    examples.append(
-        dspy.Example(
-            episode_content="My son Miguel came home late again. His coach says he's been practicing extra hard for the championship. Feeling worried but also loving his dedication.",
-            entity_types=entity_types_json,
-            extracted_entities=ExtractedEntities(
-                extracted_entities=[
-                    ExtractedEntity(name="Miguel", entity_type_id=1),
-                    ExtractedEntity(name="worried", entity_type_id=2),
-                    ExtractedEntity(name="loving", entity_type_id=2),
-                ]
-            ),
-        ).with_inputs("episode_content", "entity_types")
-    )
-
-    # Example 12: Middle-aged - grief and support
-    examples.append(
-        dspy.Example(
-            episode_content="Six months since we lost Mom. My sister Carmen called to check in. Pastor Williams invited me to the grief support group. Feeling sad but supported.",
-            entity_types=entity_types_json,
-            extracted_entities=ExtractedEntities(
-                extracted_entities=[
-                    ExtractedEntity(name="Mom", entity_type_id=1),
-                    ExtractedEntity(name="Carmen", entity_type_id=1),
-                    ExtractedEntity(name="Pastor Williams", entity_type_id=1),
-                    ExtractedEntity(name="sad", entity_type_id=2),
-                    ExtractedEntity(name="supported", entity_type_id=2),
-                ]
-            ),
-        ).with_inputs("episode_content", "entity_types")
-    )
-
-    # Example 13: College student - creative joy
-    examples.append(
-        dspy.Example(
-            episode_content="Finished my first painting! My roommate Zara said it belongs in a gallery. Professor Lee wants to feature it in the student exhibition. Feeling joyful and proud.",
-            entity_types=entity_types_json,
-            extracted_entities=ExtractedEntities(
-                extracted_entities=[
-                    ExtractedEntity(name="Zara", entity_type_id=1),
-                    ExtractedEntity(name="Professor Lee", entity_type_id=1),
-                    ExtractedEntity(name="joyful", entity_type_id=2),
-                    ExtractedEntity(name="proud", entity_type_id=2),
-                ]
-            ),
-        ).with_inputs("episode_content", "entity_types")
-    )
-
-    # Example 14: Young professional - imposter syndrome
-    examples.append(
-        dspy.Example(
-            episode_content="Leading my first team meeting tomorrow. My mentor Hassan says I'm ready but I don't feel it. Feeling inadequate and scared of failing.",
-            entity_types=entity_types_json,
-            extracted_entities=ExtractedEntities(
-                extracted_entities=[
-                    ExtractedEntity(name="Hassan", entity_type_id=1),
-                    ExtractedEntity(name="inadequate", entity_type_id=2),
-                    ExtractedEntity(name="scared", entity_type_id=2),
-                ]
-            ),
-        ).with_inputs("episode_content", "entity_types")
-    )
-
-    # Example 15: Senior - health concerns and optimism
-    examples.append(
-        dspy.Example(
-            episode_content="Doctor Patel says my blood pressure is improving. My neighbor Frank walks with me every morning now. Feeling optimistic and thankful for good friends.",
-            entity_types=entity_types_json,
-            extracted_entities=ExtractedEntities(
-                extracted_entities=[
-                    ExtractedEntity(name="Doctor Patel", entity_type_id=1),
-                    ExtractedEntity(name="Frank", entity_type_id=1),
-                    ExtractedEntity(name="optimistic", entity_type_id=2),
-                    ExtractedEntity(name="thankful", entity_type_id=2),
-                ]
-            ),
-        ).with_inputs("episode_content", "entity_types")
-    )
-
-    # Example 16: Teen - romantic feelings
-    examples.append(
-        dspy.Example(
-            episode_content="Alex smiled at me during lunch today. My best friend Nina says I should just ask them out. Feeling nervous, excited, and terrified all at once.",
+            episode_content="Had a real talk with Alex tonight about our future. Kids, marriage, where we want to live. It's intense thinking about commitment like this but also exciting?",
             entity_types=entity_types_json,
             extracted_entities=ExtractedEntities(
                 extracted_entities=[
                     ExtractedEntity(name="Alex", entity_type_id=1),
+                    ExtractedEntity(name="future", entity_type_id=4),
+                    ExtractedEntity(name="commitment", entity_type_id=4),
+                ]
+            ),
+        ).with_inputs("episode_content", "entity_types")
+    )
+
+    # Example 11: Gym session and fitness journey
+    examples.append(
+        dspy.Example(
+            episode_content="Finally hit a new PR at CrossFit Westside! My coach Ryan was pumped. Been working towards this for months. Proof that consistency pays off I guess.",
+            entity_types=entity_types_json,
+            extracted_entities=ExtractedEntities(
+                extracted_entities=[
+                    ExtractedEntity(name="CrossFit Westside", entity_type_id=3),
+                    ExtractedEntity(name="Ryan", entity_type_id=1),
+                    ExtractedEntity(name="gym workout", entity_type_id=5),
+                    ExtractedEntity(name="consistency", entity_type_id=4),
+                ]
+            ),
+        ).with_inputs("episode_content", "entity_types")
+    )
+
+    # Example 12: Brunch with sibling
+    examples.append(
+        dspy.Example(
+            episode_content="Brunch with my brother at Flour Bakery. He's going through a breakup and needed to vent. I'm glad we're close enough now that he feels comfortable talking to me about this stuff.",
+            entity_types=entity_types_json,
+            extracted_entities=ExtractedEntities(
+                extracted_entities=[
+                    ExtractedEntity(name="brother", entity_type_id=1),
+                    ExtractedEntity(name="Flour Bakery", entity_type_id=2),
+                    ExtractedEntity(name="brunch", entity_type_id=5),
+                ]
+            ),
+        ).with_inputs("episode_content", "entity_types")
+    )
+
+    # Example 13: Volunteering at shelter
+    examples.append(
+        dspy.Example(
+            episode_content="Volunteered at Food For All this morning. Met a woman named Rosa who reminded me how lucky I am. The work is hard but gives me perspective on my own problems.",
+            entity_types=entity_types_json,
+            extracted_entities=ExtractedEntities(
+                extracted_entities=[
+                    ExtractedEntity(name="Food For All", entity_type_id=3),
+                    ExtractedEntity(name="Rosa", entity_type_id=1),
+                    ExtractedEntity(name="volunteering", entity_type_id=5),
+                    ExtractedEntity(name="gratitude", entity_type_id=4),
+                ]
+            ),
+        ).with_inputs("episode_content", "entity_types")
+    )
+
+    # Example 14: Concert with friends
+    examples.append(
+        dspy.Example(
+            episode_content="Saw Phoebe Bridgers at the Fillmore with Nina and Jordan. We sang every word and I cried during 'I Know The End'. Music hits different when you're with the right people.",
+            entity_types=entity_types_json,
+            extracted_entities=ExtractedEntities(
+                extracted_entities=[
+                    ExtractedEntity(name="the Fillmore", entity_type_id=2),
                     ExtractedEntity(name="Nina", entity_type_id=1),
-                    ExtractedEntity(name="nervous", entity_type_id=2),
-                    ExtractedEntity(name="excited", entity_type_id=2),
-                    ExtractedEntity(name="terrified", entity_type_id=2),
+                    ExtractedEntity(name="Jordan", entity_type_id=1),
+                    ExtractedEntity(name="concert", entity_type_id=5),
                 ]
             ),
         ).with_inputs("episode_content", "entity_types")
     )
 
-    # Example 17: Middle-aged - professional setback
+    # Example 15: First day at new job
     examples.append(
         dspy.Example(
-            episode_content="Didn't get the grant I worked on for months. My colleague Iris reminded me that rejection is part of the process. Feeling disappointed but resilient.",
+            episode_content="First day at DataFlow Inc. Everyone seems nice but I'm overwhelmed trying to remember names. My team lead Miguel walked me through the codebase. Imposter syndrome is real.",
             entity_types=entity_types_json,
             extracted_entities=ExtractedEntities(
                 extracted_entities=[
-                    ExtractedEntity(name="Iris", entity_type_id=1),
-                    ExtractedEntity(name="disappointed", entity_type_id=2),
-                    ExtractedEntity(name="resilient", entity_type_id=2),
+                    ExtractedEntity(name="DataFlow Inc", entity_type_id=3),
+                    ExtractedEntity(name="Miguel", entity_type_id=1),
+                    ExtractedEntity(name="first day", entity_type_id=5),
+                    ExtractedEntity(name="imposter syndrome", entity_type_id=4),
                 ]
             ),
         ).with_inputs("episode_content", "entity_types")
     )
 
-    # Example 18: Young adult - life transition
+    # Example 16: Poetry slam event
     examples.append(
         dspy.Example(
-            episode_content="Moving across the country for the new job. My brother Theo helped me pack. Mom cried but said she's proud. Feeling scared, excited, and guilty for leaving.",
+            episode_content="Went to the poetry slam at Cafe Luna. My friend Zara performed and killed it. Made me want to write again. Art really does heal something in me.",
             entity_types=entity_types_json,
             extracted_entities=ExtractedEntities(
                 extracted_entities=[
-                    ExtractedEntity(name="Theo", entity_type_id=1),
-                    ExtractedEntity(name="Mom", entity_type_id=1),
-                    ExtractedEntity(name="scared", entity_type_id=2),
-                    ExtractedEntity(name="excited", entity_type_id=2),
-                    ExtractedEntity(name="guilty", entity_type_id=2),
+                    ExtractedEntity(name="Cafe Luna", entity_type_id=2),
+                    ExtractedEntity(name="Zara", entity_type_id=1),
+                    ExtractedEntity(name="poetry slam", entity_type_id=5),
+                    ExtractedEntity(name="creativity", entity_type_id=4),
                 ]
             ),
         ).with_inputs("episode_content", "entity_types")
     )
 
-    # Example 19: Parent - parenting milestone
+    # Example 17: Sunday morning farmers market
     examples.append(
         dspy.Example(
-            episode_content="Dropped my daughter Amara off at college today. Her roommate Keiko seems sweet. My partner Sam and I cried all the way home. Feeling bittersweet and empty.",
+            episode_content="Farmers market with Sam. Got fresh flowers and talked to the vendor about her farm. These simple Sunday mornings are what life's about.",
             entity_types=entity_types_json,
             extracted_entities=ExtractedEntities(
                 extracted_entities=[
-                    ExtractedEntity(name="Amara", entity_type_id=1),
-                    ExtractedEntity(name="Keiko", entity_type_id=1),
                     ExtractedEntity(name="Sam", entity_type_id=1),
-                    ExtractedEntity(name="bittersweet", entity_type_id=2),
-                    ExtractedEntity(name="empty", entity_type_id=2),
+                    ExtractedEntity(name="farmers market", entity_type_id=5),
+                    ExtractedEntity(name="simple living", entity_type_id=4),
                 ]
             ),
         ).with_inputs("episode_content", "entity_types")
     )
 
-    # Example 20: Senior - simple daily joy
+    # Example 18: Running club meetup
     examples.append(
         dspy.Example(
-            episode_content="Had tea with my old friend Eleanor this afternoon. We talked about our grandchildren and laughed about getting old. Feeling content and peaceful.",
+            episode_content="Joined the Bay Area Runners group this morning. Met Hassan and Priya who are also training for the half marathon. Having accountability partners makes this less scary.",
             entity_types=entity_types_json,
             extracted_entities=ExtractedEntities(
                 extracted_entities=[
-                    ExtractedEntity(name="Eleanor", entity_type_id=1),
-                    ExtractedEntity(name="content", entity_type_id=2),
-                    ExtractedEntity(name="peaceful", entity_type_id=2),
+                    ExtractedEntity(name="Bay Area Runners", entity_type_id=3),
+                    ExtractedEntity(name="Hassan", entity_type_id=1),
+                    ExtractedEntity(name="Priya", entity_type_id=1),
+                    ExtractedEntity(name="running", entity_type_id=5),
+                    ExtractedEntity(name="accountability", entity_type_id=4),
+                ]
+            ),
+        ).with_inputs("episode_content", "entity_types")
+    )
+
+    # Example 19: Parent-teacher conference
+    examples.append(
+        dspy.Example(
+            episode_content="Parent-teacher conference at Riverside Elementary for Lily. Ms. Johnson says she's doing great but seems anxious about tests. Guess she gets that from me.",
+            entity_types=entity_types_json,
+            extracted_entities=ExtractedEntities(
+                extracted_entities=[
+                    ExtractedEntity(name="Riverside Elementary", entity_type_id=3),
+                    ExtractedEntity(name="Lily", entity_type_id=1),
+                    ExtractedEntity(name="Ms. Johnson", entity_type_id=1),
+                    ExtractedEntity(name="parent-teacher conference", entity_type_id=5),
+                ]
+            ),
+        ).with_inputs("episode_content", "entity_types")
+    )
+
+    # Example 20: Game night with chosen family
+    examples.append(
+        dspy.Example(
+            episode_content="Game night at our place. Emma, Devon, and Kai came over for Catan. We laughed so hard. These people are my chosen family and I'm grateful for them every day.",
+            entity_types=entity_types_json,
+            extracted_entities=ExtractedEntities(
+                extracted_entities=[
+                    ExtractedEntity(name="Emma", entity_type_id=1),
+                    ExtractedEntity(name="Devon", entity_type_id=1),
+                    ExtractedEntity(name="Kai", entity_type_id=1),
+                    ExtractedEntity(name="game night", entity_type_id=5),
+                    ExtractedEntity(name="chosen family", entity_type_id=4),
                 ]
             ),
         ).with_inputs("episode_content", "entity_types")

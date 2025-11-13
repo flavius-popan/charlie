@@ -60,8 +60,8 @@ async def add_journal(
     entity_types: dict | None = entity_types,
     excluded_entity_types: list[str] | None = None,
     extract_nodes_factory: Callable[[str], ExtractNodes] | None = None,
-    edge_types: dict | None = edge_types,
-    edge_type_map: dict | None = edge_type_map,
+    edge_types: dict | None = None,
+    edge_type_map: dict | None = None,
     persist: bool = True,
 ) -> AddJournalResults:
     """Process a journal entry and extract knowledge graph elements.

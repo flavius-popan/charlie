@@ -71,52 +71,6 @@ async def test_extract_attributes_basic_extraction(isolated_graph) -> None:
 
 
 @pytest.mark.asyncio
-async def test_extract_attributes_with_emotion_entity(isolated_graph) -> None:
-    """Extract Emotion attributes from episode content with real LLM call."""
-    group_id = "attr-emotion"
-
-    episode = EpisodicNode(
-        uuid=str(uuid4()),
-        name="test-episode",
-        labels=[],
-        source=EpisodeType.text,
-        content="Feeling very anxious about tomorrow's presentation.",
-        source_description="Test",
-        group_id=group_id,
-        valid_at=datetime(2024, 1, 15, tzinfo=timezone.utc),
-        created_at=utc_now(),
-    )
-
-    anxiety = EntityNode(
-        uuid="anxiety-uuid",
-        name="anxiety",
-        labels=["Entity", "Emotion"],
-        attributes={},
-        group_id=group_id,
-        created_at=utc_now(),
-    )
-
-    from pipeline.entity_edge_models import entity_types
-
-    extractor = ExtractAttributes(group_id=group_id)
-    result = await extractor(
-        nodes=[anxiety],
-        episode=episode,
-        previous_episodes=[],
-        entity_types=entity_types,
-    )
-
-    assert isinstance(result, ExtractAttributesOutput)
-    assert len(result.nodes) == 1
-    assert "specific_emotion" in result.nodes[0].attributes
-    specific_emotion = result.nodes[0].attributes["specific_emotion"].lower()
-    assert "anxio" in specific_emotion
-    assert "category" in result.nodes[0].attributes
-    assert "unpleasant" in result.nodes[0].attributes["category"].lower()
-    assert result.metadata["nodes_processed"] == 1
-
-
-@pytest.mark.asyncio
 async def test_extract_attributes_skips_entity_without_type(isolated_graph) -> None:
     """Entity with only generic 'Entity' label should be skipped."""
     group_id = "attr-no-type"
@@ -257,7 +211,7 @@ async def test_extract_attributes_metadata_tracking(isolated_graph) -> None:
         name="test-episode",
         labels=[],
         source=EpisodeType.text,
-        content="Had coffee with my friend Sarah. Feeling anxious about the presentation. Also met with a client.",
+        content="Had coffee with my friend Sarah at the local cafe. Also met with a client.",
         source_description="Test",
         group_id=group_id,
         valid_at=datetime(2024, 1, 15, tzinfo=timezone.utc),
@@ -268,15 +222,6 @@ async def test_extract_attributes_metadata_tracking(isolated_graph) -> None:
         uuid="sarah-uuid",
         name="Sarah",
         labels=["Entity", "Person"],
-        attributes={},
-        group_id=group_id,
-        created_at=utc_now(),
-    )
-
-    anxiety = EntityNode(
-        uuid="anxiety-uuid",
-        name="anxiety",
-        labels=["Entity", "Emotion"],
         attributes={},
         group_id=group_id,
         created_at=utc_now(),
@@ -295,15 +240,14 @@ async def test_extract_attributes_metadata_tracking(isolated_graph) -> None:
 
     extractor = ExtractAttributes(group_id=group_id)
     result = await extractor(
-        nodes=[sarah, anxiety, generic_entity],
+        nodes=[sarah, generic_entity],
         episode=episode,
         previous_episodes=[],
         entity_types=entity_types,
     )
 
     assert isinstance(result, ExtractAttributesOutput)
-    assert result.metadata["nodes_processed"] == 2
+    assert result.metadata["nodes_processed"] == 1
     assert result.metadata["nodes_skipped"] == 1
     assert "attributes_extracted_by_type" in result.metadata
     assert result.metadata["attributes_extracted_by_type"]["Person"] == 1
-    assert result.metadata["attributes_extracted_by_type"]["Emotion"] == 1
