@@ -19,6 +19,7 @@ wheels/
 distilbert-ner-uncased-onnx/onnx/*.onnx
 distilbert-ner-uncased-onnx/.cache/
 prompts/.dspy_cache/
+.dspy_cache
 
 # Database files (FalkorDB/Redis/SQLite)
 data/*.db
