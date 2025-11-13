@@ -55,7 +55,7 @@ result = await add_journal(
     entity_types=None,     # Optional custom entity schemas
     excluded_entity_types=None  # Optional types to exclude
 )
-# Returns: AddJournalResults(episode, nodes, uuid_map, metadata)
+# Returns: AddJournalResults(episode, nodes, edges, episodic_edges, uuid_map, metadata)
 ```
 
 ## Stage Data Flow
@@ -131,7 +131,7 @@ async def extract_attributes_from_nodes(
 Journal Text → add_journal() → ExtractNodes → ExtractEdges → ExtractAttributes → GenerateSummaries → [Future: Database]
 ```
 
-### Stage 1: Extract Nodes (✓ Implemented)
+### Stage 1: Extract Nodes
 
 **Module**: `extract_nodes.py`
 **Analogous to**: graphiti-core's `extract_nodes()` + `resolve_extracted_nodes()`
@@ -172,7 +172,7 @@ result = await extractor(content="...")
 - Follows graphiti-core's 3-step flow: extract → remap → resolve
 - Uses exact match deduplication only (no fuzzy matching, no semantic search)
 - Temporal metadata (valid_at/invalid_at) extracted via LLM
-- Returns edges in-memory (persistence deferred to Stage 5)
+- Returns edges in-memory; Stage 5 writes them alongside episodes/nodes
 
 **Data Flow**:
 ```
@@ -410,9 +410,15 @@ result = await generator(...)
 
 6. **Embeddings**: Deferred to future integration (stub with TODO for name embedding generation after summaries)
 
-### Stage 5: Database Persistence (TODO)
+### Stage 5: Database Persistence
 
-Save all graph elements (episode, nodes with attributes/summaries, edges) to FalkorDB.
+`add_journal()` mirrors graphiti-core's `_process_episode_data()`:
+
+1. Build episodic `MENTIONS` edges via `build_episodic_edges(nodes, episode.uuid, episode.created_at)`.
+2. Attach resolved edge UUIDs to the episode (`episode.entity_edges = [edge.uuid ...]`).
+3. Persist everything with `pipeline.db_utils.write_episode_and_nodes()`, which writes the episode, entities (with summaries/attributes), RELATES_TO edges, and episodic edges to FalkorDB.
+
+Persistence is enabled by default (`persist=True`). Passing `persist=False` keeps the run in-memory and tags `metadata["persistence"] = {"status": "skipped"}` for downstream consumers.
 
 ## Optimization
 

@@ -10,7 +10,7 @@ from datetime import datetime
 from threading import Lock
 from typing import Any, Iterable
 
-from graphiti_core.edges import EntityEdge
+from graphiti_core.edges import EntityEdge, EpisodicEdge
 from graphiti_core.nodes import EntityNode, EpisodicNode, EpisodeType
 from graphiti_core.utils.datetime_utils import utc_now
 
@@ -404,14 +404,20 @@ async def reset_database() -> str:
 def _write_episode_and_nodes_sync(
     episode: EpisodicNode,
     nodes: list[EntityNode],
+    edges: list[EntityEdge] | None = None,
+    episodic_edges: list[EpisodicEdge] | None = None,
 ) -> dict[str, Any]:
-    """Write episode and entity nodes to database (sync)."""
+    """Write episode, entity nodes, entity edges, and episodic edges to database (sync)."""
     graph = _ensure_graph()
     if graph is None:
         return {"error": "Database unavailable"}
 
     try:
+        edges = edges or []
+        episodic_edges = episodic_edges or []
         from graphiti_core.utils.datetime_utils import convert_datetimes_to_strings
+
+        episode_edges = [edge.uuid for edge in edges] or (episode.entity_edges or [])
 
         episode_dict = convert_datetimes_to_strings(
             {
@@ -423,7 +429,7 @@ def _write_episode_and_nodes_sync(
                 "content": episode.content,
                 "valid_at": episode.valid_at,
                 "created_at": episode.created_at,
-                "entity_edges": episode.entity_edges or [],
+                "entity_edges": episode_edges,
                 "labels": episode.labels or [],
             }
         )
@@ -507,10 +513,118 @@ def _write_episode_and_nodes_sync(
 
         logger.info("Wrote %d entity nodes", nodes_created)
 
+        edges_created = 0
+        edge_uuids: list[str] = []
+
+        if edges:
+            for edge in edges:
+                edge_dict = convert_datetimes_to_strings(
+                    {
+                        "uuid": edge.uuid,
+                        "source_node_uuid": edge.source_node_uuid,
+                        "target_node_uuid": edge.target_node_uuid,
+                        "name": edge.name,
+                        "fact": edge.fact,
+                        "group_id": edge.group_id,
+                        "created_at": edge.created_at,
+                        "fact_embedding": edge.fact_embedding or [],
+                        "episodes": edge.episodes or [],
+                        "expired_at": edge.expired_at,
+                        "valid_at": edge.valid_at,
+                        "invalid_at": edge.invalid_at,
+                        "attributes": edge.attributes or {},
+                    }
+                )
+
+                props = {
+                    "uuid": edge_dict["uuid"],
+                    "name": edge_dict["name"],
+                    "fact": edge_dict["fact"],
+                    "group_id": edge_dict["group_id"],
+                    "created_at": edge_dict["created_at"],
+                    "episodes": edge_dict["episodes"],
+                    "expired_at": edge_dict["expired_at"],
+                    "valid_at": edge_dict["valid_at"],
+                    "invalid_at": edge_dict["invalid_at"],
+                    "attributes": json.dumps(edge_dict["attributes"]),
+                }
+
+                set_clause = ", ".join(
+                    [
+                        f"r.{key} = {to_cypher_literal(value)}"
+                        for key, value in props.items()
+                    ]
+                )
+
+                embedding_literal = json.dumps(edge_dict["fact_embedding"])
+
+                edge_query = f"""
+                MATCH (source:Entity {{uuid: {to_cypher_literal(edge_dict["source_node_uuid"])}}})
+                MATCH (target:Entity {{uuid: {to_cypher_literal(edge_dict["target_node_uuid"])}}})
+                MERGE (source)-[r:RELATES_TO {{uuid: {to_cypher_literal(edge_dict["uuid"])}}}]->(target)
+                SET {set_clause}
+                SET r.fact_embedding = vecf32({embedding_literal})
+                RETURN r.uuid AS uuid
+                """
+
+                result = graph.query(edge_query)
+                if result.result_set:
+                    edges_created += 1
+                    edge_uuids.append(edge_dict["uuid"])
+
+        logger.info("Wrote %d entity edges", edges_created)
+
+        episodic_edges_created = 0
+        episodic_edge_uuids: list[str] = []
+
+        if episodic_edges:
+            for edge in episodic_edges:
+                edge_dict = convert_datetimes_to_strings(
+                    {
+                        "uuid": edge.uuid,
+                        "source_node_uuid": edge.source_node_uuid,
+                        "target_node_uuid": edge.target_node_uuid,
+                        "group_id": edge.group_id,
+                        "created_at": edge.created_at,
+                    }
+                )
+
+                props = {
+                    "uuid": edge_dict["uuid"],
+                    "group_id": edge_dict["group_id"],
+                    "created_at": edge_dict["created_at"],
+                }
+
+                set_clause = ", ".join(
+                    [
+                        f"r.{key} = {to_cypher_literal(value)}"
+                        for key, value in props.items()
+                    ]
+                )
+
+                episodic_edge_query = f"""
+                MATCH (episode:Episodic {{uuid: {to_cypher_literal(edge_dict["source_node_uuid"])}}})
+                MATCH (entity:Entity {{uuid: {to_cypher_literal(edge_dict["target_node_uuid"])}}})
+                MERGE (episode)-[r:MENTIONS {{uuid: {to_cypher_literal(edge_dict["uuid"])}}}]->(entity)
+                SET {set_clause}
+                RETURN r.uuid AS uuid
+                """
+
+                result = graph.query(episodic_edge_query)
+                if result.result_set:
+                    episodic_edges_created += 1
+                    episodic_edge_uuids.append(edge_dict["uuid"])
+
+        logger.info("Wrote %d episodic edges", episodic_edges_created)
+
         return {
             "episode_uuid": episode.uuid,
             "nodes_created": nodes_created,
             "node_uuids": node_uuids,
+            "edges_created": edges_created,
+            "edge_uuids": edge_uuids,
+            "episodic_edges_created": episodic_edges_created,
+            "episodic_edge_uuids": episodic_edge_uuids,
         }
 
     except Exception as exc:  # noqa: BLE001
@@ -521,9 +635,17 @@ def _write_episode_and_nodes_sync(
 async def write_episode_and_nodes(
     episode: EpisodicNode,
     nodes: list[EntityNode],
+    edges: list[EntityEdge] | None = None,
+    episodic_edges: list[EpisodicEdge] | None = None,
 ) -> dict[str, Any]:
-    """Write episode and entity nodes to database."""
-    return await asyncio.to_thread(_write_episode_and_nodes_sync, episode, nodes)
+    """Write episode, entity nodes, entity edges, and episodic edges to database."""
+    return await asyncio.to_thread(
+        _write_episode_and_nodes_sync,
+        episode,
+        nodes,
+        edges or [],
+        episodic_edges or [],
+    )
 
 
 __all__ = [

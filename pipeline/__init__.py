@@ -9,6 +9,7 @@ Each module represents a discrete stage in the knowledge graph ingestion pipelin
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -20,15 +21,19 @@ from graphiti_core.helpers import (
     validate_excluded_entity_types,
     validate_group_id,
 )
-from graphiti_core.edges import EntityEdge
+from graphiti_core.edges import EntityEdge, EpisodicEdge
 from graphiti_core.nodes import EntityNode, EpisodicNode
 from graphiti_core.utils.ontology_utils.entity_types_utils import validate_entity_types
+from graphiti_core.utils.maintenance.edge_operations import build_episodic_edges
 
 from .extract_nodes import ExtractNodes, ExtractNodesOutput
 from .extract_edges import ExtractEdges, ExtractEdgesOutput
 from .extract_attributes import ExtractAttributes, ExtractAttributesOutput
 from .generate_summaries import GenerateSummaries, GenerateSummariesOutput
 from .entity_edge_models import entity_types, edge_types, edge_type_map
+from .db_utils import write_episode_and_nodes
+
+logger = logging.getLogger(__name__)
 
 # ========== Pipeline Orchestration ==========
 
@@ -40,6 +45,7 @@ class AddJournalResults:
     episode: EpisodicNode
     nodes: list[EntityNode]
     edges: list[EntityEdge]
+    episodic_edges: list[EpisodicEdge]
     uuid_map: dict[str, str]
     metadata: dict[str, Any]
 
@@ -55,6 +61,7 @@ async def add_journal(
     extract_nodes_factory: Callable[[str], ExtractNodes] | None = None,
     edge_types: dict | None = edge_types,
     edge_type_map: dict | None = edge_type_map,
+    persist: bool = True,
 ) -> AddJournalResults:
     """Process a journal entry and extract knowledge graph elements.
 
@@ -76,6 +83,7 @@ async def add_journal(
         extract_nodes_factory: Optional hook returning an ExtractNodes module for the given group_id
         edge_types: Custom edge type schemas (for future Stage 2 enhancement)
         edge_type_map: Maps (source_label, target_label) to allowed edge types
+        persist: Whether to write results to FalkorDB (defaults to True)
 
     Returns:
         AddJournalResults with episode, extracted nodes, UUID mappings, and metadata
@@ -152,18 +160,51 @@ async def add_journal(
         previous_episodes=extract_result.previous_episodes,
     )
 
-    # TODO: Stage 5: Save to database
+    # Stage 5: Save to FalkorDB (episode, nodes, edges, episodic edges)
+    episodic_edges = build_episodic_edges(
+        summaries_result.nodes,
+        extract_result.episode.uuid,
+        extract_result.episode.created_at,
+    )
+    extract_result.episode.entity_edges = [
+        edge.uuid for edge in extract_edges_result.edges
+    ]
+
+    persistence_result: dict[str, Any]
+    if persist:
+        persistence_result = await write_episode_and_nodes(
+            episode=extract_result.episode,
+            nodes=summaries_result.nodes,
+            edges=extract_edges_result.edges,
+            episodic_edges=episodic_edges,
+        )
+
+        if "error" in persistence_result:
+            error_message = persistence_result.get("error", "Unknown error")
+            logger.error("Persistence failed: %s", error_message)
+            raise RuntimeError(f"Database persistence failed: {error_message}")
+
+        logger.info(
+            "Persisted episode %s (%d nodes, %d edges)",
+            extract_result.episode.uuid,
+            persistence_result.get("nodes_created", 0),
+            persistence_result.get("edges_created", 0),
+        )
+    else:
+        persistence_result = {"status": "skipped"}
 
     return AddJournalResults(
         episode=extract_result.episode,
         nodes=summaries_result.nodes,
         edges=extract_edges_result.edges,
+        episodic_edges=episodic_edges,
         uuid_map=extract_result.uuid_map,
         metadata={
             **extract_result.metadata,
             "edges": extract_edges_result.metadata,
             "attributes": attributes_result.metadata,
             "summaries": summaries_result.metadata,
+            "persistence": persistence_result,
         },
     )
 

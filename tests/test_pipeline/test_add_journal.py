@@ -7,6 +7,7 @@ import pytest
 
 from graphiti_core.errors import GroupIdValidationError
 from pipeline import AddJournalResults, add_journal
+from pipeline import db_utils
 
 
 @pytest.mark.asyncio
@@ -30,10 +31,14 @@ async def test_add_journal_runs_end_to_end(isolated_graph) -> None:
     assert all(node.group_id == group_id for node in result.nodes)
     assert result.metadata["resolved_count"] <= result.metadata["extracted_count"]
     assert set(result.uuid_map.values()) >= {node.uuid for node in result.nodes}
+    assert len(result.episodic_edges) == len(result.nodes)
+    assert result.metadata["persistence"]["episode_uuid"] == result.episode.uuid
 
 
 @pytest.mark.asyncio
-async def test_add_journal_resolves_existing_entities(isolated_graph, seed_entity) -> None:
+async def test_add_journal_resolves_existing_entities(
+    isolated_graph, seed_entity
+) -> None:
     """Existing graph entities should be reused instead of duplicated."""
     group_id = "dedupe-user"
     existing_uuid = "00000000-0000-4000-8000-000000000001"
@@ -89,3 +94,46 @@ async def test_add_journal_extracts_edges(isolated_graph) -> None:
     assert all(e.group_id == group_id for e in result.edges)
     assert "edges" in result.metadata
     assert result.metadata["edges"]["extracted_count"] >= 1
+
+
+@pytest.mark.asyncio
+async def test_add_journal_persists_entities_and_edges(isolated_graph) -> None:
+    """Persisted entities, edges, and episodes should be queryable from FalkorDB."""
+    group_id = "persist-user"
+    reference_time = datetime(2024, 4, 5, 12, 0, tzinfo=timezone.utc)
+    result = await add_journal(
+        content="Debriefed with Taylor on the Apollo rollout; Taylor mentors me weekly.",
+        group_id=group_id,
+        reference_time=reference_time,
+    )
+
+    entities = await db_utils.fetch_entities_by_group(group_id)
+    assert {node.uuid for node in result.nodes}.issubset(set(entities))
+
+    edges = await db_utils.fetch_entity_edges_by_group(group_id)
+    assert {edge.uuid for edge in result.edges}.issubset(set(edges))
+
+    episodes = await db_utils.fetch_recent_episodes(
+        group_id,
+        reference_time,
+        limit=5,
+    )
+    assert any(ep.uuid == result.episode.uuid for ep in episodes)
+
+
+@pytest.mark.asyncio
+async def test_add_journal_can_skip_persistence(isolated_graph) -> None:
+    """Persistence can be disabled for dry runs."""
+    stats_before = await db_utils.get_db_stats()
+    assert stats_before == {"episodes": 0, "entities": 0}
+
+    result = await add_journal(
+        content="Sketched timeline for next sprint.",
+        group_id="skip-user",
+        reference_time=datetime(2024, 5, 1, 9, 0, tzinfo=timezone.utc),
+        persist=False,
+    )
+
+    stats_after = await db_utils.get_db_stats()
+    assert stats_after == stats_before
+    assert result.metadata["persistence"] == {"status": "skipped"}
