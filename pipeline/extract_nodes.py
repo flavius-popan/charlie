@@ -78,7 +78,11 @@ class ExtractedEntities(BaseModel):
 class ReflexionEntity(BaseModel):
     """Entity suggestion produced by the reflexion step."""
 
-    name: str = Field(description="Name of an entity that still needs to be extracted")
+    name: str = Field(
+        ...,
+        description="Name of an entity that still needs to be extracted",
+        min_length=1,
+    )
     entity_type: str | None = Field(
         default=None,
         description="Optional type hint using the journaling entity schemas",
@@ -118,6 +122,9 @@ class EntityReflexionSignature(dspy.Signature):
     )
     previous_episodes: str = dspy.InputField(
         desc="JSON list of previous episode excerpts for context"
+    )
+    entity_types: str = dspy.InputField(
+        desc="JSON string that lists available entity types with descriptions"
     )
     extracted_entities: str = dspy.InputField(
         desc="JSON list of entity names already extracted"
@@ -202,11 +209,13 @@ class EntityReflexionModule(dspy.Module):
         self,
         episode_content: str,
         previous_episodes: str,
+        entity_types: str,
         extracted_entities: str,
     ) -> list[ReflexionEntity]:
         result = self.predict_reflexion(
             episode_content=episode_content,
             previous_episodes=previous_episodes,
+            entity_types=entity_types,
             extracted_entities=extracted_entities,
         )
         return self._normalize_reflexion_output(result)
@@ -228,28 +237,22 @@ class EntityReflexionModule(dspy.Module):
 
         for item in candidates:
             if isinstance(item, ReflexionEntity):
-                normalized.append(item)
+                if item.name.strip():
+                    normalized.append(item)
             elif isinstance(item, dict):
-                try:
-                    normalized.append(ReflexionEntity(**item))
-                except Exception:
-                    name = item.get("name") or item.get("entity") or ""
-                    entity_type = item.get("entity_type") or item.get("type")
-                    if name:
-                        normalized.append(
-                            ReflexionEntity(name=str(name), entity_type=_safe_str(entity_type))
-                        )
-            elif isinstance(item, (list, tuple)):
-                if not item:
+                name = _safe_str(item.get("name") or item.get("entity"))
+                if not name:
+                    logger.debug("Skipping reflexion candidate without name: %s", item)
                     continue
-                name = _safe_str(item[0])
-                entity_type = _safe_str(item[1]) if len(item) > 1 else None
-                if name:
-                    normalized.append(ReflexionEntity(name=name, entity_type=entity_type))
-            elif isinstance(item, str):
-                stripped = item.strip()
-                if stripped:
-                    normalized.append(ReflexionEntity(name=stripped))
+                entity_type = _safe_str(item.get("entity_type") or item.get("type"))
+                try:
+                    normalized.append(
+                        ReflexionEntity(name=name, entity_type=entity_type)
+                    )
+                except Exception as exc:  # pragma: no cover
+                    logger.debug("Failed to coerce reflexion candidate %s: %s", item, exc)
+            else:
+                logger.debug("Ignoring reflexion candidate with unsupported shape: %r", item)
 
         return normalized
 
@@ -539,12 +542,14 @@ class ExtractNodes:
         )
         current_nodes = list(base_nodes)
         available_types = self._get_available_type_names(entity_types)
+        entity_types_payload = self._format_entity_types(entity_types)
 
         for iteration in range(self.max_reflexion_iterations):
             extracted_payload = to_prompt_json([node.name for node in current_nodes])
             suggestions = self.entity_reflexion(
                 episode_content=episode.content,
                 previous_episodes=previous_payload,
+                entity_types=entity_types_payload,
                 extracted_entities=extracted_payload,
             )
 
@@ -672,7 +677,8 @@ class ExtractNodes:
 
         return list(unique_nodes.values()), state.uuid_map, state.duplicate_pairs
 
-    def _format_entity_types(self, entity_types: dict | None) -> str:
+    @staticmethod
+    def _format_entity_types(entity_types: dict | None) -> str:
         """Format entity type schemas for entity_types input field."""
         base_type = {
             "entity_type_id": 0,

@@ -21,12 +21,15 @@ from pipeline.extract_nodes import (
     EntityReflexionModule,
     ReflexionEntities,
     ReflexionEntity,
+    ExtractNodes,
 )
+from pipeline.entity_edge_models import entity_types as default_entity_types
 from settings import DEFAULT_MODEL_PATH, MODEL_CONFIG
 
 
 PROMPT_OUTPUT = Path(__file__).parent.parent / "prompts" / "entity_reflexion.json"
 logger = logging.getLogger(__name__)
+ENTITY_TYPES_PAYLOAD = ExtractNodes._format_entity_types(default_entity_types)
 
 
 def configure_dspy():
@@ -44,6 +47,7 @@ def _example(
     previous_episodes: list[str],
     extracted_entities: list[str],
     missed_entities: list[tuple[str, str | None]],
+    entity_types_json: str,
 ) -> dspy.Example:
     """Helper to keep examples readable."""
 
@@ -51,13 +55,14 @@ def _example(
         episode_content=episode_content,
         previous_episodes=json.dumps(previous_episodes),
         extracted_entities=json.dumps(extracted_entities),
+        entity_types=entity_types_json,
         missed_entities=ReflexionEntities(
             missed_entities=[
                 ReflexionEntity(name=name, entity_type=entity_type)
                 for name, entity_type in missed_entities
             ]
         ),
-    ).with_inputs("episode_content", "previous_episodes", "extracted_entities")
+    ).with_inputs("episode_content", "previous_episodes", "entity_types", "extracted_entities")
 
 
 def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
@@ -75,6 +80,7 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
                 ("sunrise yoga", "Activity"),
                 ("Mission Commons volunteer shift", "Activity"),
             ],
+            entity_types_json=ENTITY_TYPES_PAYLOAD,
         ),
         _example(
             episode_content=(
@@ -87,6 +93,7 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
                 ("grief circle", "Activity"),
                 ("sobriety check-in", "Activity"),
             ],
+            entity_types_json=ENTITY_TYPES_PAYLOAD,
         ),
         _example(
             episode_content=(
@@ -99,6 +106,7 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
                 ("Harvest Hub pantry shift", "Activity"),
                 ("produce bin stocking", "Activity"),
             ],
+            entity_types_json=ENTITY_TYPES_PAYLOAD,
         ),
         _example(
             episode_content=(
@@ -111,6 +119,7 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
                 ("sunrise hill repeats", "Activity"),
                 ("Mission Milers fundraiser run", "Activity"),
             ],
+            entity_types_json=ENTITY_TYPES_PAYLOAD,
         ),
         _example(
             episode_content=(
@@ -123,6 +132,7 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
                 ("Medi-Cal paperwork sprint", "Activity"),
                 ("patience mantra", "Concept"),
             ],
+            entity_types_json=ENTITY_TYPES_PAYLOAD,
         ),
         _example(
             episode_content=(
@@ -135,6 +145,7 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
                 ("night swim", "Activity"),
                 ("Sunday swim pact", "Activity"),
             ],
+            entity_types_json=ENTITY_TYPES_PAYLOAD,
         ),
         _example(
             episode_content=(
@@ -147,6 +158,7 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
                 ("box breathing drill", "Activity"),
                 ("grounding mantra", "Concept"),
             ],
+            entity_types_json=ENTITY_TYPES_PAYLOAD,
         ),
         _example(
             episode_content=(
@@ -160,6 +172,7 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
                 ("rooftop potluck", "Activity"),
                 ("Pride art booth plan", "Activity"),
             ],
+            entity_types_json=ENTITY_TYPES_PAYLOAD,
         ),
     ]
 
