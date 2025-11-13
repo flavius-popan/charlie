@@ -32,7 +32,7 @@ from graphiti_core.utils.datetime_utils import ensure_utc, utc_now
 from graphiti_core.utils.maintenance.dedup_helpers import _normalize_string_exact
 from pydantic import BaseModel, Field
 
-from pipeline.db_utils import fetch_entity_edges_by_group
+from pipeline.falkordblite_driver import fetch_entity_edges_by_group
 
 logger = logging.getLogger(__name__)
 

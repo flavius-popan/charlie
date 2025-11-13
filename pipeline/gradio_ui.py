@@ -25,13 +25,13 @@ from pipeline import (
     ExtractAttributes,
     GenerateSummaries,
 )
-from pipeline.db_utils import (
+from pipeline.falkordblite_driver import (
     fetch_entities_by_group,
     fetch_recent_episodes,
     get_db_stats,
+    persist_episode_and_nodes,
     reset_database,
 )
-from pipeline.persistence import persist_episode_and_nodes
 from pipeline.entity_edge_models import entity_types
 from pipeline.ner_type_overrides import map_ner_label_to_entity_type
 from settings import DB_PATH, GROUP_ID, MODEL_CONFIG, DEFAULT_MODEL_PATH

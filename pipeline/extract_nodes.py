@@ -50,7 +50,7 @@ from graphiti_core.utils.maintenance.dedup_helpers import (
 from graphiti_core.utils.ontology_utils.entity_types_utils import validate_entity_types
 from pydantic import BaseModel, Field
 
-from pipeline.db_utils import fetch_entities_by_group, fetch_recent_episodes
+from pipeline.falkordblite_driver import fetch_entities_by_group, fetch_recent_episodes
 from pipeline.entity_edge_models import entity_types
 from pipeline.ner_type_overrides import map_ner_label_to_entity_type
 

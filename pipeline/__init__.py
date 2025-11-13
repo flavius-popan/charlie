@@ -32,7 +32,7 @@ from .extract_edges import ExtractEdges, ExtractEdgesOutput
 from .extract_attributes import ExtractAttributes, ExtractAttributesOutput
 from .generate_summaries import GenerateSummaries, GenerateSummariesOutput
 from .entity_edge_models import entity_types, edge_types, edge_type_map
-from .persistence import persist_episode_and_nodes
+from .falkordblite_driver import persist_episode_and_nodes
 
 logger = logging.getLogger(__name__)
 

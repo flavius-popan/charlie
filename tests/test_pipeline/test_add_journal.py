@@ -7,7 +7,7 @@ import pytest
 
 from graphiti_core.errors import GroupIdValidationError
 from pipeline import AddJournalResults, add_journal
-from pipeline import db_utils
+import pipeline.falkordblite_driver as db_utils
 
 
 @pytest.mark.asyncio

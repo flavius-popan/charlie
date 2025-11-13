@@ -12,7 +12,7 @@ import dspy
 
 from dspy_outlines import OutlinesAdapter, OutlinesLM
 
-from pipeline import db_utils
+import pipeline.falkordblite_driver as db_utils
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -38,7 +38,7 @@ def isolated_graph(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[
     """
     db_path = tmp_path / "pipeline-integration.db"
     monkeypatch.setattr("settings.DB_PATH", db_path, raising=False)
-    monkeypatch.setattr("pipeline.db_utils.DB_PATH", db_path, raising=False)
+    monkeypatch.setattr("pipeline.falkordblite_driver.DB_PATH", db_path, raising=False)
 
     # Reset cached connections before opening a new graph.
     db_utils._close_db()

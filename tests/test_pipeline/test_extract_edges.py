@@ -246,7 +246,7 @@ class TestBuildEntityEdges:
 @pytest.fixture
 def seed_edge(isolated_graph) -> callable:
     """Helper to insert EntityEdge relationships for deduplication tests."""
-    from pipeline import db_utils
+    import pipeline.falkordblite_driver as db_utils
 
     def _seed(
         *,
