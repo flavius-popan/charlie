@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
-from pathlib import Path
 from typing import Callable, Iterator
 
 import pytest
@@ -13,6 +12,7 @@ import dspy
 from dspy_outlines import OutlinesAdapter, OutlinesLM
 
 import pipeline.falkordblite_driver as db_utils
+import settings
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -29,16 +29,14 @@ def configure_dspy_for_pipeline(request: pytest.FixtureRequest) -> Iterator[None
     yield
 
 
-@pytest.fixture
-def isolated_graph(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[object]:
-    """
-    Provide a freshly-initialised FalkorDB graph for each test.
+@pytest.fixture(scope="session")
+def falkordb_test_context(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
+    """Start a single FalkorDB Lite instance for the entire test session."""
+    db_dir = tmp_path_factory.mktemp("falkordb-lite")
+    db_path = db_dir / "pipeline-integration.db"
 
-    Tests operate on a throwaway database file, ensuring no cross-test leakage.
-    """
-    db_path = tmp_path / "pipeline-integration.db"
-    monkeypatch.setattr("settings.DB_PATH", db_path, raising=False)
-    monkeypatch.setattr("pipeline.falkordblite_driver.DB_PATH", db_path, raising=False)
+    settings.DB_PATH = db_path
+    db_utils.DB_PATH = db_path  # type: ignore[assignment]
 
     # Reset cached connections before opening a new graph.
     db_utils._close_db()
@@ -51,12 +49,30 @@ def isolated_graph(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[
         pytest.skip("FalkorDB Lite is unavailable; integration tests require it.")
 
     graph.query("MATCH (n) DETACH DELETE n")
+    try:
+        yield
+    finally:
+        graph.query("MATCH (n) DETACH DELETE n")
+        db_utils._close_db()
+
+
+@pytest.fixture
+def isolated_graph(falkordb_test_context) -> Iterator[object]:
+    """
+    Provide a clean FalkorDB graph for each test without restarting the server.
+
+    Data is truncated before and after each test to guarantee isolation.
+    """
+    graph = db_utils.get_falkordb_graph() or db_utils._ensure_graph()
+    if graph is None:
+        pytest.skip("FalkorDB Lite is unavailable; integration tests require it.")
+
+    graph.query("MATCH (n) DETACH DELETE n")
 
     try:
         yield graph
     finally:
         graph.query("MATCH (n) DETACH DELETE n")
-        db_utils._close_db()
 
 
 @pytest.fixture
