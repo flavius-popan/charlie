@@ -416,7 +416,7 @@ result = await generator(...)
 
 1. Build episodic `MENTIONS` edges via `build_episodic_edges(nodes, episode.uuid, episode.created_at)`.
 2. Attach resolved edge UUIDs to the episode (`episode.entity_edges = [edge.uuid ...]`).
-3. Persist everything with `pipeline.db_utils.write_episode_and_nodes()`, which writes the episode, entities (with summaries/attributes), RELATES_TO edges, and episodic edges to FalkorDB.
+3. Persist everything with `pipeline.persistence.persist_episode_and_nodes()`, which wraps graphiti-core's `add_nodes_and_edges_bulk()` using a FalkorDB-Lite `GraphDriver` so we stay API-compatible with upstream helpers (embeddings default to empty vectors until a local embedder lands).
 
 Persistence is enabled by default (`persist=True`). Passing `persist=False` keeps the run in-memory and tags `metadata["persistence"] = {"status": "skipped"}` for downstream consumers.
 

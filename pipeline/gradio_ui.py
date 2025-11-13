@@ -26,8 +26,8 @@ from pipeline.db_utils import (
     fetch_recent_episodes,
     get_db_stats,
     reset_database,
-    write_episode_and_nodes,
 )
+from pipeline.persistence import persist_episode_and_nodes
 from pipeline.entity_edge_models import entity_types
 from settings import DB_PATH, GROUP_ID, MODEL_CONFIG, DEFAULT_MODEL_PATH
 
@@ -407,7 +407,7 @@ def on_write_to_db(episode, nodes):
     logger.info("Writing episode and %d nodes to database", len(nodes))
 
     try:
-        result = asyncio.run(write_episode_and_nodes(episode, nodes))
+        result = asyncio.run(persist_episode_and_nodes(episode, nodes))
 
         if "error" in result:
             return f"Write failed: {result['error']}", "N/A"
@@ -417,11 +417,11 @@ def on_write_to_db(episode, nodes):
 
         success_msg = f"""Write successful!
 Episode UUID: {result['episode_uuid']}
-Nodes created: {result['nodes_created']}
-Node UUIDs: {', '.join([uuid[:8] + '...' for uuid in result['node_uuids'][:5]])}
-{"..." if len(result['node_uuids']) > 5 else ""}"""
+Nodes written: {result.get('nodes_written', 0)}
+Node UUIDs: {', '.join([uuid[:8] + '...' for uuid in result.get('node_uuids', [])[:5]])}
+{"..." if len(result.get('node_uuids', [])) > 5 else ""}"""
 
-        logger.info("Write complete: %d nodes created", result["nodes_created"])
+        logger.info("Write complete: %d nodes written", result.get("nodes_written", 0))
 
         return success_msg, stats_str
 

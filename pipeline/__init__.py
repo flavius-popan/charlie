@@ -23,6 +23,7 @@ from graphiti_core.helpers import (
 )
 from graphiti_core.edges import EntityEdge, EpisodicEdge
 from graphiti_core.nodes import EntityNode, EpisodicNode
+from graphiti_core.utils.datetime_utils import utc_now
 from graphiti_core.utils.ontology_utils.entity_types_utils import validate_entity_types
 from graphiti_core.utils.maintenance.edge_operations import build_episodic_edges
 
@@ -31,7 +32,7 @@ from .extract_edges import ExtractEdges, ExtractEdgesOutput
 from .extract_attributes import ExtractAttributes, ExtractAttributesOutput
 from .generate_summaries import GenerateSummaries, GenerateSummariesOutput
 from .entity_edge_models import entity_types, edge_types, edge_type_map
-from .db_utils import write_episode_and_nodes
+from .persistence import persist_episode_and_nodes
 
 logger = logging.getLogger(__name__)
 
@@ -161,10 +162,12 @@ async def add_journal(
     )
 
     # Stage 5: Save to FalkorDB (episode, nodes, edges, episodic edges)
+    persisted_at = utc_now()
+    extract_result.episode.created_at = persisted_at
     episodic_edges = build_episodic_edges(
         summaries_result.nodes,
         extract_result.episode.uuid,
-        extract_result.episode.created_at,
+        persisted_at,
     )
     extract_result.episode.entity_edges = [
         edge.uuid for edge in extract_edges_result.edges
@@ -172,7 +175,7 @@ async def add_journal(
 
     persistence_result: dict[str, Any]
     if persist:
-        persistence_result = await write_episode_and_nodes(
+        persistence_result = await persist_episode_and_nodes(
             episode=extract_result.episode,
             nodes=summaries_result.nodes,
             edges=extract_edges_result.edges,
@@ -187,8 +190,8 @@ async def add_journal(
         logger.info(
             "Persisted episode %s (%d nodes, %d edges)",
             extract_result.episode.uuid,
-            persistence_result.get("nodes_created", 0),
-            persistence_result.get("edges_created", 0),
+            persistence_result.get("nodes_written", 0),
+            persistence_result.get("edges_written", 0),
         )
     else:
         persistence_result = {"status": "skipped"}

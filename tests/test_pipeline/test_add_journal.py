@@ -119,6 +119,7 @@ async def test_add_journal_persists_entities_and_edges(isolated_graph) -> None:
         limit=5,
     )
     assert any(ep.uuid == result.episode.uuid for ep in episodes)
+    assert result.metadata["persistence"]["status"] == "persisted"
 
 
 @pytest.mark.asyncio
