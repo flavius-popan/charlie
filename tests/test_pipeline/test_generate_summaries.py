@@ -18,10 +18,55 @@ from graphiti_core.nodes import EntityNode, EpisodicNode, EpisodeType
 from graphiti_core.utils.datetime_utils import utc_now
 from graphiti_core.utils.text_utils import MAX_SUMMARY_CHARS
 
+from graphiti_core.utils.text_utils import MAX_SUMMARY_CHARS
+
 from pipeline.generate_summaries import (
     GenerateSummaries,
     GenerateSummariesOutput,
+    build_node_payload,
+    build_summary_context,
 )
+
+
+# ========== Unit Tests: Summary Helpers ==========
+
+
+def test_build_node_payload_truncates_summary_and_preserves_metadata() -> None:
+    """Helper should mirror graphiti-core's context payload."""
+    long_summary = "A" * (MAX_SUMMARY_CHARS + 25)
+    payload = build_node_payload(
+        name="Kai",
+        summary=long_summary,
+        labels=["Entity", "Person"],
+        attributes={"relationship_type": "friend"},
+    )
+
+    assert payload["name"] == "Kai"
+    assert payload["entity_types"] == ["Entity", "Person"]
+    assert payload["attributes"] == {"relationship_type": "friend"}
+    assert len(payload["summary"]) <= MAX_SUMMARY_CHARS
+    assert payload["summary"].startswith("A")
+
+
+def test_build_summary_context_matches_graphiti_core_shape() -> None:
+    """Context builder should match graphiti-core's _build_episode_context output."""
+    node_payload = {
+        "name": "Kai",
+        "summary": "Friend in SF.",
+        "entity_types": ["Entity", "Person"],
+        "attributes": {"relationship_type": "friend"},
+    }
+    context = build_summary_context(
+        node_payload=node_payload,
+        episode_content="Coffee with Kai at Pier 39.",
+        previous_episode_texts=["Met Kai last week about art portfolio."],
+    )
+
+    assert context["node"] is node_payload
+    assert context["episode_content"] == "Coffee with Kai at Pier 39."
+    assert context["previous_episodes"] == [
+        "Met Kai last week about art portfolio."
+    ]
 
 
 # ========== Integration Tests: GenerateSummaries Orchestrator ==========

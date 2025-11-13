@@ -342,6 +342,20 @@ EntityNode(
 
 **Design**:
 - Generate summaries for ALL entities (not filtered by type)
+- Build a `summary_context` dict identical to graphiti-core's `_build_episode_context`:
+  ```json
+  {
+    "node": {
+      "name": "...",
+      "summary": "<existing <=250 chars>",
+      "entity_types": ["Entity", "..."],
+      "attributes": {...}
+    },
+    "episode_content": "...",
+    "previous_episodes": ["...", "..."]
+  }
+  ```
+- Serialize the context to JSON and pass it to the DSPy signature so prompt structure stays aligned with graphiti-core.
 - Summaries combine information from:
   - Current episode content
   - Previous episodes context
@@ -377,7 +391,7 @@ result = await summary_generator(
     previous_episodes=extract_result.previous_episodes,
 )
 
-# With optimized SummaryGenerator
+# With optimized SummaryGenerator (context-only signature)
 summary_generator_module = SummaryGenerator()
 compiled = optimizer.compile(summary_generator_module, trainset=examples)
 generator = GenerateSummaries(group_id="user_123", summary_generator=compiled)

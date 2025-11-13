@@ -15,7 +15,12 @@ import dspy
 from dspy.teleprompt import MIPROv2
 
 from dspy_outlines import OutlinesAdapter, OutlinesLM
-from pipeline.generate_summaries import EntitySummary, SummaryGenerator
+from pipeline.generate_summaries import (
+    EntitySummary,
+    SummaryGenerator,
+    build_node_payload,
+    build_summary_context,
+)
 from settings import DEFAULT_MODEL_PATH, MODEL_CONFIG
 
 
@@ -35,6 +40,33 @@ def configure_dspy():
 def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
     """Create concise summary examples rooted in lived experiences."""
 
+    def _context_json(
+        *,
+        episode_content: str,
+        previous_episodes: list[str],
+        entity_name: str,
+        entity_type: str,
+        existing_summary: str,
+        attributes: dict,
+    ) -> str:
+        labels = ["Entity"]
+        normalized_type = entity_type.strip()
+        if normalized_type and normalized_type not in labels:
+            labels.append(normalized_type)
+
+        node_payload = build_node_payload(
+            name=entity_name,
+            summary=existing_summary,
+            labels=labels,
+            attributes=attributes,
+        )
+        context_dict = build_summary_context(
+            node_payload=node_payload,
+            episode_content=episode_content,
+            previous_episode_texts=previous_episodes,
+        )
+        return json.dumps(context_dict, ensure_ascii=False)
+
     def example(
         *,
         episode_content: str,
@@ -46,23 +78,19 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
         summary_text: str,
         key_phrases: list[str],
     ) -> dspy.Example:
-        return dspy.Example(
+        context_json = _context_json(
             episode_content=episode_content,
-            previous_episodes=json.dumps(previous_episodes),
+            previous_episodes=previous_episodes,
             entity_name=entity_name,
             entity_type=entity_type,
             existing_summary=existing_summary,
-            attributes=json.dumps(attributes),
+            attributes=attributes,
+        )
+        return dspy.Example(
+            summary_context=context_json,
             summary=EntitySummary(summary=summary_text),
             key_phrases=key_phrases,
-        ).with_inputs(
-            "episode_content",
-            "previous_episodes",
-            "entity_name",
-            "entity_type",
-            "existing_summary",
-            "attributes",
-        )
+        ).with_inputs("summary_context")
 
     all_examples = [
         example(
@@ -238,14 +266,7 @@ def evaluate(module: SummaryGenerator, dataset: list[dspy.Example]) -> float:
 
     scores: list[float] = []
     for example in dataset:
-        prediction = module(
-            episode_content=example.episode_content,
-            previous_episodes=example.previous_episodes,
-            entity_name=example.entity_name,
-            entity_type=example.entity_type,
-            existing_summary=example.existing_summary,
-            attributes=example.attributes,
-        )
+        prediction = module(summary_context=example.summary_context)
         scores.append(summary_generation_metric(example, prediction))
 
     return sum(scores) / len(scores) if scores else 0.0

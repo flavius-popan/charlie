@@ -5,13 +5,12 @@ Two-Layer Architecture for DSPy Optimization:
 1. SummaryGenerator (dspy.Module):
    - Pure LLM extraction logic, no DB/async dependencies
    - Optimizable with DSPy (MIPRO, GEPA, etc.)
-   - Input: episode_content (str), previous_episodes (str), entity_name (str),
-     entity_type (str), existing_summary (str), attributes (str)
+   - Input: `summary_context` JSON string matching graphiti-core's `_build_episode_context`
    - Output: EntitySummary (Pydantic model with single field: summary: str)
 
 2. GenerateSummaries (orchestrator):
    - Plain Python class that coordinates the full pipeline
-   - Handles context building, summary truncation, metadata tracking
+   - Handles graphiti-core-compatible context building, summary truncation, metadata tracking
    - Accepts pre-compiled SummaryGenerator via dependency injection
    - Returns GenerateSummariesOutput with metadata
 
@@ -44,6 +43,38 @@ from pydantic import BaseModel, Field
 logger = logging.getLogger(__name__)
 
 
+def build_node_payload(
+    *,
+    name: str,
+    summary: str,
+    labels: list[str],
+    attributes: dict[str, Any],
+) -> dict[str, Any]:
+    """Return node metadata matching graphiti-core's extract_summary context."""
+
+    return {
+        "name": name,
+        "summary": truncate_at_sentence(summary, MAX_SUMMARY_CHARS),
+        "entity_types": labels,
+        "attributes": attributes,
+    }
+
+
+def build_summary_context(
+    *,
+    node_payload: dict[str, Any],
+    episode_content: str,
+    previous_episode_texts: list[str] | None = None,
+) -> dict[str, Any]:
+    """Mirror graphiti-core's _build_episode_context helper."""
+
+    return {
+        "node": node_payload,
+        "episode_content": episode_content,
+        "previous_episodes": previous_episode_texts or [],
+    }
+
+
 class EntitySummary(BaseModel):
     """Entity summary response model."""
 
@@ -55,46 +86,21 @@ class EntitySummary(BaseModel):
 class SummaryGenerationSignature(dspy.Signature):
     """Generate concise entity summaries from journal entries.
 
-    Given an entity (name, type, existing summary, attributes) and journal context,
-    generate a factual summary that combines new information with existing knowledge.
-
-    Summary Guidelines:
-    1. Output only factual content. Never explain what you're doing, why, or mention
-       limitations/constraints.
-    2. Only use the provided messages, entity, and entity context to generate summaries.
-    3. Keep the summary concise and to the point. STATE FACTS DIRECTLY IN UNDER 250 CHARACTERS.
-
-    Example summaries:
-    BAD: "This is the only activity in the context. The user listened to this song.
-          No other details were provided to include in this summary."
-    GOOD: "User played 'Blue Monday' by New Order (electronic genre) on 2024-12-03 at 14:22 UTC."
-
-    BAD: "Based on the messages provided, the user attended a meeting. This summary
-          focuses on that event as it was the main topic discussed."
-    GOOD: "User attended Q3 planning meeting with sales team on March 15."
-
-    BAD: "The context shows John ordered pizza. Due to length constraints, other
-          details are omitted from this summary."
-    GOOD: "John ordered pepperoni pizza from Mario's at 7:30 PM, delivered to office."
+    Accepts a JSON context dict matching graphiti-core's extract_summary prompt:
+        {
+            "node": {
+                "name": ...,
+                "summary": "<existing summary (<=250 chars)>",
+                "entity_types": [...],
+                "attributes": {...}
+            },
+            "episode_content": "...",
+            "previous_episodes": ["...", "..."]
+        }
     """
 
-    episode_content: str = dspy.InputField(
-        desc="Current journal entry text"
-    )
-    previous_episodes: str = dspy.InputField(
-        desc="Previous journal entries as JSON list for additional context"
-    )
-    entity_name: str = dspy.InputField(
-        desc="Name of the entity to generate summary for"
-    )
-    entity_type: str = dspy.InputField(
-        desc="Type of entity (e.g., Person, Emotion, Entity)"
-    )
-    existing_summary: str = dspy.InputField(
-        desc="Current entity summary (may be empty) - already truncated to 250 chars"
-    )
-    attributes: str = dspy.InputField(
-        desc="Entity attributes as JSON dict (may be empty)"
+    summary_context: str = dspy.InputField(
+        desc="JSON dictionary with keys: node, episode_content, previous_episodes"
     )
 
     summary: EntitySummary = dspy.OutputField(
@@ -120,12 +126,18 @@ class SummaryGenerator(dspy.Module):
     Usage:
         generator = SummaryGenerator()
         entity_summary = generator(
-            episode_content="I had coffee with Sarah...",
-            previous_episodes='["Yesterday I met Sarah at the cafe."]',
-            entity_name="Sarah",
-            entity_type="Person",
-            existing_summary="Friend who lives in SF.",
-            attributes='{"relationship_type": "friend"}'
+            summary_context=json.dumps(
+                build_summary_context(
+                    node_payload=build_node_payload(
+                        name="Sarah",
+                        summary="Friend who lives in SF.",
+                        labels=["Entity", "Person"],
+                        attributes={"relationship_type": "friend"},
+                    ),
+                    episode_content="I had coffee with Sarah...",
+                    previous_episode_texts=["Yesterday I met Sarah at the cafe."],
+                )
+            )
         )
     """
 
@@ -140,33 +152,18 @@ class SummaryGenerator(dspy.Module):
 
     def forward(
         self,
-        episode_content: str,
-        previous_episodes: str,
-        entity_name: str,
-        entity_type: str,
-        existing_summary: str,
-        attributes: str,
+        summary_context: str,
     ) -> EntitySummary:
         """Generate summary for an entity from text content.
 
         Args:
-            episode_content: Current journal entry text
-            previous_episodes: JSON string of previous episode contents
-            entity_name: Name of entity to generate summary for
-            entity_type: Type of entity (e.g., "Person", "Emotion", "Entity")
-            existing_summary: Current summary (already truncated to 250 chars)
-            attributes: JSON string of entity attributes
+            summary_context: JSON dict mirroring graphiti-core extract_summary context
 
         Returns:
             EntitySummary with generated summary text
         """
         result = self.generator(
-            episode_content=episode_content,
-            previous_episodes=previous_episodes,
-            entity_name=entity_name,
-            entity_type=entity_type,
-            existing_summary=existing_summary,
-            attributes=attributes,
+            summary_context=summary_context,
         )
 
         return result.summary
@@ -217,8 +214,8 @@ class GenerateSummaries:
     ) -> GenerateSummariesOutput:
         """Generate and populate entity summaries from journal entries.
 
-        Follows graphiti-core's pattern: generate summaries one entity at a time
-        with context from current and previous episodes.
+        Follows graphiti-core's pattern: build identical summary contexts and
+        generate summaries one entity at a time with shared DSPy prompts.
 
         Args:
             nodes: Entity nodes to generate summaries for (with attributes populated)
@@ -234,12 +231,13 @@ class GenerateSummaries:
             episode.uuid,
         )
 
-        previous_episodes_json = json.dumps([ep.content for ep in previous_episodes])
+        previous_episode_texts = [ep.content for ep in previous_episodes]
 
         nodes_processed = 0
         total_summary_length = 0
         truncated_count = 0
 
+        # MLX inference currently serializes LLM generations, so this loop stays sequential.
         for node in nodes:
             entity_type_name = next((item for item in node.labels if item != 'Entity'), 'Entity')
 
@@ -249,19 +247,20 @@ class GenerateSummaries:
                 node.name,
             )
 
-            existing_summary_truncated = truncate_at_sentence(
-                node.summary, MAX_SUMMARY_CHARS
+            node_payload = build_node_payload(
+                name=node.name,
+                summary=node.summary,
+                labels=node.labels,
+                attributes=node.attributes,
+            )
+            summary_context = build_summary_context(
+                node_payload=node_payload,
+                episode_content=episode.content,
+                previous_episode_texts=previous_episode_texts,
             )
 
-            attributes_json = json.dumps(node.attributes)
-
             generated_summary = self.summary_generator(
-                episode_content=episode.content,
-                previous_episodes=previous_episodes_json,
-                entity_name=node.name,
-                entity_type=entity_type_name,
-                existing_summary=existing_summary_truncated,
-                attributes=attributes_json,
+                summary_context=json.dumps(summary_context, ensure_ascii=False),
             )
 
             summary_text = generated_summary.summary
@@ -317,4 +316,6 @@ __all__ = [
     "SummaryGenerator",
     "GenerateSummaries",
     "GenerateSummariesOutput",
+    "build_node_payload",
+    "build_summary_context",
 ]
