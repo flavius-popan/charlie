@@ -7,10 +7,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
+import time
 from datetime import datetime
+from typing import Any
 
 import gradio as gr
 import dspy
+from distilbert_ner import predict_entities
 from dspy_outlines import OutlinesAdapter, OutlinesLM
 from graphiti_core.nodes import EpisodicNode, EpisodeType
 from graphiti_core.utils.datetime_utils import ensure_utc, utc_now
@@ -29,6 +33,7 @@ from pipeline.db_utils import (
 )
 from pipeline.persistence import persist_episode_and_nodes
 from pipeline.entity_edge_models import entity_types
+from pipeline.ner_type_overrides import map_ner_label_to_entity_type
 from settings import DB_PATH, GROUP_ID, MODEL_CONFIG, DEFAULT_MODEL_PATH
 
 logging.basicConfig(
@@ -47,6 +52,9 @@ adapter = OutlinesAdapter()
 dspy.configure(lm=lm, adapter=adapter)
 
 logger.info("DSPy configured with OutlinesLM")
+
+_ner_preview_lock = threading.Lock()
+_ner_preview_last_ts = 0.0
 
 
 def _format_entity_list(nodes) -> str:
@@ -70,6 +78,99 @@ Resolved: {metadata.get('resolved_count', 0)} entities
 Exact matches: {metadata.get('exact_matches', 0)}
 Fuzzy matches: {metadata.get('fuzzy_matches', 0)}
 New entities: {metadata.get('new_entities', 0)}"""
+
+
+def _format_live_ner_preview(
+    ner_entities: list[dict] | None,
+    use_ner_extractor: bool,
+) -> str:
+    status = "ENABLED" if use_ner_extractor else "DISABLED"
+    lines = [f"DistilBERT preview (NER mode {status})"]
+
+    if not ner_entities:
+        lines.append("Type in the journal box to preview detected entities.")
+        return "\n".join(lines)
+
+    lines.append(f"Entities detected: {len(ner_entities)}")
+    for entry in ner_entities:
+        name = entry.get("name") or entry.get("text") or "(unnamed)"
+        label = entry.get("ner_label") or entry.get("label")
+        mapped = entry.get("mapped_type")
+        confidence = entry.get("confidence")
+
+        details: list[str] = []
+        if label:
+            details.append(label)
+        if mapped and mapped != "Entity":
+            details.append(f"→{mapped}")
+        if isinstance(confidence, (int, float)):
+            details.append(f"{int(confidence * 100)}%")
+
+        suffix = f" [{' | '.join(details)}]" if details else ""
+        lines.append(f"- {name}{suffix}")
+
+    return "\n".join(lines)
+
+
+def _debounced_ner_preview(
+    text: str,
+    use_ner_extractor: bool,
+) -> tuple[Any, Any]:
+    """Run DistilBERT NER with a 1-second debounce window."""
+    global _ner_preview_last_ts
+
+    if not text or not text.strip():
+        return (
+            "Type in the journal box to preview DistilBERT entities.",
+            [],
+        )
+
+    with _ner_preview_lock:
+        started_at = time.time()
+        _ner_preview_last_ts = started_at
+
+    time.sleep(1.0)
+
+    with _ner_preview_lock:
+        if _ner_preview_last_ts > started_at:
+            return gr.update(), gr.update()
+
+    try:
+        predictions = predict_entities(text)
+    except Exception as exc:
+        logger.exception("DistilBERT preview failed")
+        return (f"DistilBERT preview error: {exc}", [])
+
+    formatted_entities: list[dict] = []
+    for prediction in predictions:
+        name = (prediction.get("text") or "").strip()
+        label = prediction.get("label", "")
+        mapped_type = map_ner_label_to_entity_type(label, name, entity_types.keys())
+        formatted_entities.append(
+            {
+                "name": name,
+                "ner_label": label,
+                "mapped_type": mapped_type,
+                "confidence": prediction.get("confidence"),
+            }
+        )
+
+    preview_text = _format_live_ner_preview(formatted_entities, use_ner_extractor)
+    return preview_text, formatted_entities
+
+
+def _refresh_ner_preview_status(
+    use_ner_extractor: bool,
+    ner_entities: list[dict] | None,
+) -> tuple[Any, Any]:
+    if ner_entities is None:
+        return (
+            "Type in the journal box to preview DistilBERT entities.",
+            None,
+        )
+
+    preview_text = _format_live_ner_preview(ner_entities, use_ner_extractor)
+    return preview_text, ner_entities
 
 
 def _format_ner_details(metadata: dict | None) -> str:
@@ -557,10 +658,16 @@ Test the complete knowledge graph extraction pipeline with progressive stage upd
             lines=8,
         )
     with gr.Row():
-        ner_details_output = gr.Textbox(
-            label="DistilBERT / Reflexion Details",
+        ner_preview_output = gr.Textbox(
+            label="DistilBERT Preview (live)",
             interactive=False,
-            lines=8,
+            lines=6,
+            value="Type in the journal box to preview DistilBERT entities.",
+        )
+        ner_details_output = gr.Textbox(
+            label="Stage 1 Extraction Details",
+            interactive=False,
+            lines=6,
         )
 
     gr.Markdown("### Stage 2: Relationship Extraction")
@@ -640,9 +747,25 @@ Test the complete knowledge graph extraction pipeline with progressive stage upd
         lines=6,
     )
 
+    ner_preview_state = gr.State(None)
     episode_state = gr.State(None)
     nodes_state = gr.State(None)
     uuid_map_state = gr.State(None)
+
+    content_input.change(
+        fn=_debounced_ner_preview,
+        inputs=[content_input, use_ner_checkbox],
+        outputs=[ner_preview_output, ner_preview_state],
+        trigger_mode="always_last",
+        show_progress="hidden",
+    )
+
+    use_ner_checkbox.change(
+        fn=_refresh_ner_preview_status,
+        inputs=[use_ner_checkbox, ner_preview_state],
+        outputs=[ner_preview_output, ner_preview_state],
+        show_progress="hidden",
+    )
 
     extract_btn.click(
         on_extract,

@@ -1,6 +1,13 @@
 """Configuration for graphiti-poc.py"""
 
 from pathlib import Path
+import os
+
+# Ensure DSPy uses a writable cache directory inside the repository.
+_DSPY_CACHE_DIR = Path(__file__).resolve().parent / "prompts" / ".dspy_cache"
+_DSPY_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+for _env_var in ("DSPY_CACHEDIR", "DSPY_CACHE_DIR", "DSPY_CACHE"):
+    os.environ.setdefault(_env_var, str(_DSPY_CACHE_DIR))
 
 # Model
 DEFAULT_MODEL_PATH = "mlx-community/Qwen3-4B-Instruct-2507-4bit-DWQ-2510"
