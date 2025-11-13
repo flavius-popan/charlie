@@ -1,0 +1,48 @@
+{
+  "generator": {
+    "traces": [],
+    "train": [],
+    "demos": [],
+    "signature": {
+      "instructions": "Generate concise entity summaries from journal entries.\n\nGiven an entity (name, type, existing summary, attributes) and journal context,\ngenerate a factual summary that combines new information with existing knowledge.\n\nSummary Guidelines:\n1. Output only factual content. Never explain what you're doing, why, or mention\n   limitations/constraints.\n2. Only use the provided messages, entity, and entity context to generate summaries.\n3. Keep the summary concise and to the point. STATE FACTS DIRECTLY IN UNDER 250 CHARACTERS.\n\nExample summaries:\nBAD: \"This is the only activity in the context. The user listened to this song.\n      No other details were provided to include in this summary.\"\nGOOD: \"User played 'Blue Monday' by New Order (electronic genre) on 2024-12-03 at 14:22 UTC.\"\n\nBAD: \"Based on the messages provided, the user attended a meeting. This summary\n      focuses on that event as it was the main topic discussed.\"\nGOOD: \"User attended Q3 planning meeting with sales team on March 15.\"\n\nBAD: \"The context shows John ordered pizza. Due to length constraints, other\n      details are omitted from this summary.\"\nGOOD: \"John ordered pepperoni pizza from Mario's at 7:30 PM, delivered to office.\"",
+      "fields": [
+        {
+          "prefix": "Episode Content:",
+          "description": "Current journal entry text"
+        },
+        {
+          "prefix": "Previous Episodes:",
+          "description": "Previous journal entries as JSON list for additional context"
+        },
+        {
+          "prefix": "Entity Name:",
+          "description": "Name of the entity to generate summary for"
+        },
+        {
+          "prefix": "Entity Type:",
+          "description": "Type of entity (e.g., Person, Emotion, Entity)"
+        },
+        {
+          "prefix": "Existing Summary:",
+          "description": "Current entity summary (may be empty) - already truncated to 250 chars"
+        },
+        {
+          "prefix": "Attributes:",
+          "description": "Entity attributes as JSON dict (may be empty)"
+        },
+        {
+          "prefix": "Summary:",
+          "description": "Concise factual summary combining new information with existing summary. State facts directly in under 250 characters. No meta-commentary."
+        }
+      ]
+    },
+    "lm": null
+  },
+  "metadata": {
+    "dependency_versions": {
+      "python": "3.13",
+      "dspy": "3.0.3",
+      "cloudpickle": "3.1"
+    }
+  }
+}

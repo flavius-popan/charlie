@@ -1,0 +1,36 @@
+{
+  "predict_reflexion": {
+    "traces": [],
+    "train": [],
+    "demos": [],
+    "signature": {
+      "instructions": "Suggest entities that were missed by the fast extractor.",
+      "fields": [
+        {
+          "prefix": "Episode Content:",
+          "description": "current journal entry text"
+        },
+        {
+          "prefix": "Previous Episodes:",
+          "description": "JSON list of previous episode excerpts for context"
+        },
+        {
+          "prefix": "Extracted Entities:",
+          "description": "JSON list of entity names already extracted"
+        },
+        {
+          "prefix": "Missed Entities:",
+          "description": "entities the pipeline should still add"
+        }
+      ]
+    },
+    "lm": null
+  },
+  "metadata": {
+    "dependency_versions": {
+      "python": "3.13",
+      "dspy": "3.0.3",
+      "cloudpickle": "3.1"
+    }
+  }
+}
