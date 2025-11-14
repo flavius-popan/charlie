@@ -122,7 +122,7 @@ class EdgeExtractor(dspy.Module):
         #     ]
 
         # TODO: Future enhancement - use edge_type_map to guide LLM on allowed edge types
-        # Example: For (Person, Emotion) only allow EmotionalAssociation, CoOccurrence
+        # Example: For (Person, Activity) only allow PARTICIPATES_IN, HOSTS, etc.
         # if edge_type_map:
         #     edge_type_signature_map = {
         #         edge_type_name: edge_types[edge_type_name]

@@ -1,7 +1,7 @@
 """Optimizer for the EntityReflexionModule in pipeline/extract_nodes.py.
 
 This tunes the reflexion signature so it reliably proposes entities that
-DistilBERT misses (activities, gatherings, concepts) during the hybrid
+DistilBERT misses (activities and gatherings) during the hybrid
 NER + DSPy extraction pass.
 
 Usage:
@@ -130,7 +130,7 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
             extracted_entities=["Harbor Clinic", "Ben", "Mom", "Medi-Cal"],
             missed_entities=[
                 ("Medi-Cal paperwork sprint", "Activity"),
-                ("patience mantra", "Concept"),
+                ("patience mantra practice", "Activity"),
             ],
             entity_types_json=ENTITY_TYPES_PAYLOAD,
         ),
@@ -156,7 +156,7 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
             extracted_entities=["Ines"],
             missed_entities=[
                 ("box breathing drill", "Activity"),
-                ("grounding mantra", "Concept"),
+                ("grounding mantra exercise", "Activity"),
             ],
             entity_types_json=ENTITY_TYPES_PAYLOAD,
         ),

@@ -159,11 +159,11 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
                 "Been practicing patience while caring for Mom—slow paperwork, slow progress, just breathing through the delays."
             ),
             previous_episodes=["Patience theme keeps surfacing every time Mom's appointments slip."],
-            entity_name="Patience",
-            entity_type="Concept",
+            entity_name="Caregiving patience practice",
+            entity_type="Activity",
             existing_summary="",
             attributes={},
-            summary_text="Patience means caring for Mom and breathing through constant delays in her paperwork.",
+            summary_text="Caregiving patience practice means breathing with Mom through endless paperwork delays.",
             key_phrases=["Mom", "delays"],
         ),
         example(

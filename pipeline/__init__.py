@@ -31,7 +31,11 @@ from .extract_nodes import ExtractNodes, ExtractNodesOutput
 from .extract_edges import ExtractEdges, ExtractEdgesOutput
 from .extract_attributes import ExtractAttributes, ExtractAttributesOutput
 from .generate_summaries import GenerateSummaries, GenerateSummariesOutput
-from .entity_edge_models import entity_types, edge_types, edge_type_map
+from .entity_edge_models import (
+    entity_types as DEFAULT_ENTITY_TYPES,
+    edge_types as DEFAULT_EDGE_TYPES,
+    edge_type_map as DEFAULT_EDGE_TYPE_MAP,
+)
 from .falkordblite_driver import persist_episode_and_nodes
 
 logger = logging.getLogger(__name__)
@@ -57,7 +61,7 @@ async def add_journal(
     reference_time: datetime | None = None,
     name: str | None = None,
     source_description: str = "Journal entry",
-    entity_types: dict | None = entity_types,
+    entity_types: dict | None = None,
     excluded_entity_types: list[str] | None = None,
     extract_nodes_factory: Callable[[str], ExtractNodes] | None = None,
     use_ner_extractor: bool = False,
@@ -109,6 +113,10 @@ async def add_journal(
         ```
     """
     # Validate inputs using graphiti-core validators
+    entity_types = entity_types or DEFAULT_ENTITY_TYPES
+    edge_types = edge_types or DEFAULT_EDGE_TYPES
+    edge_type_map = edge_type_map or DEFAULT_EDGE_TYPE_MAP
+
     validate_entity_types(entity_types)
     validate_excluded_entity_types(excluded_entity_types, entity_types)
     validate_group_id(group_id)

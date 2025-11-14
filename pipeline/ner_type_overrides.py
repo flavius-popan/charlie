@@ -16,8 +16,8 @@ BASE_LABEL_TO_ENTITY_TYPE: dict[str, str] = {
     "PER": "Person",
     "LOC": "Place",
     "ORG": "Organization",
-    # MISC defaults to Concept unless a keyword override matches.
-    "MISC": "Concept",
+    # MISC defaults to Activity unless a keyword override matches.
+    "MISC": "Activity",
 }
 
 
@@ -42,8 +42,6 @@ MISC_KEYWORD_OVERRIDES: dict[str, list[str]] = {
         "hangout",
         "practice",
         "game",
-    ],
-    "Concept": [
         "plan",
         "goal",
         "project",
@@ -65,7 +63,7 @@ def map_ner_label_to_entity_type(
 ) -> str:
     """Map a DistilBERT BIO label + entity text to a pipeline entity type name."""
     short_label = (label or "").split("-")[-1].upper()
-    base_type = BASE_LABEL_TO_ENTITY_TYPE.get(short_label, "Concept")
+    base_type = BASE_LABEL_TO_ENTITY_TYPE.get(short_label, "Activity")
 
     if short_label == "MISC":
         override = _match_misc_keyword(entity_name)

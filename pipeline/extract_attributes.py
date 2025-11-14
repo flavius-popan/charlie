@@ -107,7 +107,7 @@ class AttributeExtractor(dspy.Module):
             episode_content: Current journal entry text
             previous_episodes: JSON string of previous episode contents
             entity_name: Name of entity to extract attributes for
-            entity_type: Type of entity (e.g., "Person", "Emotion")
+            entity_type: Type of entity (e.g., "Person", "Activity", "Organization", "Place")
             existing_attributes: JSON string of current attributes
             response_model: Pydantic model defining expected attributes
 
@@ -138,7 +138,7 @@ class AttributeExtractor(dspy.Module):
                     desc="Name of the entity to extract attributes for"
                 ),
                 'entity_type': dspy.InputField(
-                    desc="Type of entity (e.g., Person, Emotion)"
+                    desc="Type of entity (e.g., Person, Activity, Organization, Place)"
                 ),
                 'existing_attributes': dspy.InputField(
                     desc="Current entity attributes as JSON dict (may be empty)"
@@ -219,7 +219,7 @@ class ExtractAttributes:
             nodes: Entity nodes to extract attributes for
             episode: Current episode being processed
             previous_episodes: Previous episodes for context
-            entity_types: Custom entity type schemas (defaults to Person and Emotion)
+            entity_types: Custom entity type schemas (defaults to Person, Place, Organization, Activity)
 
         Returns:
             ExtractAttributesOutput with nodes (attributes populated) and metadata

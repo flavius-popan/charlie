@@ -6,14 +6,14 @@
       {
         "episode_content": "Went running with Marcus this morning. Felt great to focus on my fitness goals.",
         "previous_episodes": "[\"Marcus and I have been training together.\"]",
-        "entity_types": "[{\"entity_type_id\": 1, \"entity_type_name\": \"Person\"}, {\"entity_type_id\": 4, \"entity_type_name\": \"Concept\"}, {\"entity_type_id\": 5, \"entity_type_name\": \"Activity\"}]",
+        "entity_types": "[{\"entity_type_id\": 1, \"entity_type_name\": \"Person\"}, {\"entity_type_id\": 4, \"entity_type_name\": \"Activity\"}]",
         "extracted_entities": "[\"Marcus\", \"running\"]",
-        "missed_entities": "{\"missed_entities\": [{\"name\": \"fitness goals\", \"entity_type\": \"Concept\"}]}"
+        "missed_entities": "{\"missed_entities\": [{\"name\": \"fitness goals\", \"entity_type\": \"Activity\"}]}"
       },
       {
         "episode_content": "Stopped by the library to pick up some books. The new sci-fi section looks amazing.",
         "previous_episodes": "[]",
-        "entity_types": "[{\"entity_type_id\": 2, \"entity_type_name\": \"Place\"}, {\"entity_type_id\": 4, \"entity_type_name\": \"Concept\"}]",
+        "entity_types": "[{\"entity_type_id\": 2, \"entity_type_name\": \"Place\"}, {\"entity_type_id\": 4, \"entity_type_name\": \"Activity\"}]",
         "extracted_entities": "[\"library\", \"books\", \"sci-fi section\"]",
         "missed_entities": "{\"missed_entities\": []}"
       }

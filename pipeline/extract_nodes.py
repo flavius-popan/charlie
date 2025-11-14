@@ -308,14 +308,14 @@ class ExtractNodes:
     ) -> ExtractNodesOutput:
         """Extract and resolve entities from journal entry text.
 
-        By default, extracts Person, Place, Organization, Concept, and Activity entities.
+        By default, extracts Person, Place, Organization, and Activity entities.
 
         Args:
             content: Journal entry text
             reference_time: When entry was written (defaults to now)
             name: Episode identifier (defaults to generated name)
             source_description: Description of source
-            entity_types: Custom entity type schemas (defaults to Person, Place, Organization, Concept, Activity)
+            entity_types: Custom entity type schemas (defaults to Person, Place, Organization, Activity)
 
         Returns:
             ExtractNodesOutput with episode, resolved nodes, and UUID mappings
