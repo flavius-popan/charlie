@@ -37,9 +37,7 @@ from pathlib import Path
 from typing import Any
 
 import dspy
-from distilbert_ner import predict_entities
 from graphiti_core.nodes import EntityNode, EpisodeType, EpisodicNode
-from graphiti_core.prompts.prompt_helpers import to_prompt_json
 from graphiti_core.utils.datetime_utils import ensure_utc, utc_now
 from graphiti_core.utils.maintenance.dedup_helpers import (
     DedupCandidateIndexes,
@@ -52,7 +50,6 @@ from pydantic import BaseModel, Field
 
 from pipeline.falkordblite_driver import fetch_entities_by_group, fetch_recent_episodes
 from pipeline.entity_edge_models import entity_types
-from pipeline.ner_type_overrides import map_ner_label_to_entity_type
 
 
 logger = logging.getLogger(__name__)
@@ -75,51 +72,19 @@ class ExtractedEntities(BaseModel):
     extracted_entities: list[ExtractedEntity]
 
 
-class ReflexionEntity(BaseModel):
-    """Entity suggestion produced by the reflexion step."""
-
-    name: str = Field(
-        ...,
-        description="Name of an entity that still needs to be extracted",
-        min_length=1,
-    )
-    entity_type: str | None = Field(
-        default=None,
-        description="Optional type hint using the journaling entity schemas",
-    )
-
-
-class ReflexionEntities(BaseModel):
-    """Structured container for reflexion suggestions."""
-
-    missed_entities: list[ReflexionEntity] = Field(
-        default_factory=list,
-        description="Entities missed during the first extraction pass",
-    )
-
-
 # DSPy signature for entity extraction
 class EntityExtractionSignature(dspy.Signature):
-    """Extract entities from journal entries based on the provided schema."""
+    """Extract significant entities from personal journal entries: people, places, organizations, concepts, and activities."""
 
-    episode_content: str = dspy.InputField(desc="journal entry text")
-    entity_types: str = dspy.InputField(desc="JSON list of entity type definitions")
-
-    extracted_entities: ExtractedEntities = dspy.OutputField(
-        desc="entities found in the text, classified by type"
+    episode_content: str = dspy.InputField(
+        desc="personal journal entry describing experiences, relationships, locations, and reflections"
+    )
+    entity_types: str = dspy.InputField(
+        desc="available entity types: Person, Place, Organization, Concept, Activity, and Entity (fallback for others)"
     )
 
-
-class EntityReflexionSignature(dspy.Signature):
-    """Suggest entities missed by the initial extraction."""
-
-    episode_content: str = dspy.InputField(desc="journal entry text")
-    previous_episodes: str = dspy.InputField(desc="previous entries for context")
-    entity_types: str = dspy.InputField(desc="available entity types")
-    extracted_entities: str = dspy.InputField(desc="already extracted entities")
-
-    missed_entities: ReflexionEntities = dspy.OutputField(
-        desc="entities to add"
+    extracted_entities: ExtractedEntities = dspy.OutputField(
+        desc="entities mentioned: individuals, specific venues/locations, institutions/groups, abstract topics/themes, and activities/events"
     )
 
 
@@ -181,77 +146,6 @@ class EntityExtractor(dspy.Module):
         return result.extracted_entities
 
 
-class EntityReflexionModule(dspy.Module):
-    """Lightweight DSPy module that mirrors graphiti-core's reflexion prompt."""
-
-    def __init__(self):
-        super().__init__()
-        self.predict_reflexion = dspy.Predict(EntityReflexionSignature)
-
-        prompt_path = Path(__file__).parent / "prompts" / "entity_reflexion.json"
-        if prompt_path.exists():
-            self.load(str(prompt_path))
-            logger.info("Loaded reflexion prompts from %s", prompt_path)
-
-    def forward(
-        self,
-        episode_content: str,
-        previous_episodes: str,
-        entity_types: str,
-        extracted_entities: str,
-    ) -> list[ReflexionEntity]:
-        result = self.predict_reflexion(
-            episode_content=episode_content,
-            previous_episodes=previous_episodes,
-            entity_types=entity_types,
-            extracted_entities=extracted_entities,
-        )
-        return self._normalize_reflexion_output(result)
-
-    def _normalize_reflexion_output(self, result: Any) -> list[ReflexionEntity]:
-        """Gracefully coerce mixed model outputs (dict/list/tuples) into ReflexionEntity objects."""
-        candidates: list[Any]
-
-        if isinstance(result, ReflexionEntities):
-            candidates = result.missed_entities
-        elif hasattr(result, "missed_entities"):
-            candidates = getattr(result, "missed_entities")  # type: ignore[assignment]
-        elif isinstance(result, dict) and "missed_entities" in result:
-            candidates = result["missed_entities"]  # type: ignore[assignment]
-        else:
-            candidates = result if isinstance(result, list) else []
-
-        normalized: list[ReflexionEntity] = []
-
-        for item in candidates:
-            if isinstance(item, ReflexionEntity):
-                if item.name.strip():
-                    normalized.append(item)
-            elif isinstance(item, dict):
-                name = _safe_str(item.get("name") or item.get("entity"))
-                if not name:
-                    logger.debug("Skipping reflexion candidate without name: %s", item)
-                    continue
-                entity_type = _safe_str(item.get("entity_type") or item.get("type"))
-                try:
-                    normalized.append(
-                        ReflexionEntity(name=name, entity_type=entity_type)
-                    )
-                except Exception as exc:  # pragma: no cover
-                    logger.debug("Failed to coerce reflexion candidate %s: %s", item, exc)
-            else:
-                logger.debug("Ignoring reflexion candidate with unsupported shape: %r", item)
-
-        return normalized
-
-
-def _safe_str(value: Any) -> str | None:
-    if value is None:
-        return None
-    text = str(value).strip()
-    return text or None
-
-
 class ExtractNodes:
     """Extract and resolve entity nodes from episodes.
 
@@ -282,21 +176,10 @@ class ExtractNodes:
         group_id: str,
         dedupe_enabled: bool = True,
         entity_extractor: EntityExtractor | None = None,
-        entity_reflexion: EntityReflexionModule | None = None,
-        use_ner_extractor: bool = False,
-        max_reflexion_iterations: int = 1,
     ):
         self.group_id = group_id
         self.dedupe_enabled = dedupe_enabled
-        self.use_ner_extractor = use_ner_extractor
-        self.max_reflexion_iterations = max(0, max_reflexion_iterations)
-
-        if self.use_ner_extractor:
-            self.entity_extractor = entity_extractor  # Optional override; not used by default
-            self.entity_reflexion = entity_reflexion or EntityReflexionModule()
-        else:
-            self.entity_extractor = entity_extractor or EntityExtractor()
-            self.entity_reflexion = entity_reflexion
+        self.entity_extractor = entity_extractor or EntityExtractor()
 
     async def __call__(
         self,
@@ -308,14 +191,14 @@ class ExtractNodes:
     ) -> ExtractNodesOutput:
         """Extract and resolve entities from journal entry text.
 
-        By default, extracts Person, Place, Organization, and Activity entities.
+        By default, extracts Person, Place, Organization, Concept, and Activity entities.
 
         Args:
             content: Journal entry text
             reference_time: When entry was written (defaults to now)
             name: Episode identifier (defaults to generated name)
             source_description: Description of source
-            entity_types: Custom entity type schemas (defaults to Person, Place, Organization, Activity)
+            entity_types: Custom entity type schemas (defaults to Person, Place, Organization, Concept, Activity)
 
         Returns:
             ExtractNodesOutput with episode, resolved nodes, and UUID mappings
@@ -345,8 +228,8 @@ class ExtractNodes:
             "Retrieved %d previous episodes for context", len(previous_episodes)
         )
 
-        # Stage 1: Extract provisional entities via configured module
-        provisional_nodes, extraction_metadata = self._extract_entities(
+        # Stage 1: Extract provisional entities via pure DSPy module
+        provisional_nodes = self._extract_entities(
             episode, previous_episodes, entity_types
         )
         logger.info("Extracted %d provisional entities", len(provisional_nodes))
@@ -375,7 +258,6 @@ class ExtractNodes:
             ),
             "new_entities": new_entities,
         }
-        metadata.update(extraction_metadata)
 
         logger.info(
             "Resolution complete: %d nodes (%d exact, %d fuzzy, %d new)",
@@ -400,33 +282,21 @@ class ExtractNodes:
         episode: EpisodicNode,
         previous_episodes: list[EpisodicNode],
         entity_types: dict | None,
-    ) -> tuple[list[EntityNode], dict[str, Any]]:
-        """Extract entities via the configured strategy (DSPy or DistilBERT)."""
-        if self.use_ner_extractor:
-            return self._extract_entities_with_ner(
-                episode,
-                previous_episodes,
-                entity_types,
-            )
+    ) -> list[EntityNode]:
+        """Extract entities via EntityExtractor module.
 
-        return self._extract_entities_with_dspy(
-            episode,
-            entity_types,
-        )
-
-    def _extract_entities_with_dspy(
-        self,
-        episode: EpisodicNode,
-        entity_types: dict | None,
-    ) -> tuple[list[EntityNode], dict[str, Any]]:
-        """Default DSPy extractor (unchanged from the earlier implementation)."""
+        Note: previous_episodes are fetched for future use (reflexion, classification)
+        but NOT used in initial entity extraction, following graphiti-core's approach.
+        """
         entity_types_json = self._format_entity_types(entity_types)
 
+        # Call the pure DSPy module (optimizable)
         extracted = self.entity_extractor(
             episode_content=episode.content,
             entity_types=entity_types_json,
         )
 
+        # Convert to EntityNode objects
         nodes = []
         for entity in extracted.extracted_entities:
             type_name = self._get_type_name(entity.entity_type_id, entity_types)
@@ -442,179 +312,7 @@ class ExtractNodes:
             )
             nodes.append(node)
 
-        return nodes, {
-            "extractor": "dspy",
-            "reflexion_added": 0,
-            "reflexion_iterations": 0,
-        }
-
-    def _extract_entities_with_ner(
-        self,
-        episode: EpisodicNode,
-        previous_episodes: list[EpisodicNode],
-        entity_types: dict | None,
-    ) -> tuple[list[EntityNode], dict[str, Any]]:
-        """Fast DistilBERT extractor backed by a DSPy reflexion pass."""
-        predictions = predict_entities(episode.content)
-        available_types = set(entity_types.keys()) if entity_types else None
-
-        nodes: list[EntityNode] = []
-        seen_names: set[str] = set()
-        ner_details: list[dict[str, Any]] = []
-        for prediction in predictions:
-            name = prediction.get("text", "").strip()
-            if not name:
-                continue
-            normalized = name.lower()
-            if normalized in seen_names:
-                continue
-            seen_names.add(normalized)
-
-            label = self._normalize_ner_label(prediction.get("label", ""))
-            type_name = map_ner_label_to_entity_type(label, name, available_types)
-            labels = ["Entity"]
-            if type_name != "Entity":
-                labels.append(type_name)
-
-            node = EntityNode(
-                name=name,
-                group_id=self.group_id,
-                labels=labels,
-                summary="",
-                created_at=utc_now(),
-            )
-            nodes.append(node)
-            ner_details.append(
-                {
-                    "name": name,
-                    "ner_label": label,
-                    "mapped_type": type_name,
-                    "confidence": prediction.get("confidence"),
-                }
-            )
-
-        reflexion_nodes: list[EntityNode] = []
-        reflexion_iterations = 0
-        if self.max_reflexion_iterations > 0:
-            reflexion_nodes, reflexion_iterations = self._run_reflexion(
-                episode,
-                previous_episodes,
-                nodes,
-                entity_types,
-                seen_names,
-            )
-
-        return nodes + reflexion_nodes, {
-            "extractor": "distilbert",
-            "reflexion_added": len(reflexion_nodes),
-            "reflexion_iterations": reflexion_iterations,
-            "ner_entities": ner_details,
-            "reflexion_entities": [node.name for node in reflexion_nodes],
-        }
-
-    def _run_reflexion(
-        self,
-        episode: EpisodicNode,
-        previous_episodes: list[EpisodicNode],
-        base_nodes: list[EntityNode],
-        entity_types: dict | None,
-        seen_names: set[str],
-    ) -> tuple[list[EntityNode], int]:
-        """Run up to N reflexion passes and return newly created nodes."""
-        if self.max_reflexion_iterations <= 0 or not self.entity_reflexion:
-            return [], 0
-
-        reflexion_nodes: list[EntityNode] = []
-        previous_payload = (
-            to_prompt_json([ep.content for ep in previous_episodes]) if previous_episodes else "[]"
-        )
-        current_nodes = list(base_nodes)
-        available_types = self._get_available_type_names(entity_types)
-        entity_types_payload = self._format_entity_types(entity_types)
-
-        for iteration in range(self.max_reflexion_iterations):
-            extracted_payload = to_prompt_json([node.name for node in current_nodes])
-            suggestions = self.entity_reflexion(
-                episode_content=episode.content,
-                previous_episodes=previous_payload,
-                entity_types=entity_types_payload,
-                extracted_entities=extracted_payload,
-            )
-
-            new_nodes = self._convert_reflexion_suggestions(
-                suggestions,
-                available_types,
-                seen_names,
-            )
-
-            if not new_nodes:
-                return reflexion_nodes, iteration + 1
-
-            logger.info(
-                "Reflexion iteration %d added %d entities",
-                iteration + 1,
-                len(new_nodes),
-            )
-            reflexion_nodes.extend(new_nodes)
-            current_nodes.extend(new_nodes)
-
-        return reflexion_nodes, self.max_reflexion_iterations
-
-    def _convert_reflexion_suggestions(
-        self,
-        suggestions: list[ReflexionEntity],
-        available_types: set[str] | None,
-        seen_names: set[str],
-    ) -> list[EntityNode]:
-        """Turn reflexion suggestions into EntityNode instances."""
-        new_nodes: list[EntityNode] = []
-
-        for suggestion in suggestions:
-            name = (suggestion.name or "").strip()
-            if not name:
-                continue
-            normalized = name.lower()
-            if normalized in seen_names:
-                continue
-            seen_names.add(normalized)
-
-            type_name = self._normalize_type_hint(suggestion.entity_type, available_types)
-            if not type_name or type_name == "Entity":
-                type_name = map_ner_label_to_entity_type("MISC", name, available_types)
-
-            labels = ["Entity"]
-            if type_name != "Entity":
-                labels.append(type_name)
-
-            new_nodes.append(
-                EntityNode(
-                    name=name,
-                    group_id=self.group_id,
-                    labels=labels,
-                    summary="",
-                    created_at=utc_now(),
-                )
-            )
-
-        return new_nodes
-
-    def _normalize_type_hint(
-        self,
-        entity_type_hint: str | None,
-        available_types: set[str] | None,
-    ) -> str | None:
-        if not entity_type_hint:
-            return None
-        hint = entity_type_hint.strip()
-        if not hint:
-            return None
-        if not available_types:
-            return hint
-
-        for candidate in available_types:
-            if candidate.lower() == hint.lower():
-                return candidate
-        return None
+        return nodes
 
     def _resolve_entities(
         self,
@@ -665,8 +363,7 @@ class ExtractNodes:
 
         return list(unique_nodes.values()), state.uuid_map, state.duplicate_pairs
 
-    @staticmethod
-    def _format_entity_types(entity_types: dict | None) -> str:
+    def _format_entity_types(self, entity_types: dict | None) -> str:
         """Format entity type schemas for entity_types input field."""
         base_type = {
             "entity_type_id": 0,
@@ -679,7 +376,21 @@ class ExtractNodes:
 
         types_list = [base_type]
         for i, (name, model) in enumerate(entity_types.items()):
-            desc = model.__doc__ or ""
+            base_desc = model.__doc__ or ""
+
+            # Enhance with extraction guidance for personal journaling
+            if name == "Person":
+                desc = f"{base_desc} Extract individuals mentioned: friends, family, colleagues, romantic partners, professionals (therapists/doctors), acquaintances."
+            elif name == "Place":
+                desc = f"{base_desc} Extract specific places visited or mentioned: coffee shops, parks, restaurants, cities, neighborhoods, venues, landmarks."
+            elif name == "Organization":
+                desc = f"{base_desc} Extract organizations engaged with: workplaces, schools, clubs, community groups, institutions, companies."
+            elif name == "Concept":
+                desc = f"{base_desc} Extract life themes and topics reflected on: personal growth, relationships, mental health, career, identity, values, beliefs."
+            elif name == "Activity":
+                desc = f"{base_desc} Extract specific activities and events: appointments, outings, hobbies, social gatherings, daily routines, significant moments."
+            else:
+                desc = base_desc
 
             types_list.append(
                 {
@@ -703,20 +414,27 @@ class ExtractNodes:
             return "Entity"
         return types_list[idx]
 
-    def _get_available_type_names(self, entity_types: dict | None) -> set[str] | None:
-        if not entity_types:
-            return None
-        return set(entity_types.keys())
+    # ========== Future Enhancements (Stubs) ==========
+    # These demonstrate where additional optimizable modules could be added:
+    # - EntityReflexionModule for iterative refinement
+    # - EntityDisambiguationModule for LLM-based resolution
+    # Each would follow the same pattern: pure dspy.Module, injected into orchestrator
 
-    def _normalize_ner_label(self, label: str | None) -> str:
-        if not label:
-            return ""
-        return label.split("-")[-1].upper()
+    def _extract_with_reflexion(self, episode, previous_episodes, entity_types):
+        """TODO: Add reflexion loop (EntityReflexionSignature, max 3 iterations)."""
+        return self._extract_entities(episode, previous_episodes, entity_types)
+
+    async def _collect_candidates_with_embeddings(self, provisional_nodes, group_id):
+        """TODO: Hybrid search (embedding + text) when Qwen embedder lands."""
+        return await fetch_entities_by_group(group_id)
+
+    async def _disambiguate_with_llm(self, unresolved, candidates, episode):
+        """TODO: EntityDisambiguationSignature for ambiguous matches."""
+        return {node.uuid: node.uuid for node in unresolved}
 
 
 __all__ = [
     "EntityExtractor",
-    "EntityReflexionModule",
     "ExtractNodes",
     "ExtractNodesOutput",
 ]

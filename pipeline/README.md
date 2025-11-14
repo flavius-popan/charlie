@@ -87,10 +87,10 @@ class ExtractNodesOutput:
     metadata: dict[str, Any]           # Statistics: extracted_count, exact_matches, fuzzy_matches, new_entities
 ```
 
-**Extractor options**
+**Extractor**
 
-- Default mode uses the DSPy `EntityExtractor`.
-- Pass `use_ner_extractor=True` (or toggle the checkbox in `pipeline/gradio_ui.py`) to run the DistilBERT + Reflexion path. DistilBERT handles the fast first pass, then a DSPy reflexion signature (mirroring graphiti-core’s prompt) names any missed entities which are converted into `EntityNode`s before resolution.
+- Stage 1 uses a single DSPy `EntityExtractor` module (same structure as graphiti-core for easy optimization).
+- Reflexion/NER experiments have been rolled back; future iterative passes will plug into the existing stubs in `pipeline/extract_nodes.py` if needed.
 
 ### Stage 2: Extract Edges
 
