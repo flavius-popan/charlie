@@ -1,0 +1,114 @@
+{
+  "extractor": {
+    "traces": [],
+    "train": [],
+    "demos": [
+      {
+        "episode_content": "Had coffee with Sarah at Blue Bottle downtown. She mentioned her new job at Stripe and invited me to game night at her place next Friday.",
+        "entities": [
+          "Sarah",
+          "Blue Bottle",
+          "Stripe",
+          "game night"
+        ],
+        "reference_time": "2025-01-28T14:30:00Z",
+        "relationships": {
+          "relationships": [
+            {
+              "source": "Sarah",
+              "target": "Blue Bottle",
+              "relation": "MEETS_AT",
+              "fact": "Had coffee with Sarah at Blue Bottle downtown.",
+              "valid_at": null,
+              "invalid_at": null
+            },
+            {
+              "source": "Sarah",
+              "target": "Stripe",
+              "relation": "WORKS_AT",
+              "fact": "She mentioned her new job at Stripe.",
+              "valid_at": null,
+              "invalid_at": null
+            },
+            {
+              "source": "Sarah",
+              "target": "game night",
+              "relation": "HOSTS",
+              "fact": "She invited me to game night at her place next Friday.",
+              "valid_at": null,
+              "invalid_at": null
+            }
+          ]
+        }
+      },
+      {
+        "episode_content": "Met Jonah at Dolores Park before sunrise yoga. His sister Maya tagged along and reminded me about volunteering at Tender Hearts shelter this weekend.",
+        "entities": [
+          "Jonah",
+          "Maya",
+          "Dolores Park",
+          "sunrise yoga",
+          "Tender Hearts shelter"
+        ],
+        "reference_time": "2025-02-14T07:00:00Z",
+        "relationships": {
+          "relationships": [
+            {
+              "source": "Jonah",
+              "target": "Dolores Park",
+              "relation": "MEETS_AT",
+              "fact": "Met Jonah at Dolores Park for sunrise yoga.",
+              "valid_at": null,
+              "invalid_at": null
+            },
+            {
+              "source": "Jonah",
+              "target": "sunrise yoga",
+              "relation": "PARTICIPATES_IN",
+              "fact": "Jonah joined me for sunrise yoga.",
+              "valid_at": null,
+              "invalid_at": null
+            },
+            {
+              "source": "Maya",
+              "target": "Tender Hearts shelter",
+              "relation": "VOLUNTEERS_AT",
+              "fact": "Maya reminded me about helping at Tender Hearts shelter.",
+              "valid_at": null,
+              "invalid_at": null
+            }
+          ]
+        }
+      }
+    ],
+    "signature": {
+      "instructions": "Extract relationships between entities mentioned in journal entries.",
+      "fields": [
+        {
+          "prefix": "Episode Content:",
+          "description": "journal entry text"
+        },
+        {
+          "prefix": "Entities:",
+          "description": "entities to consider"
+        },
+        {
+          "prefix": "Reference Time:",
+          "description": "timestamp for date resolution"
+        },
+        {
+          "prefix": "Relationships:",
+          "description": "relationships found between entities"
+        }
+      ]
+    },
+    "lm": null
+  },
+  "metadata": {
+    "dependency_versions": {
+      "python": "3.13",
+      "dspy": "3.0.3",
+      "cloudpickle": "3.1"
+    }
+  }
+}

@@ -1,0 +1,43 @@
+{
+  "generator": {
+    "traces": [],
+    "train": [],
+    "demos": [
+      {
+        "augmented": true,
+        "summary_context": "{\"node\": {\"name\": \"Kai\", \"summary\": \"\", \"entity_types\": [\"Entity\", \"Person\"], \"attributes\": {\"relationship_type\": \"friend\"}}, \"episode_content\": \"Kai and I biked the Embarcadero at dawn. He vented about finishing his art school portfolio.\", \"previous_episodes\": [\"Kai stayed over last weekend to prep his art school interviews.\"]}",
+        "summary": {
+          "summary": "Kai biked the Embarcadero at dawn, sharing frustrations about completing his art school portfolio."
+        }
+      },
+      {
+        "augmented": true,
+        "summary_context": "{\"node\": {\"name\": \"Grandma Rosa\", \"summary\": \"Recovering slowly from pneumonia.\", \"entity_types\": [\"Entity\", \"Person\"], \"attributes\": {\"relationship_type\": \"family\"}}, \"episode_content\": \"Sat with Grandma Rosa at St. Jude's while Dr. Yates walked her through tomorrow's surgery.\", \"previous_episodes\": [\"Grandma Rosa is still regaining strength after pneumonia.\"]}",
+        "summary": {
+          "summary": "Grandma Rosa is recovering from pneumonia and will undergo surgery tomorrow, with Dr. Yates guiding her through the process."
+        }
+      }
+    ],
+    "signature": {
+      "instructions": "Generate a concise summary of an entity based on the provided journal context, including episode content and prior interactions.",
+      "fields": [
+        {
+          "prefix": "Summary Context:",
+          "description": "entity and journal context"
+        },
+        {
+          "prefix": "Summary:",
+          "description": "concise summary of the entity"
+        }
+      ]
+    },
+    "lm": null
+  },
+  "metadata": {
+    "dependency_versions": {
+      "python": "3.13",
+      "dspy": "3.0.3",
+      "cloudpickle": "3.1"
+    }
+  }
+}
