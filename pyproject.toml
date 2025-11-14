@@ -17,8 +17,7 @@ dependencies = [
     "numpy>=2.3.4",
     "onnxruntime>=1.23.2",
     "huggingface-hub>=0.20.0",
-    "falkordblite>=0.1.0",
-    "dateparser>=1.2.2"
+    "falkordblite>=0.1.0"
 ]
 
 [tool.setuptools.packages.find]
