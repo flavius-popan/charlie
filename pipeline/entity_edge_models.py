@@ -1,23 +1,24 @@
-"""Entity and edge schemas tuned for the current DSPy optimizers.
+"""Entity and edge schemas for journaling-focused Graphiti tests.
 
-The optimizers ship with demonstrations that focus on four concrete entity
-types – people, places, organizations, and activities – plus a fixed set of
-relationship names such as ``MEETS_AT`` or ``WORKS_AT``. These definitions keep
-the runtime pipeline and the optimizers in sync without rerunning expensive
-teleprompter jobs.
+This ontology is intentionally small and feelings-aware without being heavy:
 
-The module exposes three structures:
-    * ``entity_types`` – map of entity label → Pydantic model used by Stage 3.
-    * ``edge_meta`` – map of relation name → metadata (description + signatures).
-    * ``edge_types`` – map of relation name → Pydantic model describing per-edge attributes.
-    * ``edge_type_map`` – convenience lookup of allowed relations for every
-      (source_type, target_type) pair.
+- Core entity types: Person, Place, Organization, Activity.
+- Person entities and person→person edges carry light emotional context
+  as attributes (valence, closeness, intensity).
+- A small set of edges for relationships, time spent together, and activities.
+- A generic RELATES_TO fallback for all other relationships.
+
+Exposed structures:
+    * entity_types  – map of entity label → Pydantic model.
+    * edge_meta     – map of edge type name → metadata (description + signatures).
+    * edge_types    – map of edge type name → Pydantic model for per-edge attributes.
+    * edge_type_map – allowed edge types for every (source_type, target_type) pair.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from pydantic import BaseModel, Field
 
@@ -32,7 +33,22 @@ class Person(BaseModel):
 
     relationship_type: Optional[str] = Field(
         default=None,
-        description="How this person relates to the author (e.g., friend, partner, coach).",
+        description=(
+            "How this person relates to the author "
+            "(e.g., friend, partner, coworker, family, therapist)."
+        ),
+    )
+    closeness: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="Overall sense of closeness with this person (0–1), if known.",
+    )
+    overall_valence: Optional[float] = Field(
+        default=None,
+        ge=-1.0,
+        le=1.0,
+        description="Overall emotional tone associated with this person (-1..1).",
     )
 
 
@@ -41,7 +57,7 @@ class Place(BaseModel):
 
     category: Optional[str] = Field(
         default=None,
-        description="Optional descriptor such as park, cafe, clinic, etc.",
+        description="Descriptor such as home, office, park, cafe, clinic, etc.",
     )
 
 
@@ -50,7 +66,7 @@ class Organization(BaseModel):
 
     category: Optional[str] = Field(
         default=None,
-        description="Type of organization (company, nonprofit, club, etc.).",
+        description="Type of organization (company, nonprofit, club, team, etc.).",
     )
 
 
@@ -59,11 +75,11 @@ class Activity(BaseModel):
 
     activity_type: Optional[str] = Field(
         default=None,
-        description="Short label for the activity (walk, yoga, therapy session, …).",
+        description="Short label for the activity (meeting, walk, yoga, therapy session, etc.).",
     )
 
 
-entity_types = {
+entity_types: Dict[str, type[BaseModel]] = {
     "Person": Person,
     "Place": Place,
     "Organization": Organization,
@@ -71,279 +87,244 @@ entity_types = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Edge metadata (used to build edge_type_map)
+# ---------------------------------------------------------------------------
+
+
 @dataclass(frozen=True)
 class EdgeMeta:
+    """Metadata describing an edge type and its allowed signatures."""
+
     description: str
     source_types: Tuple[str, ...]
     target_types: Tuple[str, ...]
     symmetric: bool = False
 
 
-edge_meta: dict[str, EdgeMeta] = {
-    "MEETS_AT": EdgeMeta(
-        description="A person meets or spends time at a specific place.",
-        source_types=("Person",),
-        target_types=("Place",),
-    ),
-    "VISITS": EdgeMeta(
-        description="A person visits a location.",
-        source_types=("Person",),
-        target_types=("Place",),
-    ),
-    "PARTICIPATES_IN": EdgeMeta(
-        description="A person or pet participates in an activity.",
-        source_types=("Person", "Organization"),
-        target_types=("Activity",),
-    ),
-    "VOLUNTEERS_AT": EdgeMeta(
-        description="A person volunteers with an organization or place.",
-        source_types=("Person",),
-        target_types=("Organization", "Place"),
-    ),
-    "WORKS_AT": EdgeMeta(
-        description="A person is employed by an organization or works at a place.",
-        source_types=("Person",),
-        target_types=("Organization", "Place"),
-    ),
-    "HOSTS": EdgeMeta(
-        description="A person or organization hosts an activity or gathering.",
-        source_types=("Person", "Organization"),
-        target_types=("Activity",),
-    ),
-    "GUIDES": EdgeMeta(
-        description="A person guides or mentors another person.",
-        source_types=("Person",),
-        target_types=("Person",),
-    ),
-    "RUNS": EdgeMeta(
-        description="A person or organization runs an activity or program.",
-        source_types=("Person", "Organization"),
-        target_types=("Activity",),
-    ),
-    "LEADS": EdgeMeta(
-        description="A person leads or facilitates an activity.",
-        source_types=("Person",),
-        target_types=("Activity",),
-    ),
-    "FOCUSES_ON": EdgeMeta(
-        description="An activity centers on another activity or topic.",
-        source_types=("Activity",),
-        target_types=("Activity",),
-    ),
-    "FACILITATES": EdgeMeta(
-        description="A person facilitates an activity or group.",
-        source_types=("Person",),
-        target_types=("Activity",),
-    ),
-    "SUPPORTED_BY": EdgeMeta(
-        description="A person receives support from another person.",
-        source_types=("Person",),
-        target_types=("Person",),
-    ),
-    "COACHES_FOR": EdgeMeta(
-        description="A person coaches for an organization or team.",
-        source_types=("Person",),
-        target_types=("Organization",),
-    ),
-    "TRAINS_WITH": EdgeMeta(
-        description="Two people train or practice together.",
+edge_meta: Dict[str, EdgeMeta] = {
+    # Person ↔ Person: general relationship / familiarity
+    "Knows": EdgeMeta(
+        description="Two people know each other in some ongoing way.",
         source_types=("Person",),
         target_types=("Person",),
         symmetric=True,
     ),
-    "ATTENDS": EdgeMeta(
-        description="A person attends an activity or gathering.",
+    # Person ↔ Person: spending time together (friendship, dating, etc.)
+    "SpendsTimeWith": EdgeMeta(
+        description="Two people regularly spend meaningful time together.",
         source_types=("Person",),
-        target_types=("Activity",),
+        target_types=("Person",),
+        symmetric=True,
     ),
-    "OWNS": EdgeMeta(
-        description="A person owns or operates a place or organization.",
-        source_types=("Person",),
-        target_types=("Place", "Organization"),
-    ),
-    "INTRODUCES": EdgeMeta(
-        description="A person introduces another person.",
+    # Person → Person: emotional / practical support
+    "Supports": EdgeMeta(
+        description="One person offers support (emotional or practical) to another.",
         source_types=("Person",),
         target_types=("Person",),
     ),
+    # Person ↔ Person: conflict or tension
+    "ConflictsWith": EdgeMeta(
+        description="There is notable conflict, tension, or friction between two people.",
+        source_types=("Person",),
+        target_types=("Person",),
+        symmetric=True,
+    ),
+    # Person → Activity: participation in shared or solo activities
+    "ParticipatesIn": EdgeMeta(
+        description="A person participates in or does an activity.",
+        source_types=("Person",),
+        target_types=("Activity",),
+    ),
+    # Activity → Place: where things happen
+    "OccursAt": EdgeMeta(
+        description="An activity typically occurs at or is associated with a place.",
+        source_types=("Activity",),
+        target_types=("Place",),
+    ),
+    # Optional: Person → Place (home base, favorite spots, etc.)
+    "Visits": EdgeMeta(
+        description="A person visits or frequently spends time at a place.",
+        source_types=("Person",),
+        target_types=("Place",),
+    ),
+    # Fallback for any entity pair; uses Graphiti's built-in RELATES_TO edge.
     "RELATES_TO": EdgeMeta(
-        description="Generic relationship between entities.",
-        source_types=("Person", "Place", "Organization", "Activity"),
-        target_types=("Person", "Place", "Organization", "Activity"),
+        description="Generic relationship between any two entities.",
+        source_types=("Entity",),
+        target_types=("Entity",),
         symmetric=True,
     ),
 }
 
 
 # ---------------------------------------------------------------------------
-# Edge attribute schemas (Pydantic models per edge type)
+# Edge attribute schemas (Pydantic models per *custom* edge type)
 # ---------------------------------------------------------------------------
 
 
-class MeetsAt(BaseModel):
-    """A person meets or spends time at a specific place."""
+class Knows(BaseModel):
+    """General relationship or familiarity between two people."""
 
-    context: Optional[str] = Field(
+    closeness_score: Optional[float] = Field(
         default=None,
-        description="Optional short description of the meeting context.",
+        ge=0.0,
+        le=1.0,
+        description="How close these people are overall (0–1), if known.",
+    )
+    primary_context: Optional[str] = Field(
+        default=None,
+        description="Context for how they know each other (work, school, family, online, etc.).",
     )
 
 
-class Visits(BaseModel):
-    """A person visits a location."""
+class SpendsTimeWith(BaseModel):
+    """Two people regularly spend meaningful time together."""
 
-    reason: Optional[str] = Field(
+    typical_valence: Optional[float] = Field(
         default=None,
-        description="Optional reason for the visit.",
+        ge=-1.0,
+        le=1.0,
+        description="Typical emotional tone when they spend time together (-1..1).",
+    )
+    primary_activity: Optional[str] = Field(
+        default=None,
+        description="Main thing they tend to do together (e.g., climbing, talking, gaming).",
+    )
+    frequency_label: Optional[str] = Field(
+        default=None,
+        description="Rough frequency label like 'daily', 'weekly', 'monthly', etc.",
+    )
+
+
+class Supports(BaseModel):
+    """One person offers support to another."""
+
+    support_type: Optional[str] = Field(
+        default=None,
+        description="Kind of support (emotional, logistical, financial, mentoring, etc.).",
+    )
+    primary_emotion: Optional[str] = Field(
+        default=None,
+        description="Dominant emotion you feel about this support (grateful, reassured, etc.).",
+    )
+    valence: Optional[float] = Field(
+        default=None,
+        ge=-1.0,
+        le=1.0,
+        description="Emotional tone of feeling supported by this person (-1..1).",
+    )
+
+
+class ConflictsWith(BaseModel):
+    """Notable conflict or tension between two people."""
+
+    intensity: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="How intense the conflict feels overall (0–1).",
+    )
+    primary_emotion: Optional[str] = Field(
+        default=None,
+        description="Emotion most associated with this conflict (anger, anxiety, resentment, etc.).",
     )
 
 
 class ParticipatesIn(BaseModel):
-    """A person or organization participates in an activity."""
+    """A person participates in or does an activity."""
 
     role: Optional[str] = Field(
         default=None,
-        description="Role or position in the activity, if specified.",
+        description="Role in the activity, if any (host, guest, student, teammate, etc.).",
     )
-
-
-class VolunteersAt(BaseModel):
-    """A person volunteers with an organization or place."""
-
-
-class WorksAt(BaseModel):
-    """A person is employed by an organization or works at a place."""
-
-    title: Optional[str] = Field(
+    valence: Optional[float] = Field(
         default=None,
-        description="Job title or role, if stated.",
+        ge=-1.0,
+        le=1.0,
+        description="Emotional tone of doing this activity (-1..1).",
     )
 
 
-class Hosts(BaseModel):
-    """A person or organization hosts an activity or gathering."""
-
-
-class Guides(BaseModel):
-    """A person guides or mentors another person."""
-
-
-class Runs(BaseModel):
-    """A person or organization runs an activity or program."""
-
-
-class Leads(BaseModel):
-    """A person leads or facilitates an activity."""
-
-
-class FocusesOn(BaseModel):
-    """An activity centers on another activity or topic."""
-
-
-class Facilitates(BaseModel):
-    """A person facilitates an activity or group."""
-
-
-class SupportedBy(BaseModel):
-    """A person receives support from another person."""
-
-
-class CoachesFor(BaseModel):
-    """A person coaches for an organization or team."""
-
-
-class TrainsWith(BaseModel):
-    """Two people train or practice together."""
-
-
-class Attends(BaseModel):
-    """A person attends an activity or gathering."""
-
-
-class Owns(BaseModel):
-    """A person owns or operates a place or organization."""
-
-
-class Introduces(BaseModel):
-    """A person introduces another person."""
-
-
-class RelatesTo(BaseModel):
-    """Generic fallback relationship between entities."""
+class OccursAt(BaseModel):
+    """An activity occurs at or is associated with a place."""
 
     note: Optional[str] = Field(
         default=None,
-        description="Optional note describing how the entities relate.",
+        description="Optional note about the location (e.g., usual venue, special place).",
     )
 
 
-edge_types: dict[str, type[BaseModel]] = {
-    "MEETS_AT": MeetsAt,
-    "VISITS": Visits,
-    "PARTICIPATES_IN": ParticipatesIn,
-    "VOLUNTEERS_AT": VolunteersAt,
-    "WORKS_AT": WorksAt,
-    "HOSTS": Hosts,
-    "GUIDES": Guides,
-    "RUNS": Runs,
-    "LEADS": Leads,
-    "FOCUSES_ON": FocusesOn,
-    "FACILITATES": Facilitates,
-    "SUPPORTED_BY": SupportedBy,
-    "COACHES_FOR": CoachesFor,
-    "TRAINS_WITH": TrainsWith,
-    "ATTENDS": Attends,
-    "OWNS": Owns,
-    "INTRODUCES": Introduces,
-    "RELATES_TO": RelatesTo,
+class Visits(BaseModel):
+    """A person visits or frequently spends time at a place."""
+
+    frequency_label: Optional[str] = Field(
+        default=None,
+        description="Rough frequency label like 'daily', 'weekly', 'occasionally', etc.",
+    )
+    typical_valence: Optional[float] = Field(
+        default=None,
+        ge=-1.0,
+        le=1.0,
+        description="Typical emotional tone of being at this place (-1..1).",
+    )
+
+
+# Only *custom* edge types go here. RELATES_TO is provided by Graphiti itself.
+edge_types: Dict[str, type[BaseModel]] = {
+    "Knows": Knows,
+    "SpendsTimeWith": SpendsTimeWith,
+    "Supports": Supports,
+    "ConflictsWith": ConflictsWith,
+    "ParticipatesIn": ParticipatesIn,
+    "OccursAt": OccursAt,
+    "Visits": Visits,
 }
 
 
+# ---------------------------------------------------------------------------
+# Edge type map
+# ---------------------------------------------------------------------------
+
+
 def _build_edge_type_map(
-    metadata: dict[str, EdgeMeta],
-) -> dict[tuple[str, str], list[str]]:
-    mapping: dict[tuple[str, str], list[str]] = {}
+    metadata: Dict[str, EdgeMeta],
+) -> Dict[Tuple[str, str], List[str]]:
+    """Build (source_label, target_label) → [edge_type_name, ...] mapping."""
+    mapping: Dict[Tuple[str, str], List[str]] = {}
     for edge_name, meta in metadata.items():
         for source in meta.source_types:
             for target in meta.target_types:
                 key = (source, target)
                 mapping.setdefault(key, []).append(edge_name)
 
+                # For symmetric relationships, also allow the reversed (target, source) pair.
                 if meta.symmetric and source != target:
                     reverse_key = (target, source)
                     mapping.setdefault(reverse_key, []).append(edge_name)
     return mapping
 
 
-edge_type_map = _build_edge_type_map(edge_meta)
+edge_type_map: Dict[Tuple[str, str], List[str]] = _build_edge_type_map(edge_meta)
 
 
 __all__ = [
+    # Entities
     "Activity",
     "Organization",
     "Person",
     "Place",
-    "EdgeMeta",
     "entity_types",
+    # Edge metadata / schemas
+    "EdgeMeta",
     "edge_meta",
+    "Knows",
+    "SpendsTimeWith",
+    "Supports",
+    "ConflictsWith",
+    "ParticipatesIn",
+    "OccursAt",
+    "Visits",
     "edge_types",
     "edge_type_map",
-    "MeetsAt",
-    "Visits",
-    "ParticipatesIn",
-    "VolunteersAt",
-    "WorksAt",
-    "Hosts",
-    "Guides",
-    "Runs",
-    "Leads",
-    "FocusesOn",
-    "Facilitates",
-    "SupportedBy",
-    "CoachesFor",
-    "TrainsWith",
-    "Attends",
-    "Owns",
-    "Introduces",
-    "RelatesTo",
 ]

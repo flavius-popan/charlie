@@ -40,28 +40,29 @@ EDGE_TYPE_CONTEXT = _build_edge_type_context(
 EMPTY_PREVIOUS_EPISODES = "[]"
 
 
-def _entities_json(entity_names: list[str]) -> str:
+def _entities_json(entities: list[dict[str, Any]]) -> str:
     payload = [
         {
             "id": idx,
-            "name": name,
-            "entity_types": ["Entity"],
+            "name": entity["name"],
+            "entity_types": entity.get("labels", ["Entity"]),
         }
-        for idx, name in enumerate(entity_names)
+        for idx, entity in enumerate(entities)
     ]
     return json.dumps(payload, ensure_ascii=False)
 
 
 def _build_edges_from_descriptions(
-    entity_names: list[str],
+    entities: list[dict[str, Any]],
     relations: list[dict[str, str]],
 ) -> ExtractedEdges:
     edges: list[ExtractedEdge] = []
+    name_to_index = {entity["name"]: idx for idx, entity in enumerate(entities)}
     for rel in relations:
         try:
-            source_idx = entity_names.index(rel["source"])
-            target_idx = entity_names.index(rel["target"])
-        except (ValueError, KeyError):
+            source_idx = name_to_index[rel["source"]]
+            target_idx = name_to_index[rel["target"]]
+        except KeyError:
             continue
 
         edges.append(
@@ -79,15 +80,16 @@ def _build_edges_from_descriptions(
 
 
 def _make_example(payload: dict[str, Any]) -> dspy.Example:
-    entity_names = payload["entities"]
+    entities = payload["entities"]
+    entity_names = [entity["name"] for entity in entities]
     example = dspy.Example(
         episode_content=payload["episode_content"],
-        entities_json=_entities_json(entity_names),
+        entities_json=_entities_json(entities),
         entity_names=entity_names,
         reference_time=payload["reference_time"],
         edge_type_context=EDGE_TYPE_CONTEXT,
         previous_episodes_json=EMPTY_PREVIOUS_EPISODES,
-        edges=_build_edges_from_descriptions(entity_names, payload["relationships"]),
+        edges=_build_edges_from_descriptions(entities, payload["relationships"]),
     )
     return example.with_inputs(
         "episode_content",
@@ -101,309 +103,261 @@ def _make_example(payload: dict[str, Any]) -> dspy.Example:
 RAW_EXAMPLES: list[dict[str, Any]] = [
     {
         "episode_content": (
-            "Met Jonah at Dolores Park before sunrise yoga. "
-            "His sister Maya tagged along and reminded me about volunteering at "
-            "Tender Hearts shelter this weekend."
+            "Mara and Tino coaxed me into a shivery sunrise plunge at Ocean Beach. "
+            "They kept cracking jokes until I breathed again."
         ),
         "entities": [
-            "Jonah",
-            "Maya",
-            "Dolores Park",
-            "sunrise yoga",
-            "Tender Hearts shelter",
+            {"name": "Mara", "labels": ["Entity", "Person"]},
+            {"name": "Tino", "labels": ["Entity", "Person"]},
+            {"name": "Ocean Beach", "labels": ["Entity", "Place"]},
+            {"name": "sunrise plunge", "labels": ["Entity", "Activity"]},
         ],
-        "reference_time": "2025-02-14T07:00:00Z",
+        "reference_time": "2025-02-14T07:05:00Z",
         "relationships": [
             {
-                "source": "Jonah",
-                "target": "Dolores Park",
-                "relation": "MEETS_AT",
-                "fact": "Met Jonah at Dolores Park for sunrise yoga.",
+                "source": "Mara",
+                "target": "Tino",
+                "relation": "SpendsTimeWith",
+                "fact": "Mara and Tino share sunrise plunges together.",
             },
             {
-                "source": "Jonah",
-                "target": "sunrise yoga",
-                "relation": "PARTICIPATES_IN",
-                "fact": "Jonah joined me for sunrise yoga.",
+                "source": "Mara",
+                "target": "sunrise plunge",
+                "relation": "ParticipatesIn",
+                "fact": "Mara joined the sunrise plunge ritual.",
             },
             {
-                "source": "Maya",
-                "target": "Tender Hearts shelter",
-                "relation": "VOLUNTEERS_AT",
-                "fact": "Maya reminded me about helping at Tender Hearts shelter.",
+                "source": "sunrise plunge",
+                "target": "Ocean Beach",
+                "relation": "OccursAt",
+                "fact": "The sunrise plunge happens at Ocean Beach.",
             },
         ],
     },
     {
         "episode_content": (
-            "Had coffee with Sarah at Blue Bottle downtown. "
-            "She mentioned her new job at Stripe and invited me to game night "
-            "at her place next Friday."
-        ),
-        "entities": ["Sarah", "Blue Bottle", "Stripe", "game night"],
-        "reference_time": "2025-01-28T14:30:00Z",
-        "relationships": [
-            {
-                "source": "Sarah",
-                "target": "Blue Bottle",
-                "relation": "MEETS_AT",
-                "fact": "Had coffee with Sarah at Blue Bottle downtown.",
-            },
-            {
-                "source": "Sarah",
-                "target": "Stripe",
-                "relation": "WORKS_AT",
-                "fact": "She mentioned her new job at Stripe.",
-            },
-            {
-                "source": "Sarah",
-                "target": "game night",
-                "relation": "HOSTS",
-                "fact": "She invited me to game night at her place next Friday.",
-            },
-        ],
-    },
-    {
-        "episode_content": (
-            "Tasha and I road-tripped to Big Basin Trailhead where Ranger Eli "
-            "handed us fog maps and told us to stick to the ridge."
-        ),
-        "entities": ["Tasha", "Big Basin Trailhead", "Ranger Eli"],
-        "reference_time": "2025-01-12T15:45:00Z",
-        "relationships": [
-            {
-                "source": "Tasha",
-                "target": "Big Basin Trailhead",
-                "relation": "VISITS",
-                "fact": "Tasha rode with me to Big Basin Trailhead.",
-            },
-            {
-                "source": "Ranger Eli",
-                "target": "Big Basin Trailhead",
-                "relation": "WORKS_AT",
-                "fact": "Ranger Eli staffed the trailhead kiosk.",
-            },
-            {
-                "source": "Ranger Eli",
-                "target": "Tasha",
-                "relation": "GUIDES",
-                "fact": "He handed us maps and gave fog warnings.",
-            },
-        ],
-    },
-    {
-        "episode_content": (
-            "Celebrated Amina's new gig at River Labs over noodles at Golden Lotus "
-            "Cafe. She asked if I'd consult on their mindfulness study next month."
-        ),
-        "entities": ["Amina", "River Labs", "Golden Lotus Cafe", "mindfulness study"],
-        "reference_time": "2025-02-01T18:20:00Z",
-        "relationships": [
-            {
-                "source": "Amina",
-                "target": "Golden Lotus Cafe",
-                "relation": "MEETS_AT",
-                "fact": "We celebrated Amina at Golden Lotus Cafe.",
-            },
-            {
-                "source": "Amina",
-                "target": "River Labs",
-                "relation": "WORKS_AT",
-                "fact": "Amina just joined River Labs.",
-            },
-            {
-                "source": "River Labs",
-                "target": "mindfulness study",
-                "relation": "RUNS",
-                "fact": "River Labs is launching a mindfulness study.",
-            },
-        ],
-    },
-    {
-        "episode_content": (
-            "Met Arturo and Carmen at the public library for counseling certification "
-            "prep. Carmen organized the study group and Arturo kept drilling me on "
-            "crisis flashcards."
+            "Therapist Ines texted Avery after session to make sure she actually tried the body scan homework."
         ),
         "entities": [
-            "Arturo",
-            "Carmen",
-            "public library",
-            "study group",
-            "counseling certification prep",
+            {"name": "Ines", "labels": ["Entity", "Person"]},
+            {"name": "Avery", "labels": ["Entity", "Person"]},
+            {"name": "body scan homework", "labels": ["Entity", "Activity"]},
         ],
-        "reference_time": "2025-02-08T10:30:00Z",
+        "reference_time": "2025-02-10T18:30:00Z",
         "relationships": [
             {
-                "source": "Arturo",
-                "target": "public library",
-                "relation": "MEETS_AT",
-                "fact": "Arturo met me at the public library.",
+                "source": "Ines",
+                "target": "Avery",
+                "relation": "Supports",
+                "fact": "Ines checked in to support Avery between sessions.",
             },
             {
-                "source": "Carmen",
-                "target": "study group",
-                "relation": "LEADS",
-                "fact": "Carmen organized the study group.",
-            },
-            {
-                "source": "study group",
-                "target": "counseling certification prep",
-                "relation": "FOCUSES_ON",
-                "fact": "Our study group focused on the counseling exam.",
+                "source": "Avery",
+                "target": "body scan homework",
+                "relation": "ParticipatesIn",
+                "fact": "Avery committed to the body scan homework.",
             },
         ],
     },
     {
         "episode_content": (
-            "Hosted our tiny sobriety check-in tonight. Joy facilitated the circle "
-            "while Marcus admitted leaning hard on his sponsor Rita every day."
-        ),
-        "entities": ["Joy", "Marcus", "Rita", "sobriety check-in"],
-        "reference_time": "2025-01-30T21:05:00Z",
-        "relationships": [
-            {
-                "source": "Joy",
-                "target": "sobriety check-in",
-                "relation": "FACILITATES",
-                "fact": "Joy facilitated the sobriety check-in.",
-            },
-            {
-                "source": "Marcus",
-                "target": "sobriety check-in",
-                "relation": "PARTICIPATES_IN",
-                "fact": "Marcus attended the check-in.",
-            },
-            {
-                "source": "Marcus",
-                "target": "Rita",
-                "relation": "SUPPORTED_BY",
-                "fact": "Marcus leans on his sponsor Rita.",
-            },
-        ],
-    },
-    {
-        "episode_content": (
-            "After running club practice, Priya and Leo came over for dinner. "
-            "Priya coaches with Mission Milers and asked Leo to pace me Saturday."
-        ),
-        "entities": ["Priya", "Leo", "Mission Milers", "running club dinner"],
-        "reference_time": "2025-02-05T19:40:00Z",
-        "relationships": [
-            {
-                "source": "Priya",
-                "target": "Mission Milers",
-                "relation": "COACHES_FOR",
-                "fact": "Priya coaches with Mission Milers.",
-            },
-            {
-                "source": "Priya",
-                "target": "Leo",
-                "relation": "TRAINS_WITH",
-                "fact": "Priya asked Leo to pace me.",
-            },
-            {
-                "source": "Leo",
-                "target": "running club dinner",
-                "relation": "ATTENDS",
-                "fact": "Leo came over for the running club dinner.",
-            },
-        ],
-    },
-    {
-        "episode_content": (
-            "Spent the afternoon at Green Apple Books on Clement Street. "
-            "The owner Rachel recommended a book to me and introduced me to "
-            "her friend Marcus who runs the poetry reading group there."
-        ),
-        "entities": ["Green Apple Books", "Rachel", "Marcus", "poetry reading group"],
-        "reference_time": "2025-02-02T16:10:00Z",
-        "relationships": [
-            {
-                "source": "Rachel",
-                "target": "Green Apple Books",
-                "relation": "OWNS",
-                "fact": "Rachel is the owner of Green Apple Books.",
-            },
-            {
-                "source": "Rachel",
-                "target": "Marcus",
-                "relation": "INTRODUCES",
-                "fact": "Rachel introduced me to her friend Marcus.",
-            },
-            {
-                "source": "Marcus",
-                "target": "poetry reading group",
-                "relation": "RUNS",
-                "fact": "Marcus runs the poetry reading group at the bookstore.",
-            },
-        ],
-    },
-    {
-        "episode_content": (
-            "Ran the Redwood AI sprint review at Mission Works Lab. Priya paired with Jordan on the bug bash "
-            "while I presented to the Venture Studio mentors."
-        ),
-        "entities": ["Priya", "Jordan", "Redwood AI", "Mission Works Lab", "bug bash"],
-        "reference_time": "2025-02-18T13:10:00Z",
-        "relationships": [
-            {
-                "source": "Priya",
-                "target": "Jordan",
-                "relation": "TRAINS_WITH",
-                "fact": "Priya paired with Jordan during the bug bash.",
-            },
-            {
-                "source": "Priya",
-                "target": "bug bash",
-                "relation": "PARTICIPATES_IN",
-                "fact": "She worked on the bug bash.",
-            },
-            {
-                "source": "Redwood AI",
-                "target": "Mission Works Lab",
-                "relation": "MEETS_AT",
-                "fact": "Redwood AI hosted the sprint review at Mission Works Lab.",
-            },
-        ],
-    },
-    {
-        "episode_content": (
-            "Haven House support circle met with facilitator Jenna, and she connected me with Malik from "
-            "Community Roots Pantry about Saturday's food rescue ride."
+            "Dylan and Sonia argued about whether our sunset hike plan felt safe in the fog."
         ),
         "entities": [
-            "Haven House support circle",
-            "Jenna",
-            "Malik",
-            "Community Roots Pantry",
-            "food rescue ride",
+            {"name": "Dylan", "labels": ["Entity", "Person"]},
+            {"name": "Sonia", "labels": ["Entity", "Person"]},
+            {"name": "sunset hike", "labels": ["Entity", "Activity"]},
+            {"name": "Redwood Ridge", "labels": ["Entity", "Place"]},
         ],
-        "reference_time": "2025-02-20T20:15:00Z",
+        "reference_time": "2025-01-22T20:10:00Z",
         "relationships": [
             {
-                "source": "Haven House support circle",
-                "target": "Jenna",
-                "relation": "RUNS",
-                "fact": "Jenna facilitated the Haven House circle.",
+                "source": "Dylan",
+                "target": "Sonia",
+                "relation": "ConflictsWith",
+                "fact": "Dylan and Sonia argued about the plan.",
             },
+            {
+                "source": "Dylan",
+                "target": "sunset hike",
+                "relation": "ParticipatesIn",
+                "fact": "Dylan still wanted to do the sunset hike.",
+            },
+            {
+                "source": "sunset hike",
+                "target": "Redwood Ridge",
+                "relation": "OccursAt",
+                "fact": "The hike happens at Redwood Ridge.",
+            },
+        ],
+    },
+    {
+        "episode_content": (
+            "Grandma Rosa keeps visiting the 24th Street Community Garden when she needs grounding."
+        ),
+        "entities": [
+            {"name": "Grandma Rosa", "labels": ["Entity", "Person"]},
+            {"name": "24th Street Community Garden", "labels": ["Entity", "Place"]},
+        ],
+        "reference_time": "2025-02-03T16:00:00Z",
+        "relationships": [
+            {
+                "source": "Grandma Rosa",
+                "target": "24th Street Community Garden",
+                "relation": "Visits",
+                "fact": "She visits the garden for grounding.",
+            }
+        ],
+    },
+    {
+        "episode_content": (
+            "I mentioned Redwood Mutual Aid to Theo during journaling club, but we still don't know exactly "
+            "how he'll plug in."
+        ),
+        "entities": [
+            {"name": "Theo", "labels": ["Entity", "Person"]},
+            {"name": "Redwood Mutual Aid", "labels": ["Entity", "Organization"]},
+        ],
+        "reference_time": "2025-02-06T19:00:00Z",
+        "relationships": [
+            {
+                "source": "Theo",
+                "target": "Redwood Mutual Aid",
+                "relation": "RELATES_TO",
+                "fact": "Theo referenced Redwood Mutual Aid without a clear role.",
+            }
+        ],
+    },
+    {
+        "episode_content": (
+            "Kai introduced me to his climbing buddy Lou at Touchstone, and we ended up doing a goofy "
+            "bouldering session together."
+        ),
+        "entities": [
+            {"name": "Kai", "labels": ["Entity", "Person"]},
+            {"name": "Lou", "labels": ["Entity", "Person"]},
+            {"name": "bouldering session", "labels": ["Entity", "Activity"]},
+            {"name": "Touchstone Climbing", "labels": ["Entity", "Place"]},
+        ],
+        "reference_time": "2025-02-09T11:45:00Z",
+        "relationships": [
+            {
+                "source": "Kai",
+                "target": "Lou",
+                "relation": "Knows",
+                "fact": "Kai already knew Lou from the gym.",
+            },
+            {
+                "source": "Lou",
+                "target": "bouldering session",
+                "relation": "ParticipatesIn",
+                "fact": "Lou led the bouldering session.",
+            },
+            {
+                "source": "bouldering session",
+                "target": "Touchstone Climbing",
+                "relation": "OccursAt",
+                "fact": "The session was at Touchstone Climbing.",
+            },
+        ],
+    },
+    {
+        "episode_content": (
+            "Neighbor Laila brought soup when Ana's migraine flared and sat with her until the meds kicked in."
+        ),
+        "entities": [
+            {"name": "Laila", "labels": ["Entity", "Person"]},
+            {"name": "Ana", "labels": ["Entity", "Person"]},
+            {"name": "third-floor apartment", "labels": ["Entity", "Place"]},
+        ],
+        "reference_time": "2025-01-25T21:40:00Z",
+        "relationships": [
+            {
+                "source": "Laila",
+                "target": "Ana",
+                "relation": "Supports",
+                "fact": "Laila comforted Ana during the migraine.",
+            },
+            {
+                "source": "Laila",
+                "target": "third-floor apartment",
+                "relation": "Visits",
+                "fact": "Laila stopped by Ana's apartment to help.",
+            },
+        ],
+    },
+    {
+        "episode_content": (
+            "Jenna hosted knit circle at Tender Hearts Center so we could prep blankets for Saturday's vigil."
+        ),
+        "entities": [
+            {"name": "Jenna", "labels": ["Entity", "Person"]},
+            {"name": "knit circle", "labels": ["Entity", "Activity"]},
+            {"name": "Tender Hearts Center", "labels": ["Entity", "Place"]},
+        ],
+        "reference_time": "2025-02-11T18:50:00Z",
+        "relationships": [
             {
                 "source": "Jenna",
-                "target": "Malik",
-                "relation": "INTRODUCES",
-                "fact": "Jenna connected me with Malik.",
+                "target": "knit circle",
+                "relation": "ParticipatesIn",
+                "fact": "Jenna led the knit circle prep.",
             },
             {
-                "source": "Malik",
-                "target": "Community Roots Pantry",
-                "relation": "WORKS_AT",
-                "fact": "Malik is part of Community Roots Pantry.",
+                "source": "knit circle",
+                "target": "Tender Hearts Center",
+                "relation": "OccursAt",
+                "fact": "Knit circle met at Tender Hearts Center.",
+            },
+        ],
+    },
+    {
+        "episode_content": (
+            "Yara and Mo spent the afternoon at the studio sketching plans for our community mural."
+        ),
+        "entities": [
+            {"name": "Yara", "labels": ["Entity", "Person"]},
+            {"name": "Mo", "labels": ["Entity", "Person"]},
+            {"name": "mural planning session", "labels": ["Entity", "Activity"]},
+        ],
+        "reference_time": "2025-02-12T15:10:00Z",
+        "relationships": [
+            {
+                "source": "Yara",
+                "target": "Mo",
+                "relation": "SpendsTimeWith",
+                "fact": "Yara and Mo designed the mural together.",
             },
             {
-                "source": "Malik",
-                "target": "food rescue ride",
-                "relation": "HOSTS",
-                "fact": "Malik invited us to the food rescue ride.",
+                "source": "Yara",
+                "target": "mural planning session",
+                "relation": "ParticipatesIn",
+                "fact": "Yara sketched during the planning session.",
+            },
+        ],
+    },
+    {
+        "episode_content": (
+            "Casey stopped by Loom House to ask if the grief circle could host next week's gathering there."
+        ),
+        "entities": [
+            {"name": "Casey", "labels": ["Entity", "Person"]},
+            {"name": "Loom House", "labels": ["Entity", "Place"]},
+            {"name": "grief circle", "labels": ["Entity", "Activity"]},
+        ],
+        "reference_time": "2025-02-04T13:25:00Z",
+        "relationships": [
+            {
+                "source": "Casey",
+                "target": "Loom House",
+                "relation": "Visits",
+                "fact": "Casey visited Loom House to make the ask.",
+            },
+            {
+                "source": "grief circle",
+                "target": "Loom House",
+                "relation": "OccursAt",
+                "fact": "The grief circle plans to meet at Loom House.",
             },
         ],
     },

@@ -145,7 +145,7 @@ Journal Text → add_journal() → ExtractNodes → ExtractEdges → ExtractAttr
 1. **`EntityExtractor`** (dspy.Module): Pure LLM extraction. Sync, no DB. Optimizable.
 2. **`ExtractNodes`** (orchestrator): Full pipeline with DB, episode creation, MinHash LSH resolution.
 
-**Default schema**: `pipeline/entity_edge_models.py` defines the four baseline entity types (Person, Place, Organization, Activity) and the curated relationship catalog (`MEETS_AT`, `WORKS_AT`, `HOSTS`, …). Keeping that file in sync with any schema tweaks ensures the runtime pipeline and all DSPy optimizers stay aligned without rerunning expensive compilation jobs.
+**Default schema**: `pipeline/entity_edge_models.py` defines the four baseline entity types (Person, Place, Organization, Activity) plus the journaling-focused edge catalog (`Knows`, `SpendsTimeWith`, `Supports`, `ConflictsWith`, `ParticipatesIn`, `OccursAt`, `Visits`, with `RELATES_TO` as the automatic fallback). Keeping that file in sync with any schema tweaks ensures the runtime pipeline and all DSPy optimizers stay aligned without rerunning expensive compilation jobs.
 
 ```python
 # Standard usage
@@ -215,9 +215,13 @@ extractor = ExtractEdges(group_id="user_123", edge_extractor=compiled)
 result = await extractor(...)
 ```
 
+**Schema context**: `ExtractEdges` rebuilds the edge-type context for every call using `edge_types`, `edge_type_map`, and `edge_meta`. If a suggested edge label is not allowed for the source/target pair, `_enforce_edge_type_rules()` rewrites it to Graphiti’s default `RELATES_TO`, ensuring we never drop a relationship silently. Episodic `MENTIONS` edges remain automatic via `graphiti_core.utils.maintenance.edge_operations.build_episodic_edges`.
+
 **Important Implementation Details**:
 
 1. **Node Indexing**: LLM extracts edges using `extracted_nodes` (original UUIDs) because indices must match the node list passed to the LLM.
+
+> See [Graphiti custom entity/edge docs](https://help.getzep.com/graphiti/core-concepts/custom-entity-and-edge-types) for ontology guidance and [DSPy optimizer docs](../docs/learn/optimization/optimizers.md) for teleprompter behavior referenced by these stages.
 
 2. **UUID Remapping**: After extraction, `resolve_edge_pointers(edges, uuid_map)` remaps edge source/target UUIDs from provisional → canonical.
 

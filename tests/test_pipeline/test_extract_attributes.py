@@ -10,6 +10,7 @@ Tests use real implementations to verify actual behavior, not mock behavior.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -20,6 +21,9 @@ from graphiti_core.utils.datetime_utils import utc_now
 from pipeline.extract_attributes import (
     ExtractAttributes,
     ExtractAttributesOutput,
+)
+from pipeline.optimizers.extract_attributes_optimizer import (
+    attribute_extraction_metric,
 )
 
 
@@ -251,3 +255,13 @@ async def test_extract_attributes_metadata_tracking(isolated_graph) -> None:
     assert result.metadata["nodes_skipped"] == 1
     assert "attributes_extracted_by_type" in result.metadata
     assert result.metadata["attributes_extracted_by_type"]["Person"] == 1
+
+
+def test_attribute_metric_handles_numeric_tolerance() -> None:
+    """Metric should treat close float values as matches."""
+    example = SimpleNamespace(attributes={"closeness": 0.8, "relationship_type": "friend"})
+    # Predictor returns slightly different float plus correctly cased string.
+    prediction = {"closeness": 0.82, "relationship_type": "Friend"}
+
+    score = attribute_extraction_metric(example, prediction)
+    assert score == 1.0

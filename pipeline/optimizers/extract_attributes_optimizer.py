@@ -9,6 +9,7 @@ Usage:
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 import logging
 import dspy
@@ -67,7 +68,11 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
             entity_name="Lena",
             entity_type="Person",
             existing={"relationship_type": "acquaintance"},
-            attributes={"relationship_type": "friend"},
+            attributes={
+                "relationship_type": "friend",
+                "closeness": 0.82,
+                "overall_valence": 0.65,
+            },
         ),
         example(
             episode_content="Coach Ray met me for hill repeats and tweaked my stride.",
@@ -75,7 +80,11 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
             entity_name="Ray",
             entity_type="Person",
             existing={},
-            attributes={"relationship_type": "coach"},
+            attributes={
+                "relationship_type": "coach",
+                "closeness": 0.4,
+                "overall_valence": 0.2,
+            },
         ),
         example(
             episode_content="Therapy with Dr. Hwang today felt steadier; she tracked my breath with me.",
@@ -83,7 +92,11 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
             entity_name="Dr. Hwang",
             entity_type="Person",
             existing={"relationship_type": ""},
-            attributes={"relationship_type": "therapist"},
+            attributes={
+                "relationship_type": "therapist",
+                "closeness": 0.35,
+                "overall_valence": -0.25,
+            },
         ),
         example(
             episode_content="Priya and I paired at the studio to fix our team's prototype.",
@@ -91,7 +104,11 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
             entity_name="Priya",
             entity_type="Person",
             existing={},
-            attributes={"relationship_type": "colleague"},
+            attributes={
+                "relationship_type": "colleague",
+                "closeness": 0.55,
+                "overall_valence": 0.4,
+            },
         ),
         example(
             episode_content="Slow dinner date with Sam on the roof, just holding hands and eating takeout.",
@@ -99,7 +116,11 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
             entity_name="Sam",
             entity_type="Person",
             existing={"relationship_type": "friend"},
-            attributes={"relationship_type": "romantic partner"},
+            attributes={
+                "relationship_type": "romantic partner",
+                "closeness": 0.9,
+                "overall_valence": 0.85,
+            },
         ),
         example(
             episode_content="Neighbor Laila dropped off soup when the migraine kicked in.",
@@ -107,7 +128,11 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
             entity_name="Laila",
             entity_type="Person",
             existing={},
-            attributes={"relationship_type": "neighbor"},
+            attributes={
+                "relationship_type": "neighbor",
+                "closeness": 0.6,
+                "overall_valence": 0.5,
+            },
         ),
         example(
             episode_content="Lake Merritt felt calm tonight; the walking path lights flickered along the water.",
@@ -187,6 +212,15 @@ def attribute_extraction_metric(example, prediction, trace=None) -> float:
         predicted_value = predicted_dict.get(key)
         if isinstance(expected_value, str) and isinstance(predicted_value, str):
             if expected_value.strip().lower() == predicted_value.strip().lower():
+                matches += 1
+        elif isinstance(expected_value, (int, float)) and isinstance(
+            predicted_value, (int, float)
+        ):
+            if math.isclose(
+                float(predicted_value),
+                float(expected_value),
+                abs_tol=0.05,
+            ):
                 matches += 1
         else:
             if expected_value == predicted_value:

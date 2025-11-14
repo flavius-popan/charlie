@@ -279,7 +279,10 @@ def _collect_allowed_relations(
     allowed: set[str] = set()
     for source_label in source_labels:
         for target_label in target_labels:
-            allowed.update(edge_type_map.get((source_label, target_label), []))
+            allowed.update(
+                name.upper()
+                for name in edge_type_map.get((source_label, target_label), [])
+            )
     return allowed
 
 
@@ -295,9 +298,10 @@ def _enforce_edge_type_rules(
         return
 
     allowed = _collect_allowed_relations(source_node, target_node, edge_type_map)
-    custom_names = set(edge_types.keys())
+    custom_names = {name.upper() for name in edge_types.keys()}
+    edge_name = edge.name
 
-    if not allowed and edge.name in custom_names and edge.name != DEFAULT_EDGE_NAME:
+    if not allowed and edge_name in custom_names and edge_name != DEFAULT_EDGE_NAME:
         logger.debug(
             "Relation %s not permitted for %s/%s. Falling back to %s.",
             edge.name,
@@ -308,12 +312,7 @@ def _enforce_edge_type_rules(
         edge.name = DEFAULT_EDGE_NAME
         return
 
-    if (
-        edge.name in custom_names
-        and allowed
-        and edge.name not in allowed
-        and edge.name != DEFAULT_EDGE_NAME
-    ):
+    if edge_name in custom_names and allowed and edge_name not in allowed and edge_name != DEFAULT_EDGE_NAME:
         logger.debug(
             "Relation %s not allowed for %s/%s. Using %s instead.",
             edge.name,

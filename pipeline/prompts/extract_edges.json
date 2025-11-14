@@ -4,40 +4,31 @@
     "train": [],
     "demos": [
       {
-        "episode_content": "Had coffee with Sarah at Blue Bottle downtown. She mentioned her new job at Stripe and invited me to game night at her place next Friday.",
-        "entities_json": "[{\"id\": 0, \"name\": \"Sarah\", \"entity_types\": [\"Entity\"]}, {\"id\": 1, \"name\": \"Blue Bottle\", \"entity_types\": [\"Entity\"]}, {\"id\": 2, \"name\": \"Stripe\", \"entity_types\": [\"Entity\"]}, {\"id\": 3, \"name\": \"game night\", \"entity_types\": [\"Entity\"]}]",
+        "episode_content": "Therapist Ines texted Avery after session to make sure she actually tried the body scan homework.",
+        "entities_json": "[{\"id\": 0, \"name\": \"Ines\", \"entity_types\": [\"Entity\", \"Person\"]}, {\"id\": 1, \"name\": \"Avery\", \"entity_types\": [\"Entity\", \"Person\"]}, {\"id\": 2, \"name\": \"body scan homework\", \"entity_types\": [\"Entity\", \"Activity\"]}]",
         "entity_names": [
-          "Sarah",
-          "Blue Bottle",
-          "Stripe",
-          "game night"
+          "Ines",
+          "Avery",
+          "body scan homework"
         ],
-        "reference_time": "2025-01-28T14:30:00Z",
-        "edge_type_context": "{\"edge_types\": [{\"name\": \"MEETS_AT\", \"description\": \"A person meets or spends time at a specific place.\", \"source_types\": [\"Person\"], \"target_types\": [\"Place\"], \"symmetric\": false}, {\"name\": \"VISITS\", \"description\": \"A person visits a location.\", \"source_types\": [\"Person\"], \"target_types\": [\"Place\"], \"symmetric\": false}, {\"name\": \"PARTICIPATES_IN\", \"description\": \"A person or pet participates in an activity.\", \"source_types\": [\"Person\", \"Organization\"], \"target_types\": [\"Activity\"], \"symmetric\": false}, {\"name\": \"VOLUNTEERS_AT\", \"description\": \"A person volunteers with an organization or place.\", \"source_types\": [\"Person\"], \"target_types\": [\"Organization\", \"Place\"], \"symmetric\": false}, {\"name\": \"WORKS_AT\", \"description\": \"A person is employed by an organization or works at a place.\", \"source_types\": [\"Person\"], \"target_types\": [\"Organization\", \"Place\"], \"symmetric\": false}, {\"name\": \"HOSTS\", \"description\": \"A person or organization hosts an activity or gathering.\", \"source_types\": [\"Person\", \"Organization\"], \"target_types\": [\"Activity\"], \"symmetric\": false}, {\"name\": \"GUIDES\", \"description\": \"A person guides or mentors another person.\", \"source_types\": [\"Person\"], \"target_types\": [\"Person\"], \"symmetric\": false}, {\"name\": \"RUNS\", \"description\": \"A person or organization runs an activity or program.\", \"source_types\": [\"Person\", \"Organization\"], \"target_types\": [\"Activity\"], \"symmetric\": false}, {\"name\": \"LEADS\", \"description\": \"A person leads or facilitates an activity.\", \"source_types\": [\"Person\"], \"target_types\": [\"Activity\"], \"symmetric\": false}, {\"name\": \"FOCUSES_ON\", \"description\": \"An activity centers on another activity or topic.\", \"source_types\": [\"Activity\"], \"target_types\": [\"Activity\"], \"symmetric\": false}, {\"name\": \"FACILITATES\", \"description\": \"A person facilitates an activity or group.\", \"source_types\": [\"Person\"], \"target_types\": [\"Activity\"], \"symmetric\": false}, {\"name\": \"SUPPORTED_BY\", \"description\": \"A person receives support from another person.\", \"source_types\": [\"Person\"], \"target_types\": [\"Person\"], \"symmetric\": false}, {\"name\": \"COACHES_FOR\", \"description\": \"A person coaches for an organization or team.\", \"source_types\": [\"Person\"], \"target_types\": [\"Organization\"], \"symmetric\": false}, {\"name\": \"TRAINS_WITH\", \"description\": \"Two people train or practice together.\", \"source_types\": [\"Person\"], \"target_types\": [\"Person\"], \"symmetric\": true}, {\"name\": \"ATTENDS\", \"description\": \"A person attends an activity or gathering.\", \"source_types\": [\"Person\"], \"target_types\": [\"Activity\"], \"symmetric\": false}, {\"name\": \"OWNS\", \"description\": \"A person owns or operates a place or organization.\", \"source_types\": [\"Person\"], \"target_types\": [\"Place\", \"Organization\"], \"symmetric\": false}, {\"name\": \"INTRODUCES\", \"description\": \"A person introduces another person.\", \"source_types\": [\"Person\"], \"target_types\": [\"Person\"], \"symmetric\": false}], \"edge_type_map\": [{\"source_type\": \"Person\", \"target_type\": \"Place\", \"allowed_relations\": [\"MEETS_AT\", \"VISITS\", \"VOLUNTEERS_AT\", \"WORKS_AT\", \"OWNS\"]}, {\"source_type\": \"Person\", \"target_type\": \"Activity\", \"allowed_relations\": [\"PARTICIPATES_IN\", \"HOSTS\", \"RUNS\", \"LEADS\", \"FACILITATES\", \"ATTENDS\"]}, {\"source_type\": \"Organization\", \"target_type\": \"Activity\", \"allowed_relations\": [\"PARTICIPATES_IN\", \"HOSTS\", \"RUNS\"]}, {\"source_type\": \"Person\", \"target_type\": \"Organization\", \"allowed_relations\": [\"VOLUNTEERS_AT\", \"WORKS_AT\", \"COACHES_FOR\", \"OWNS\"]}, {\"source_type\": \"Person\", \"target_type\": \"Person\", \"allowed_relations\": [\"GUIDES\", \"SUPPORTED_BY\", \"TRAINS_WITH\", \"INTRODUCES\"]}, {\"source_type\": \"Activity\", \"target_type\": \"Activity\", \"allowed_relations\": [\"FOCUSES_ON\"]}]}",
+        "reference_time": "2025-02-10T18:30:00Z",
+        "edge_type_context": "{\"edge_types\": [{\"name\": \"Knows\", \"description\": \"Two people know each other in some ongoing way.\", \"source_types\": [\"Person\"], \"target_types\": [\"Person\"], \"symmetric\": true}, {\"name\": \"SpendsTimeWith\", \"description\": \"Two people regularly spend meaningful time together.\", \"source_types\": [\"Person\"], \"target_types\": [\"Person\"], \"symmetric\": true}, {\"name\": \"Supports\", \"description\": \"One person offers support (emotional or practical) to another.\", \"source_types\": [\"Person\"], \"target_types\": [\"Person\"], \"symmetric\": false}, {\"name\": \"ConflictsWith\", \"description\": \"There is notable conflict, tension, or friction between two people.\", \"source_types\": [\"Person\"], \"target_types\": [\"Person\"], \"symmetric\": true}, {\"name\": \"ParticipatesIn\", \"description\": \"A person participates in or does an activity.\", \"source_types\": [\"Person\"], \"target_types\": [\"Activity\"], \"symmetric\": false}, {\"name\": \"OccursAt\", \"description\": \"An activity typically occurs at or is associated with a place.\", \"source_types\": [\"Activity\"], \"target_types\": [\"Place\"], \"symmetric\": false}, {\"name\": \"Visits\", \"description\": \"A person visits or frequently spends time at a place.\", \"source_types\": [\"Person\"], \"target_types\": [\"Place\"], \"symmetric\": false}, {\"name\": \"RELATES_TO\", \"description\": \"Generic relationship between any two entities.\", \"source_types\": [\"Entity\"], \"target_types\": [\"Entity\"], \"symmetric\": true}], \"edge_type_map\": [{\"source_type\": \"Person\", \"target_type\": \"Person\", \"allowed_relations\": [\"Knows\", \"SpendsTimeWith\", \"Supports\", \"ConflictsWith\"]}, {\"source_type\": \"Person\", \"target_type\": \"Activity\", \"allowed_relations\": [\"ParticipatesIn\"]}, {\"source_type\": \"Activity\", \"target_type\": \"Place\", \"allowed_relations\": [\"OccursAt\"]}, {\"source_type\": \"Person\", \"target_type\": \"Place\", \"allowed_relations\": [\"Visits\"]}, {\"source_type\": \"Entity\", \"target_type\": \"Entity\", \"allowed_relations\": [\"RELATES_TO\"]}]}",
         "previous_episodes_json": "[]",
         "edges": {
           "edges": [
             {
               "source_entity_id": 0,
               "target_entity_id": 1,
-              "relation_type": "MEETS_AT",
-              "fact": "Had coffee with Sarah at Blue Bottle downtown.",
+              "relation_type": "Supports",
+              "fact": "Ines checked in to support Avery between sessions.",
               "valid_at": null,
               "invalid_at": null
             },
             {
-              "source_entity_id": 0,
+              "source_entity_id": 1,
               "target_entity_id": 2,
-              "relation_type": "WORKS_AT",
-              "fact": "She mentioned her new job at Stripe.",
-              "valid_at": null,
-              "invalid_at": null
-            },
-            {
-              "source_entity_id": 0,
-              "target_entity_id": 3,
-              "relation_type": "HOSTS",
-              "fact": "She invited me to game night at her place next Friday.",
+              "relation_type": "ParticipatesIn",
+              "fact": "Avery committed to the body scan homework.",
               "valid_at": null,
               "invalid_at": null
             }
@@ -45,41 +36,40 @@
         }
       },
       {
-        "episode_content": "Met Jonah at Dolores Park before sunrise yoga. His sister Maya tagged along and reminded me about volunteering at Tender Hearts shelter this weekend.",
-        "entities_json": "[{\"id\": 0, \"name\": \"Jonah\", \"entity_types\": [\"Entity\"]}, {\"id\": 1, \"name\": \"Maya\", \"entity_types\": [\"Entity\"]}, {\"id\": 2, \"name\": \"Dolores Park\", \"entity_types\": [\"Entity\"]}, {\"id\": 3, \"name\": \"sunrise yoga\", \"entity_types\": [\"Entity\"]}, {\"id\": 4, \"name\": \"Tender Hearts shelter\", \"entity_types\": [\"Entity\"]}]",
+        "episode_content": "Mara and Tino coaxed me into a shivery sunrise plunge at Ocean Beach. They kept cracking jokes until I breathed again.",
+        "entities_json": "[{\"id\": 0, \"name\": \"Mara\", \"entity_types\": [\"Entity\", \"Person\"]}, {\"id\": 1, \"name\": \"Tino\", \"entity_types\": [\"Entity\", \"Person\"]}, {\"id\": 2, \"name\": \"Ocean Beach\", \"entity_types\": [\"Entity\", \"Place\"]}, {\"id\": 3, \"name\": \"sunrise plunge\", \"entity_types\": [\"Entity\", \"Activity\"]}]",
         "entity_names": [
-          "Jonah",
-          "Maya",
-          "Dolores Park",
-          "sunrise yoga",
-          "Tender Hearts shelter"
+          "Mara",
+          "Tino",
+          "Ocean Beach",
+          "sunrise plunge"
         ],
-        "reference_time": "2025-02-14T07:00:00Z",
-        "edge_type_context": "{\"edge_types\": [{\"name\": \"MEETS_AT\", \"description\": \"A person meets or spends time at a specific place.\", \"source_types\": [\"Person\"], \"target_types\": [\"Place\"], \"symmetric\": false}, {\"name\": \"VISITS\", \"description\": \"A person visits a location.\", \"source_types\": [\"Person\"], \"target_types\": [\"Place\"], \"symmetric\": false}, {\"name\": \"PARTICIPATES_IN\", \"description\": \"A person or pet participates in an activity.\", \"source_types\": [\"Person\", \"Organization\"], \"target_types\": [\"Activity\"], \"symmetric\": false}, {\"name\": \"VOLUNTEERS_AT\", \"description\": \"A person volunteers with an organization or place.\", \"source_types\": [\"Person\"], \"target_types\": [\"Organization\", \"Place\"], \"symmetric\": false}, {\"name\": \"WORKS_AT\", \"description\": \"A person is employed by an organization or works at a place.\", \"source_types\": [\"Person\"], \"target_types\": [\"Organization\", \"Place\"], \"symmetric\": false}, {\"name\": \"HOSTS\", \"description\": \"A person or organization hosts an activity or gathering.\", \"source_types\": [\"Person\", \"Organization\"], \"target_types\": [\"Activity\"], \"symmetric\": false}, {\"name\": \"GUIDES\", \"description\": \"A person guides or mentors another person.\", \"source_types\": [\"Person\"], \"target_types\": [\"Person\"], \"symmetric\": false}, {\"name\": \"RUNS\", \"description\": \"A person or organization runs an activity or program.\", \"source_types\": [\"Person\", \"Organization\"], \"target_types\": [\"Activity\"], \"symmetric\": false}, {\"name\": \"LEADS\", \"description\": \"A person leads or facilitates an activity.\", \"source_types\": [\"Person\"], \"target_types\": [\"Activity\"], \"symmetric\": false}, {\"name\": \"FOCUSES_ON\", \"description\": \"An activity centers on another activity or topic.\", \"source_types\": [\"Activity\"], \"target_types\": [\"Activity\"], \"symmetric\": false}, {\"name\": \"FACILITATES\", \"description\": \"A person facilitates an activity or group.\", \"source_types\": [\"Person\"], \"target_types\": [\"Activity\"], \"symmetric\": false}, {\"name\": \"SUPPORTED_BY\", \"description\": \"A person receives support from another person.\", \"source_types\": [\"Person\"], \"target_types\": [\"Person\"], \"symmetric\": false}, {\"name\": \"COACHES_FOR\", \"description\": \"A person coaches for an organization or team.\", \"source_types\": [\"Person\"], \"target_types\": [\"Organization\"], \"symmetric\": false}, {\"name\": \"TRAINS_WITH\", \"description\": \"Two people train or practice together.\", \"source_types\": [\"Person\"], \"target_types\": [\"Person\"], \"symmetric\": true}, {\"name\": \"ATTENDS\", \"description\": \"A person attends an activity or gathering.\", \"source_types\": [\"Person\"], \"target_types\": [\"Activity\"], \"symmetric\": false}, {\"name\": \"OWNS\", \"description\": \"A person owns or operates a place or organization.\", \"source_types\": [\"Person\"], \"target_types\": [\"Place\", \"Organization\"], \"symmetric\": false}, {\"name\": \"INTRODUCES\", \"description\": \"A person introduces another person.\", \"source_types\": [\"Person\"], \"target_types\": [\"Person\"], \"symmetric\": false}], \"edge_type_map\": [{\"source_type\": \"Person\", \"target_type\": \"Place\", \"allowed_relations\": [\"MEETS_AT\", \"VISITS\", \"VOLUNTEERS_AT\", \"WORKS_AT\", \"OWNS\"]}, {\"source_type\": \"Person\", \"target_type\": \"Activity\", \"allowed_relations\": [\"PARTICIPATES_IN\", \"HOSTS\", \"RUNS\", \"LEADS\", \"FACILITATES\", \"ATTENDS\"]}, {\"source_type\": \"Organization\", \"target_type\": \"Activity\", \"allowed_relations\": [\"PARTICIPATES_IN\", \"HOSTS\", \"RUNS\"]}, {\"source_type\": \"Person\", \"target_type\": \"Organization\", \"allowed_relations\": [\"VOLUNTEERS_AT\", \"WORKS_AT\", \"COACHES_FOR\", \"OWNS\"]}, {\"source_type\": \"Person\", \"target_type\": \"Person\", \"allowed_relations\": [\"GUIDES\", \"SUPPORTED_BY\", \"TRAINS_WITH\", \"INTRODUCES\"]}, {\"source_type\": \"Activity\", \"target_type\": \"Activity\", \"allowed_relations\": [\"FOCUSES_ON\"]}]}",
+        "reference_time": "2025-02-14T07:05:00Z",
+        "edge_type_context": "{\"edge_types\": [{\"name\": \"Knows\", \"description\": \"Two people know each other in some ongoing way.\", \"source_types\": [\"Person\"], \"target_types\": [\"Person\"], \"symmetric\": true}, {\"name\": \"SpendsTimeWith\", \"description\": \"Two people regularly spend meaningful time together.\", \"source_types\": [\"Person\"], \"target_types\": [\"Person\"], \"symmetric\": true}, {\"name\": \"Supports\", \"description\": \"One person offers support (emotional or practical) to another.\", \"source_types\": [\"Person\"], \"target_types\": [\"Person\"], \"symmetric\": false}, {\"name\": \"ConflictsWith\", \"description\": \"There is notable conflict, tension, or friction between two people.\", \"source_types\": [\"Person\"], \"target_types\": [\"Person\"], \"symmetric\": true}, {\"name\": \"ParticipatesIn\", \"description\": \"A person participates in or does an activity.\", \"source_types\": [\"Person\"], \"target_types\": [\"Activity\"], \"symmetric\": false}, {\"name\": \"OccursAt\", \"description\": \"An activity typically occurs at or is associated with a place.\", \"source_types\": [\"Activity\"], \"target_types\": [\"Place\"], \"symmetric\": false}, {\"name\": \"Visits\", \"description\": \"A person visits or frequently spends time at a place.\", \"source_types\": [\"Person\"], \"target_types\": [\"Place\"], \"symmetric\": false}, {\"name\": \"RELATES_TO\", \"description\": \"Generic relationship between any two entities.\", \"source_types\": [\"Entity\"], \"target_types\": [\"Entity\"], \"symmetric\": true}], \"edge_type_map\": [{\"source_type\": \"Person\", \"target_type\": \"Person\", \"allowed_relations\": [\"Knows\", \"SpendsTimeWith\", \"Supports\", \"ConflictsWith\"]}, {\"source_type\": \"Person\", \"target_type\": \"Activity\", \"allowed_relations\": [\"ParticipatesIn\"]}, {\"source_type\": \"Activity\", \"target_type\": \"Place\", \"allowed_relations\": [\"OccursAt\"]}, {\"source_type\": \"Person\", \"target_type\": \"Place\", \"allowed_relations\": [\"Visits\"]}, {\"source_type\": \"Entity\", \"target_type\": \"Entity\", \"allowed_relations\": [\"RELATES_TO\"]}]}",
         "previous_episodes_json": "[]",
         "edges": {
           "edges": [
             {
               "source_entity_id": 0,
-              "target_entity_id": 2,
-              "relation_type": "MEETS_AT",
-              "fact": "Met Jonah at Dolores Park for sunrise yoga.",
+              "target_entity_id": 1,
+              "relation_type": "SpendsTimeWith",
+              "fact": "Mara and Tino share sunrise plunges together.",
               "valid_at": null,
               "invalid_at": null
             },
             {
               "source_entity_id": 0,
               "target_entity_id": 3,
-              "relation_type": "PARTICIPATES_IN",
-              "fact": "Jonah joined me for sunrise yoga.",
+              "relation_type": "ParticipatesIn",
+              "fact": "Mara joined the sunrise plunge ritual.",
               "valid_at": null,
               "invalid_at": null
             },
             {
-              "source_entity_id": 1,
-              "target_entity_id": 4,
-              "relation_type": "VOLUNTEERS_AT",
-              "fact": "Maya reminded me about helping at Tender Hearts shelter.",
+              "source_entity_id": 3,
+              "target_entity_id": 2,
+              "relation_type": "OccursAt",
+              "fact": "The sunrise plunge happens at Ocean Beach.",
               "valid_at": null,
               "invalid_at": null
             }
@@ -88,7 +78,7 @@
       }
     ],
     "signature": {
-      "instructions": "Analyze the journal entry step by step to extract all valid, contextually grounded relationships between entities. Begin by identifying key actions, locations, people, and activities mentioned. Use the provided edge type context and edge type map to ensure only allowed relationship types are extracted—respecting source and target type constraints. For each relationship, clearly justify its presence in the reasoning trace by referencing specific phrases from the text. Consider temporal context (reference time) and prior interactions (previous episodes) to disambiguate entity roles or relationship types. Ensure that each extracted edge includes a supporting fact from the text, source and target entity IDs, and the correct relationship type. Avoid making assumptions beyond the text; only include relationships that are explicitly or implicitly supported by the narrative and aligned with the schema.",
+      "instructions": "Extract graph edges between indexed entities from the journal entry.",
       "fields": [
         {
           "prefix": "Episode Content:",

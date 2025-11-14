@@ -28,6 +28,10 @@ from pipeline.extract_edges import (
     build_entity_edges,
     normalize_edge_name,
 )
+from pipeline.entity_edge_models import (
+    edge_types as DEFAULT_EDGE_TYPES,
+    edge_type_map as DEFAULT_EDGE_TYPE_MAP,
+)
 
 
 class DeterministicEdgeExtractor:
@@ -44,12 +48,18 @@ class DeterministicEdgeExtractor:
         entities = json.loads(entities_json)
         text_lower = episode_content.lower()
         relation = "RELATES_TO"
-        if "work" in text_lower:
-            relation = "WORKS_AT"
-        elif "friend" in text_lower or "know" in text_lower:
-            relation = "SUPPORTED_BY"
-        elif "host" in text_lower or "meet" in text_lower:
-            relation = "MEETS_AT"
+        if "argued" in text_lower or "fight" in text_lower:
+            relation = "ConflictsWith"
+        elif "support" in text_lower or "comfort" in text_lower or "sponsor" in text_lower:
+            relation = "Supports"
+        elif "visit" in text_lower or "grounding" in text_lower:
+            relation = "Visits"
+        elif "knit" in text_lower or "session" in text_lower or "circle" in text_lower:
+            relation = "ParticipatesIn"
+        elif "introduce" in text_lower or "know" in text_lower or "buddy" in text_lower:
+            relation = "Knows"
+        elif "spent the afternoon" in text_lower or "together" in text_lower:
+            relation = "SpendsTimeWith"
 
         edges: list[ExtractedEdge] = []
         for source in entities:
@@ -67,7 +77,7 @@ class DeterministicEdgeExtractor:
                         source_entity_id=source["id"],
                         target_entity_id=target["id"],
                         relation_type=relation,
-                        fact=f"{source['name']} relates to {target['name']}.",
+                        fact=f"{source['name']} {relation} {target['name']} in this journal entry.",
                     )
                 )
 
@@ -280,6 +290,44 @@ class TestBuildEntityEdges:
         )
 
         assert len(edges) == 0
+
+    def test_disallowed_relation_falls_back_to_relates_to(self) -> None:
+        person = EntityNode(
+            uuid="person-uuid",
+            name="Avery",
+            labels=["Entity", "Person"],
+            group_id="test",
+            created_at=utc_now(),
+        )
+        org = EntityNode(
+            uuid="org-uuid",
+            name="Redwood Mutual Aid",
+            labels=["Entity", "Organization"],
+            group_id="test",
+            created_at=utc_now(),
+        )
+        relationships = ExtractedEdges(
+            edges=[
+                ExtractedEdge(
+                    source_entity_id=0,
+                    target_entity_id=1,
+                    relation_type="Supports",
+                    fact="Avery talked about Redwood Mutual Aid.",
+                )
+            ]
+        )
+
+        edges = build_entity_edges(
+            relationships,
+            [person, org],
+            episode_uuid="episode-1",
+            group_id="test",
+            edge_types=DEFAULT_EDGE_TYPES,
+            edge_type_map=DEFAULT_EDGE_TYPE_MAP,
+        )
+
+        assert len(edges) == 1
+        assert edges[0].name == "RELATES_TO"
 
 
 # ========== Integration Tests: ExtractEdges Orchestrator ==========
