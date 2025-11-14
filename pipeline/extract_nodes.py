@@ -46,7 +46,7 @@ from graphiti_core.utils.maintenance.dedup_helpers import (
     _resolve_with_similarity,
 )
 from graphiti_core.utils.ontology_utils.entity_types_utils import validate_entity_types
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from pipeline.falkordblite_driver import fetch_entities_by_group, fetch_recent_episodes
 from pipeline.entity_edge_models import entity_types
@@ -70,6 +70,14 @@ class ExtractedEntities(BaseModel):
     """Collection of extracted entities."""
 
     extracted_entities: list[ExtractedEntity]
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_list(cls, value):
+        """Allow bare lists to be parsed as extracted_entities."""
+        if isinstance(value, list):
+            return {"extracted_entities": value}
+        return value
 
 
 # DSPy signature for entity extraction
@@ -117,7 +125,8 @@ class EntityExtractor(dspy.Module):
 
     def __init__(self):
         super().__init__()
-        self.extractor = dspy.Predict(EntityExtractionSignature)
+        # ChainOfThought tends to keep the JSON schema instructions in view for smaller local models.
+        self.extractor = dspy.ChainOfThought(EntityExtractionSignature)
 
         # Auto-load optimized prompts if they exist
         prompt_path = Path(__file__).parent / "prompts" / "extract_nodes.json"

@@ -197,6 +197,84 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
         ).with_inputs("episode_content", "entity_types")
     )
 
+    # Example 9: Sunrise lap with friend and dog
+    all_examples.append(
+        dspy.Example(
+            episode_content="Met Nina and her rescue pup Scout for a sunrise lap around Lake Merritt. We practiced the breathwork routine my therapist suggested before grabbing oat milk lattes.",
+            entity_types=entity_types_json,
+                extracted_entities=ExtractedEntities(
+                    extracted_entities=[
+                        ExtractedEntity(name="Nina", entity_type_id=1),
+                        ExtractedEntity(name="Scout", entity_type_id=1),
+                        ExtractedEntity(name="Lake Merritt", entity_type_id=2),
+                        ExtractedEntity(name="breathwork routine", entity_type_id=4),
+                    ]
+                ),
+        ).with_inputs("episode_content", "entity_types")
+    )
+
+    # Example 10: Pantry volunteering
+    all_examples.append(
+        dspy.Example(
+            episode_content="Volunteered at Community Roots Pantry again. Malik had us assemble produce boxes while he explained next month's food distribution schedule.",
+            entity_types=entity_types_json,
+                extracted_entities=ExtractedEntities(
+                    extracted_entities=[
+                        ExtractedEntity(name="Community Roots Pantry", entity_type_id=3),
+                        ExtractedEntity(name="Malik", entity_type_id=1),
+                        ExtractedEntity(name="produce box shift", entity_type_id=4),
+                    ]
+                ),
+        ).with_inputs("episode_content", "entity_types")
+    )
+
+    # Example 11: Family planning call
+    all_examples.append(
+        dspy.Example(
+            episode_content="Hopped on a call with Aunt Rosa about the Diaz Family Fund and scribbled 'gratitude mantra' on a sticky note so I remember to breathe this week.",
+            entity_types=entity_types_json,
+                extracted_entities=ExtractedEntities(
+                    extracted_entities=[
+                        ExtractedEntity(name="Aunt Rosa", entity_type_id=1),
+                        ExtractedEntity(name="Diaz Family Fund", entity_type_id=3),
+                        ExtractedEntity(name="gratitude mantra", entity_type_id=0),
+                    ]
+                ),
+        ).with_inputs("episode_content", "entity_types")
+    )
+
+    # Example 12: Mission Works sprint
+    all_examples.append(
+        dspy.Example(
+            episode_content="Camped out at Mission Works Lab with the Redwood AI crew to finish our sprint. Priya kept pairing with me on the bug bash while Jordan ordered Thai.",
+            entity_types=entity_types_json,
+                extracted_entities=ExtractedEntities(
+                    extracted_entities=[
+                        ExtractedEntity(name="Mission Works Lab", entity_type_id=2),
+                        ExtractedEntity(name="Redwood AI", entity_type_id=3),
+                        ExtractedEntity(name="Priya", entity_type_id=1),
+                        ExtractedEntity(name="bug bash sprint", entity_type_id=4),
+                    ]
+                ),
+        ).with_inputs("episode_content", "entity_types")
+    )
+
+    # Example 13: Support circle discussion
+    all_examples.append(
+        dspy.Example(
+            episode_content="Spent the evening at Haven House support circle talking about the burnout spiral. Jenna facilitated and had us name a north star intention for the week.",
+            entity_types=entity_types_json,
+                extracted_entities=ExtractedEntities(
+                    extracted_entities=[
+                        ExtractedEntity(name="Haven House support circle", entity_type_id=4),
+                        ExtractedEntity(name="Jenna", entity_type_id=1),
+                        ExtractedEntity(name="burnout spiral", entity_type_id=0),
+                        ExtractedEntity(name="north star intention", entity_type_id=0),
+                    ]
+                ),
+        ).with_inputs("episode_content", "entity_types")
+    )
+
     # Validation Example 1: Book club meeting
     all_examples.append(
         dspy.Example(
@@ -227,8 +305,8 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
         ).with_inputs("episode_content", "entity_types")
     )
 
-    trainset = all_examples[:8]
-    valset = all_examples[8:]
+    trainset = all_examples[:10]
+    valset = all_examples[10:]
 
     logger.info("Built trainset with %d examples, valset with %d examples", len(trainset), len(valset))
     return trainset, valset

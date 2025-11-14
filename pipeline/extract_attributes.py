@@ -44,16 +44,46 @@ from pipeline.entity_edge_models import entity_types
 logger = logging.getLogger(__name__)
 
 
-class AttributeExtractionSignature(dspy.Signature):
-    """Extract type-specific attributes for an entity from journal context."""
+def _build_attribute_signature(
+    entity_type: str, response_model: type[BaseModel]
+) -> type[dspy.Signature]:
+    """Create a signature class for a specific entity type."""
 
-    episode_content: str = dspy.InputField(desc="current journal entry")
-    previous_episodes: str = dspy.InputField(desc="previous entries for context")
-    entity_name: str = dspy.InputField(desc="entity to extract attributes for")
-    entity_type: str = dspy.InputField(desc="type of entity")
-    existing_attributes: str = dspy.InputField(desc="current entity attributes")
+    safe_name = "".join(ch for ch in (entity_type or response_model.__name__) if ch.isalnum()) or "Generic"
+    class_name = f"{safe_name}AttributeSignature"
+    doc = f"Extract {entity_type or response_model.__name__} attributes from journal entries."
 
-    # Output field is dynamically set based on entity type in forward()
+    annotations = {
+        "episode_content": str,
+        "previous_episodes": str,
+        "entity_name": str,
+        "entity_type": str,
+        "existing_attributes": str,
+        "attributes": response_model,
+    }
+
+    attrs = {
+        "__doc__": doc,
+        "__annotations__": annotations,
+        "episode_content": dspy.InputField(desc="Current journal entry text"),
+        "previous_episodes": dspy.InputField(
+            desc="Previous journal entries as JSON list for additional context"
+        ),
+        "entity_name": dspy.InputField(
+            desc="Name of the entity to extract attributes for"
+        ),
+        "entity_type": dspy.InputField(
+            desc="Type of entity (e.g., Person, Activity, Organization, Place)"
+        ),
+        "existing_attributes": dspy.InputField(
+            desc="Current entity attributes as JSON dict (may be empty)"
+        ),
+        "attributes": dspy.OutputField(
+            desc=f"Extracted {entity_type or response_model.__name__} attributes based on schema. Only extract information explicitly present in the journal data."
+        ),
+    }
+
+    return type(class_name, (dspy.Signature,), attrs)
 
 
 @dataclass
@@ -85,7 +115,16 @@ class AttributeExtractor(dspy.Module):
 
     def __init__(self):
         super().__init__()
-        self.extractor = dspy.Predict(AttributeExtractionSignature)
+        self._predictors: dict[str, dspy.Module] = {}
+        self._signatures: dict[str, type[dspy.Signature]] = {}
+
+        for default_type, model in entity_types.items():
+            signature = _build_attribute_signature(default_type, model)
+            predictor = dspy.ChainOfThought(signature)
+            attr_name = self._predictor_attr_name(default_type)
+            setattr(self, attr_name, predictor)
+            self._predictors[default_type] = predictor
+            self._signatures[default_type] = signature
 
         prompt_path = Path(__file__).parent / "prompts" / "extract_attributes.json"
         if prompt_path.exists():
@@ -114,43 +153,7 @@ class AttributeExtractor(dspy.Module):
         Returns:
             Dictionary of extracted attributes matching response_model schema
         """
-        # Create a dynamic signature class with the specific response model
-        # Using type() to create a new class with proper annotations at runtime
-        # This allows OutlinesAdapter to extract the Pydantic constraint correctly
-        DynamicSignature = type(
-            f'AttributeExtractionSignature_{response_model.__name__}',
-            (dspy.Signature,),
-            {
-                '__doc__': f"Extract {response_model.__name__} attributes from journal entries.",
-                '__annotations__': {
-                    'episode_content': str,
-                    'previous_episodes': str,
-                    'entity_name': str,
-                    'entity_type': str,
-                    'existing_attributes': str,
-                    'attributes': response_model,  # Dynamic Pydantic model
-                },
-                'episode_content': dspy.InputField(desc="Current journal entry text"),
-                'previous_episodes': dspy.InputField(
-                    desc="Previous journal entries as JSON list for additional context"
-                ),
-                'entity_name': dspy.InputField(
-                    desc="Name of the entity to extract attributes for"
-                ),
-                'entity_type': dspy.InputField(
-                    desc="Type of entity (e.g., Person, Activity, Organization, Place)"
-                ),
-                'existing_attributes': dspy.InputField(
-                    desc="Current entity attributes as JSON dict (may be empty)"
-                ),
-                'attributes': dspy.OutputField(
-                    desc=f"Extracted {entity_type} attributes based on schema. Only extract information explicitly present in messages."
-                ),
-            }
-        )
-
-        # Create a predictor with the dynamic signature
-        predictor = dspy.Predict(DynamicSignature)
+        predictor = self._get_or_create_predictor(entity_type, response_model)
 
         result = predictor(
             episode_content=episode_content,
@@ -160,8 +163,34 @@ class AttributeExtractor(dspy.Module):
             existing_attributes=existing_attributes,
         )
 
-        # Return the attributes as a dict
-        return result.attributes.model_dump(exclude_none=True)
+        attributes = getattr(result, "attributes", result)
+
+        if isinstance(attributes, BaseModel):
+            return attributes.model_dump(exclude_none=True)
+        if isinstance(attributes, dict):
+            return {k: v for k, v in attributes.items() if v is not None}
+        return attributes
+
+    def _get_or_create_predictor(
+        self, entity_type: str, response_model: type[BaseModel]
+    ) -> dspy.Module:
+        """Retrieve or build a predictor for the requested entity type."""
+        key = entity_type or response_model.__name__
+        if key in self._predictors:
+            return self._predictors[key]
+
+        signature = _build_attribute_signature(key, response_model)
+        predictor = dspy.ChainOfThought(signature)
+        attr_name = self._predictor_attr_name(key)
+        setattr(self, attr_name, predictor)
+        self._predictors[key] = predictor
+        self._signatures[key] = signature
+        return predictor
+
+    @staticmethod
+    def _predictor_attr_name(key: str) -> str:
+        safe = "".join(ch if ch.isalnum() else "_" for ch in (key or "generic"))
+        return f"{safe.lower()}_predictor"
 
 
 class ExtractAttributes:

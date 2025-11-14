@@ -321,8 +321,86 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
         ).with_inputs("episode_content", "entities", "reference_time")
     )
 
-    trainset = all_examples[:6]
-    valset = all_examples[6:]
+    all_examples.append(
+        dspy.Example(
+            episode_content=(
+                "Ran the Redwood AI sprint review at Mission Works Lab. Priya paired with Jordan on the bug bash "
+                "while I presented to the Venture Studio mentors."
+            ),
+            entities=["Priya", "Jordan", "Redwood AI", "Mission Works Lab", "bug bash"],
+            reference_time="2025-02-18T13:10:00Z",
+            relationships=ExtractedRelationships(
+                relationships=[
+                    ExtractedRelationship(
+                        source="Priya",
+                        target="Jordan",
+                        relation="TRAINS_WITH",
+                        fact="Priya paired with Jordan during the bug bash.",
+                    ),
+                    ExtractedRelationship(
+                        source="Priya",
+                        target="bug bash",
+                        relation="PARTICIPATES_IN",
+                        fact="She worked on the bug bash.",
+                    ),
+                    ExtractedRelationship(
+                        source="Redwood AI",
+                        target="Mission Works Lab",
+                        relation="MEETS_AT",
+                        fact="Redwood AI hosted the sprint review at Mission Works Lab.",
+                    ),
+                ]
+            ),
+        ).with_inputs("episode_content", "entities", "reference_time")
+    )
+
+    all_examples.append(
+        dspy.Example(
+            episode_content=(
+                "Haven House support circle met with facilitator Jenna, and she connected me with Malik from "
+                "Community Roots Pantry about Saturday's food rescue ride."
+            ),
+            entities=[
+                "Haven House support circle",
+                "Jenna",
+                "Malik",
+                "Community Roots Pantry",
+                "food rescue ride",
+            ],
+            reference_time="2025-02-20T20:15:00Z",
+            relationships=ExtractedRelationships(
+                relationships=[
+                    ExtractedRelationship(
+                        source="Haven House support circle",
+                        target="Jenna",
+                        relation="RUNS",
+                        fact="Jenna facilitated the Haven House circle.",
+                    ),
+                    ExtractedRelationship(
+                        source="Jenna",
+                        target="Malik",
+                        relation="INTRODUCES",
+                        fact="Jenna connected me with Malik.",
+                    ),
+                    ExtractedRelationship(
+                        source="Malik",
+                        target="Community Roots Pantry",
+                        relation="WORKS_AT",
+                        fact="Malik is part of Community Roots Pantry.",
+                    ),
+                    ExtractedRelationship(
+                        source="Malik",
+                        target="food rescue ride",
+                        relation="HOSTS",
+                        fact="Malik invited us to the food rescue ride.",
+                    ),
+                ]
+            ),
+        ).with_inputs("episode_content", "entities", "reference_time")
+    )
+
+    trainset = all_examples[:8]
+    valset = all_examples[8:]
     logger.info(
         "Built relationship trainset with %d examples, valset with %d examples",
         len(trainset),

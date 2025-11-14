@@ -30,7 +30,7 @@ from graphiti_core.nodes import EntityNode, EpisodicNode
 from graphiti_core.utils.bulk_utils import resolve_edge_pointers
 from graphiti_core.utils.datetime_utils import ensure_utc, utc_now
 from graphiti_core.utils.maintenance.dedup_helpers import _normalize_string_exact
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from pipeline.falkordblite_driver import fetch_entity_edges_by_group
 
@@ -52,6 +52,14 @@ class ExtractedRelationships(BaseModel):
     """Collection of relationships extracted from episode."""
 
     relationships: list[ExtractedRelationship]
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_list(cls, value):
+        """Allow bare lists to be parsed as relationships."""
+        if isinstance(value, list):
+            return {"relationships": value}
+        return value
 
 
 class RelationshipExtractionSignature(dspy.Signature):
@@ -84,7 +92,7 @@ class EdgeExtractor(dspy.Module):
 
     def __init__(self):
         super().__init__()
-        self.extractor = dspy.Predict(RelationshipExtractionSignature)
+        self.extractor = dspy.ChainOfThought(RelationshipExtractionSignature)
 
         prompt_path = Path(__file__).parent / "prompts" / "extract_edges.json"
         if prompt_path.exists():
