@@ -1,0 +1,40 @@
+{
+  "extractor": {
+    "traces": [],
+    "train": [],
+    "demos": [],
+    "signature": {
+      "instructions": "Extract entity attributes from journal entries.\n\nGiven an entity (name and type) and journal context, extract structured attributes\nbased on the entity type's Pydantic schema. Only extract information explicitly\npresent in the provided messages.",
+      "fields": [
+        {
+          "prefix": "Episode Content:",
+          "description": "Current journal entry text"
+        },
+        {
+          "prefix": "Previous Episodes:",
+          "description": "Previous journal entries as JSON list for additional context"
+        },
+        {
+          "prefix": "Entity Name:",
+          "description": "Name of the entity to extract attributes for"
+        },
+        {
+          "prefix": "Entity Type:",
+          "description": "Type of entity (e.g., Person, Emotion)"
+        },
+        {
+          "prefix": "Existing Attributes:",
+          "description": "Current entity attributes as JSON dict (may be empty)"
+        }
+      ]
+    },
+    "lm": null
+  },
+  "metadata": {
+    "dependency_versions": {
+      "python": "3.13",
+      "dspy": "3.0.3",
+      "cloudpickle": "3.1"
+    }
+  }
+}

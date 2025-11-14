@@ -1,0 +1,28 @@
+{
+  "generator": {
+    "traces": [],
+    "train": [],
+    "demos": [],
+    "signature": {
+      "instructions": "Generate concise entity summaries from journal entries.\n\nAccepts a JSON context dict matching graphiti-core's extract_summary prompt:\n    {\n        \"node\": {\n            \"name\": ...,\n            \"summary\": \"<existing summary (<=250 chars)>\",\n            \"entity_types\": [...],\n            \"attributes\": {...}\n        },\n        \"episode_content\": \"...\",\n        \"previous_episodes\": [\"...\", \"...\"]\n    }",
+      "fields": [
+        {
+          "prefix": "Summary Context:",
+          "description": "JSON dictionary with keys: node, episode_content, previous_episodes"
+        },
+        {
+          "prefix": "Summary:",
+          "description": "Concise factual summary combining new information with existing summary. State facts directly in under 250 characters. No meta-commentary."
+        }
+      ]
+    },
+    "lm": null
+  },
+  "metadata": {
+    "dependency_versions": {
+      "python": "3.13",
+      "dspy": "3.0.3",
+      "cloudpickle": "3.1"
+    }
+  }
+}

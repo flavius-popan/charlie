@@ -5,7 +5,7 @@ from typing import List
 from dspy_outlines import OutlinesLM, OutlinesAdapter
 
 
-def test_outlines_actually_constrains():
+def test_outlines_actually_constrains(model_path):
     """Verify Outlines enforces schema constraints.
 
     This test ensures that constrained generation works by validating
@@ -20,7 +20,7 @@ def test_outlines_actually_constrains():
         text: str = dspy.InputField()
         result: StrictCount = dspy.OutputField()
 
-    lm = OutlinesLM()
+    lm = OutlinesLM(model_path=model_path)
     adapter = OutlinesAdapter()
     dspy.configure(lm=lm, adapter=adapter)
 
@@ -31,7 +31,7 @@ def test_outlines_actually_constrains():
         assert isinstance(result.result.count, int)
 
 
-def test_knowledge_graph_extraction():
+def test_knowledge_graph_extraction(model_path):
     """Test full integration with knowledge graph extraction."""
 
     class Node(BaseModel):
@@ -54,7 +54,7 @@ def test_knowledge_graph_extraction():
         text: str = dspy.InputField()
         graph: KnowledgeGraph = dspy.OutputField()
 
-    lm = OutlinesLM()
+    lm = OutlinesLM(model_path=model_path)
     adapter = OutlinesAdapter()
     dspy.configure(lm=lm, adapter=adapter)
 

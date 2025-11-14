@@ -15,6 +15,7 @@ import threading
 from typing import Any
 import json
 from types import SimpleNamespace
+import copy
 
 import dspy
 import mlx_lm
@@ -37,10 +38,16 @@ class AttrDict(dict):
     """Dict that allows attribute-style access (needed for DSPy compatibility)."""
 
     def __getattr__(self, key):
-        return self[key]
+        try:
+            return self[key]
+        except KeyError:
+            raise AttributeError(f"'{type(self).__name__}' object has no attribute '{key}'")
 
     def __setattr__(self, key, value):
         self[key] = value
+
+    def __deepcopy__(self, memo):
+        return AttrDict(copy.deepcopy(dict(self), memo))
 
 
 class OutlinesLM(dspy.BaseLM):
@@ -60,13 +67,22 @@ class OutlinesLM(dspy.BaseLM):
     - MLX's efficient local inference
     """
 
-    def __init__(self, model_path: str = None, *, enable_prompt_cache: bool = False):
+    def __init__(
+        self,
+        model_path: str = None,
+        *,
+        enable_prompt_cache: bool = False,
+        generation_config: dict = None
+    ):
         """
         Initialize hybrid LM.
 
         Args:
             model_path: Path to MLX model (uses default if None)
             enable_prompt_cache: Whether to build an MLX prompt cache (off by default)
+            generation_config: Dict of MLX-LM sampling parameters.
+                              Supported: temp, top_p, min_p, min_tokens_to_keep, top_k
+                              Defaults to deterministic settings (temp=0.0) if None.
         """
         # Import here to get default path
         from .mlx_loader import DEFAULT_MODEL_PATH
@@ -94,6 +110,15 @@ class OutlinesLM(dspy.BaseLM):
             logger.info("OutlinesLM initialized with prompt caching enabled")
         logger.info("OutlinesLM initialized with Outlines+MLX backend")
 
+        # Store generation config (defaults for deterministic extraction)
+        # Supported params: temp, top_p, min_p, min_tokens_to_keep, top_k
+        self.generation_config = generation_config or {
+            "temp": 0.0,  # Greedy decoding for full determinism
+            "top_p": 1.0,
+            "min_p": 0.0,
+        }
+        logger.info(f"OutlinesLM generation config: {self.generation_config}")
+
     def forward(self, prompt=None, messages=None, **kwargs):
         """
         Main generation interface called by DSPy.
@@ -110,7 +135,7 @@ class OutlinesLM(dspy.BaseLM):
         Returns:
             OpenAI-format response dict
         """
-        max_tokens = kwargs.get("max_tokens", 512)
+        max_tokens = kwargs.get("max_tokens", self.generation_config.get("max_tokens", 512))
         constraint = kwargs.pop("_outlines_constraint", None)
         field_name = kwargs.pop("_outlines_field_name", None)
 
@@ -120,21 +145,37 @@ class OutlinesLM(dspy.BaseLM):
         else:
             formatted_prompt = prompt
 
-        # Log cache statistics before generation
+        # Log generation parameters at debug level
         cache_size = self._get_cache_size()
-        logger.info(
-            f"Generating with constraint: {constraint.__name__ if constraint else 'None'}, "
-            f"cache_size={cache_size} tokens"
+        logger.debug(
+            f"Generation params: constraint={constraint.__name__ if constraint else 'None'}, "
+            f"cache_size={cache_size} tokens, prompt_length={len(formatted_prompt)} chars, "
+            f"max_tokens={max_tokens}"
+        )
+
+        # Create sampler from generation config (outside lock - can run concurrently)
+        from mlx_lm.sample_utils import make_sampler
+        sampler = make_sampler(
+            temp=self.generation_config.get("temp", 0.0),
+            top_p=self.generation_config.get("top_p", 1.0),
+            min_p=self.generation_config.get("min_p", 0.0),
+            min_tokens_to_keep=self.generation_config.get("min_tokens_to_keep", 1),
+            top_k=self.generation_config.get("top_k", 0),
         )
 
         # Lock MLX model access to prevent Metal command buffer race conditions
         with MLX_LOCK:
-            outlines_kwargs = {"max_tokens": max_tokens}
+            outlines_kwargs = {"max_tokens": max_tokens, "sampler": sampler}
             if self.prompt_cache is not None:
                 outlines_kwargs["prompt_cache"] = self.prompt_cache
 
+            # Note: repetition_penalty must be applied via logits_processor, not sampler
+            # For now, we only support temp/top_p/min_p/top_k via sampler
+            # TODO: Add repetition_penalty support via logits_processor if needed
+
             if constraint:
                 # Use Outlines wrapper for constrained generation
+                logger.debug(f"Using constrained generation: {constraint.__name__}")
                 result_json = self.outlines_model(
                     formatted_prompt,
                     output_type=constraint,
@@ -142,22 +183,37 @@ class OutlinesLM(dspy.BaseLM):
                 )
             else:
                 # Use raw MLX for unconstrained generation
-                generate_kwargs = {"verbose": False}
-                if self.prompt_cache is not None:
-                    generate_kwargs["prompt_cache"] = self.prompt_cache
+                generate_kwargs = {"verbose": False, **outlines_kwargs}
                 completion = mlx_lm.generate(
                     self.raw_mlx_model,
                     self.tokenizer,
                     formatted_prompt,
-                    max_tokens=max_tokens,
                     **generate_kwargs,
                 )
 
         # Process results outside lock (can run concurrently)
         if constraint:
+            logger.debug(f"Constrained generation complete: {len(result_json)} chars")
+
             # Check if constraint is a Pydantic model (requires JSON parsing)
             if isinstance(constraint, type) and issubclass(constraint, BaseModel):
-                parsed = constraint.model_validate_json(result_json)
+                try:
+                    parsed = constraint.model_validate_json(result_json)
+                except Exception as e:
+                    # Save failed output to debug/ for inspection
+                    from pathlib import Path
+                    from datetime import datetime
+                    debug_dir = Path("debug")
+                    debug_dir.mkdir(exist_ok=True)
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    debug_file = debug_dir / f"failed_generation_{timestamp}.json"
+                    debug_file.write_text(result_json)
+
+                    logger.error(f"Failed to parse constrained output: {e}")
+                    logger.error(f"Full output saved to: {debug_file}")
+                    logger.debug(f"Output preview: {result_json[:500]}...")
+                    logger.debug(f"Output suffix: ...{result_json[-200:]}")
+                    raise
                 if field_name:
                     completion = json.dumps({field_name: parsed.model_dump()})
                 else:

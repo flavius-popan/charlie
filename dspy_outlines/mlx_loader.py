@@ -4,9 +4,9 @@ import logging
 import mlx_lm
 import outlines
 
-logger = logging.getLogger(__name__)
+from settings import DEFAULT_MODEL_PATH
 
-DEFAULT_MODEL_PATH = "mlx-community/Qwen3-4B-Instruct-2507-8bit"
+logger = logging.getLogger(__name__)
 
 
 def load_mlx_model(model_path: str = None):
@@ -31,9 +31,7 @@ def load_mlx_model(model_path: str = None):
     return mlx_model, mlx_tokenizer
 
 
-def create_outlines_model(
-    model_path: str = None, *, enable_prompt_cache: bool = False
-):
+def create_outlines_model(model_path: str = None, *, enable_prompt_cache: bool = False):
     """
     Create Outlines model wrapper around MLX.
 

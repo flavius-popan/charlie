@@ -38,14 +38,15 @@ class SimpleSignature(dspy.Signature):
 
 
 @pytest.fixture(scope="module")
-def shared_lm():
+def shared_lm(request):
     """Shared OutlinesLM instance for all tests.
 
     Uses a single 4GB model for all tests to conserve memory.
     This tests the common pattern: multiple threads sharing one model instance.
     For multi-model parallel testing, see docs/benchmark_pool.md
     """
-    return OutlinesLM()
+    model_path = request.config.getoption("--model")
+    return OutlinesLM(model_path=model_path)
 
 
 @pytest.fixture

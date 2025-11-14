@@ -11,7 +11,6 @@ for shard in range(16):
     (_cache_dir / f"{shard:03d}").mkdir(parents=True, exist_ok=True)
 
 from .adapter import OutlinesAdapter
-from .kg_extraction import KGExtractionModule
 from .lm import OutlinesLM
 
-__all__ = ["OutlinesLM", "OutlinesAdapter", "KGExtractionModule"]
+__all__ = ["OutlinesLM", "OutlinesAdapter"]

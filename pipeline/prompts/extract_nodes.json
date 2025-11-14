@@ -1,0 +1,393 @@
+{
+  "extractor": {
+    "traces": [],
+    "train": [],
+    "demos": [
+      {
+        "episode_content": "Insane day at TechCorp. The product launch is next week and everything's on fire. My manager Lisa says I'm doing great but I feel like I'm barely keeping up.",
+        "entity_types": "[{\"entity_type_id\": 0, \"entity_type_name\": \"Entity\", \"entity_type_description\": \"fallback for significant entities\"}, {\"entity_type_id\": 1, \"entity_type_name\": \"Person\", \"entity_type_description\": \"individuals mentioned in the journal. Extract individuals mentioned: friends, family, colleagues, romantic partners, professionals (therapists/doctors), acquaintances.\"}, {\"entity_type_id\": 2, \"entity_type_name\": \"Place\", \"entity_type_description\": \"specific locations and venues. Extract specific places visited or mentioned: coffee shops, parks, restaurants, cities, neighborhoods, venues, landmarks.\"}, {\"entity_type_id\": 3, \"entity_type_name\": \"Organization\", \"entity_type_description\": \"companies, institutions, groups. Extract organizations engaged with: workplaces, schools, clubs, community groups, institutions, companies.\"}, {\"entity_type_id\": 4, \"entity_type_name\": \"Concept\", \"entity_type_description\": \"abstract topics and life themes. Extract life themes and topics reflected on: personal growth, relationships, mental health, career, identity, values, beliefs.\"}, {\"entity_type_id\": 5, \"entity_type_name\": \"Activity\", \"entity_type_description\": \"events, activities, and experiences. Extract specific activities and events: appointments, outings, hobbies, social gatherings, daily routines, significant moments.\"}]",
+        "extracted_entities": {
+          "extracted_entities": [
+            {
+              "name": "TechCorp",
+              "entity_type_id": 3
+            },
+            {
+              "name": "Lisa",
+              "entity_type_id": 1
+            },
+            {
+              "name": "product launch",
+              "entity_type_id": 5
+            }
+          ]
+        }
+      },
+      {
+        "episode_content": "Game night at our place. Emma, Devon, and Kai came over for Catan. We laughed so hard. These people are my chosen family and I'm grateful for them every day.",
+        "entity_types": "[{\"entity_type_id\": 0, \"entity_type_name\": \"Entity\", \"entity_type_description\": \"fallback for significant entities\"}, {\"entity_type_id\": 1, \"entity_type_name\": \"Person\", \"entity_type_description\": \"individuals mentioned in the journal. Extract individuals mentioned: friends, family, colleagues, romantic partners, professionals (therapists/doctors), acquaintances.\"}, {\"entity_type_id\": 2, \"entity_type_name\": \"Place\", \"entity_type_description\": \"specific locations and venues. Extract specific places visited or mentioned: coffee shops, parks, restaurants, cities, neighborhoods, venues, landmarks.\"}, {\"entity_type_id\": 3, \"entity_type_name\": \"Organization\", \"entity_type_description\": \"companies, institutions, groups. Extract organizations engaged with: workplaces, schools, clubs, community groups, institutions, companies.\"}, {\"entity_type_id\": 4, \"entity_type_name\": \"Concept\", \"entity_type_description\": \"abstract topics and life themes. Extract life themes and topics reflected on: personal growth, relationships, mental health, career, identity, values, beliefs.\"}, {\"entity_type_id\": 5, \"entity_type_name\": \"Activity\", \"entity_type_description\": \"events, activities, and experiences. Extract specific activities and events: appointments, outings, hobbies, social gatherings, daily routines, significant moments.\"}]",
+        "extracted_entities": {
+          "extracted_entities": [
+            {
+              "name": "Emma",
+              "entity_type_id": 1
+            },
+            {
+              "name": "Devon",
+              "entity_type_id": 1
+            },
+            {
+              "name": "Kai",
+              "entity_type_id": 1
+            },
+            {
+              "name": "game night",
+              "entity_type_id": 5
+            },
+            {
+              "name": "chosen family",
+              "entity_type_id": 4
+            }
+          ]
+        }
+      },
+      {
+        "episode_content": "Parent-teacher conference at Riverside Elementary for Lily. Ms. Johnson says she's doing great but seems anxious about tests. Guess she gets that from me.",
+        "entity_types": "[{\"entity_type_id\": 0, \"entity_type_name\": \"Entity\", \"entity_type_description\": \"fallback for significant entities\"}, {\"entity_type_id\": 1, \"entity_type_name\": \"Person\", \"entity_type_description\": \"individuals mentioned in the journal. Extract individuals mentioned: friends, family, colleagues, romantic partners, professionals (therapists/doctors), acquaintances.\"}, {\"entity_type_id\": 2, \"entity_type_name\": \"Place\", \"entity_type_description\": \"specific locations and venues. Extract specific places visited or mentioned: coffee shops, parks, restaurants, cities, neighborhoods, venues, landmarks.\"}, {\"entity_type_id\": 3, \"entity_type_name\": \"Organization\", \"entity_type_description\": \"companies, institutions, groups. Extract organizations engaged with: workplaces, schools, clubs, community groups, institutions, companies.\"}, {\"entity_type_id\": 4, \"entity_type_name\": \"Concept\", \"entity_type_description\": \"abstract topics and life themes. Extract life themes and topics reflected on: personal growth, relationships, mental health, career, identity, values, beliefs.\"}, {\"entity_type_id\": 5, \"entity_type_name\": \"Activity\", \"entity_type_description\": \"events, activities, and experiences. Extract specific activities and events: appointments, outings, hobbies, social gatherings, daily routines, significant moments.\"}]",
+        "extracted_entities": {
+          "extracted_entities": [
+            {
+              "name": "Riverside Elementary",
+              "entity_type_id": 3
+            },
+            {
+              "name": "Lily",
+              "entity_type_id": 1
+            },
+            {
+              "name": "Ms. Johnson",
+              "entity_type_id": 1
+            },
+            {
+              "name": "parent-teacher conference",
+              "entity_type_id": 5
+            }
+          ]
+        }
+      },
+      {
+        "episode_content": "Finally went back to yoga at Mindful Movement. Haven't been in weeks. My instructor Emma noticed and welcomed me back warmly. Need to prioritize self-care more.",
+        "entity_types": "[{\"entity_type_id\": 0, \"entity_type_name\": \"Entity\", \"entity_type_description\": \"fallback for significant entities\"}, {\"entity_type_id\": 1, \"entity_type_name\": \"Person\", \"entity_type_description\": \"individuals mentioned in the journal. Extract individuals mentioned: friends, family, colleagues, romantic partners, professionals (therapists/doctors), acquaintances.\"}, {\"entity_type_id\": 2, \"entity_type_name\": \"Place\", \"entity_type_description\": \"specific locations and venues. Extract specific places visited or mentioned: coffee shops, parks, restaurants, cities, neighborhoods, venues, landmarks.\"}, {\"entity_type_id\": 3, \"entity_type_name\": \"Organization\", \"entity_type_description\": \"companies, institutions, groups. Extract organizations engaged with: workplaces, schools, clubs, community groups, institutions, companies.\"}, {\"entity_type_id\": 4, \"entity_type_name\": \"Concept\", \"entity_type_description\": \"abstract topics and life themes. Extract life themes and topics reflected on: personal growth, relationships, mental health, career, identity, values, beliefs.\"}, {\"entity_type_id\": 5, \"entity_type_name\": \"Activity\", \"entity_type_description\": \"events, activities, and experiences. Extract specific activities and events: appointments, outings, hobbies, social gatherings, daily routines, significant moments.\"}]",
+        "extracted_entities": {
+          "extracted_entities": [
+            {
+              "name": "Mindful Movement",
+              "entity_type_id": 3
+            },
+            {
+              "name": "Emma",
+              "entity_type_id": 1
+            },
+            {
+              "name": "yoga class",
+              "entity_type_id": 5
+            },
+            {
+              "name": "self-care",
+              "entity_type_id": 4
+            }
+          ]
+        }
+      },
+      {
+        "episode_content": "Went to the poetry slam at Cafe Luna. My friend Zara performed and killed it. Made me want to write again. Art really does heal something in me.",
+        "entity_types": "[{\"entity_type_id\": 0, \"entity_type_name\": \"Entity\", \"entity_type_description\": \"fallback for significant entities\"}, {\"entity_type_id\": 1, \"entity_type_name\": \"Person\", \"entity_type_description\": \"individuals mentioned in the journal. Extract individuals mentioned: friends, family, colleagues, romantic partners, professionals (therapists/doctors), acquaintances.\"}, {\"entity_type_id\": 2, \"entity_type_name\": \"Place\", \"entity_type_description\": \"specific locations and venues. Extract specific places visited or mentioned: coffee shops, parks, restaurants, cities, neighborhoods, venues, landmarks.\"}, {\"entity_type_id\": 3, \"entity_type_name\": \"Organization\", \"entity_type_description\": \"companies, institutions, groups. Extract organizations engaged with: workplaces, schools, clubs, community groups, institutions, companies.\"}, {\"entity_type_id\": 4, \"entity_type_name\": \"Concept\", \"entity_type_description\": \"abstract topics and life themes. Extract life themes and topics reflected on: personal growth, relationships, mental health, career, identity, values, beliefs.\"}, {\"entity_type_id\": 5, \"entity_type_name\": \"Activity\", \"entity_type_description\": \"events, activities, and experiences. Extract specific activities and events: appointments, outings, hobbies, social gatherings, daily routines, significant moments.\"}]",
+        "extracted_entities": {
+          "extracted_entities": [
+            {
+              "name": "Cafe Luna",
+              "entity_type_id": 2
+            },
+            {
+              "name": "Zara",
+              "entity_type_id": 1
+            },
+            {
+              "name": "poetry slam",
+              "entity_type_id": 5
+            },
+            {
+              "name": "creativity",
+              "entity_type_id": 4
+            }
+          ]
+        }
+      },
+      {
+        "episode_content": "Brunch with my brother at Flour Bakery. He's going through a breakup and needed to vent. I'm glad we're close enough now that he feels comfortable talking to me about this stuff.",
+        "entity_types": "[{\"entity_type_id\": 0, \"entity_type_name\": \"Entity\", \"entity_type_description\": \"fallback for significant entities\"}, {\"entity_type_id\": 1, \"entity_type_name\": \"Person\", \"entity_type_description\": \"individuals mentioned in the journal. Extract individuals mentioned: friends, family, colleagues, romantic partners, professionals (therapists/doctors), acquaintances.\"}, {\"entity_type_id\": 2, \"entity_type_name\": \"Place\", \"entity_type_description\": \"specific locations and venues. Extract specific places visited or mentioned: coffee shops, parks, restaurants, cities, neighborhoods, venues, landmarks.\"}, {\"entity_type_id\": 3, \"entity_type_name\": \"Organization\", \"entity_type_description\": \"companies, institutions, groups. Extract organizations engaged with: workplaces, schools, clubs, community groups, institutions, companies.\"}, {\"entity_type_id\": 4, \"entity_type_name\": \"Concept\", \"entity_type_description\": \"abstract topics and life themes. Extract life themes and topics reflected on: personal growth, relationships, mental health, career, identity, values, beliefs.\"}, {\"entity_type_id\": 5, \"entity_type_name\": \"Activity\", \"entity_type_description\": \"events, activities, and experiences. Extract specific activities and events: appointments, outings, hobbies, social gatherings, daily routines, significant moments.\"}]",
+        "extracted_entities": {
+          "extracted_entities": [
+            {
+              "name": "brother",
+              "entity_type_id": 1
+            },
+            {
+              "name": "Flour Bakery",
+              "entity_type_id": 2
+            },
+            {
+              "name": "brunch",
+              "entity_type_id": 5
+            }
+          ]
+        }
+      },
+      {
+        "episode_content": "Volunteered at Food For All this morning. Met a woman named Rosa who reminded me how lucky I am. The work is hard but gives me perspective on my own problems.",
+        "entity_types": "[{\"entity_type_id\": 0, \"entity_type_name\": \"Entity\", \"entity_type_description\": \"fallback for significant entities\"}, {\"entity_type_id\": 1, \"entity_type_name\": \"Person\", \"entity_type_description\": \"individuals mentioned in the journal. Extract individuals mentioned: friends, family, colleagues, romantic partners, professionals (therapists/doctors), acquaintances.\"}, {\"entity_type_id\": 2, \"entity_type_name\": \"Place\", \"entity_type_description\": \"specific locations and venues. Extract specific places visited or mentioned: coffee shops, parks, restaurants, cities, neighborhoods, venues, landmarks.\"}, {\"entity_type_id\": 3, \"entity_type_name\": \"Organization\", \"entity_type_description\": \"companies, institutions, groups. Extract organizations engaged with: workplaces, schools, clubs, community groups, institutions, companies.\"}, {\"entity_type_id\": 4, \"entity_type_name\": \"Concept\", \"entity_type_description\": \"abstract topics and life themes. Extract life themes and topics reflected on: personal growth, relationships, mental health, career, identity, values, beliefs.\"}, {\"entity_type_id\": 5, \"entity_type_name\": \"Activity\", \"entity_type_description\": \"events, activities, and experiences. Extract specific activities and events: appointments, outings, hobbies, social gatherings, daily routines, significant moments.\"}]",
+        "extracted_entities": {
+          "extracted_entities": [
+            {
+              "name": "Food For All",
+              "entity_type_id": 3
+            },
+            {
+              "name": "Rosa",
+              "entity_type_id": 1
+            },
+            {
+              "name": "volunteering",
+              "entity_type_id": 5
+            },
+            {
+              "name": "gratitude",
+              "entity_type_id": 4
+            }
+          ]
+        }
+      },
+      {
+        "episode_content": "Met Sarah at Blue Bottle Coffee this morning. We talked about our career goals and how we're both feeling stuck. It's nice to have someone who gets it.",
+        "entity_types": "[{\"entity_type_id\": 0, \"entity_type_name\": \"Entity\", \"entity_type_description\": \"fallback for significant entities\"}, {\"entity_type_id\": 1, \"entity_type_name\": \"Person\", \"entity_type_description\": \"individuals mentioned in the journal. Extract individuals mentioned: friends, family, colleagues, romantic partners, professionals (therapists/doctors), acquaintances.\"}, {\"entity_type_id\": 2, \"entity_type_name\": \"Place\", \"entity_type_description\": \"specific locations and venues. Extract specific places visited or mentioned: coffee shops, parks, restaurants, cities, neighborhoods, venues, landmarks.\"}, {\"entity_type_id\": 3, \"entity_type_name\": \"Organization\", \"entity_type_description\": \"companies, institutions, groups. Extract organizations engaged with: workplaces, schools, clubs, community groups, institutions, companies.\"}, {\"entity_type_id\": 4, \"entity_type_name\": \"Concept\", \"entity_type_description\": \"abstract topics and life themes. Extract life themes and topics reflected on: personal growth, relationships, mental health, career, identity, values, beliefs.\"}, {\"entity_type_id\": 5, \"entity_type_name\": \"Activity\", \"entity_type_description\": \"events, activities, and experiences. Extract specific activities and events: appointments, outings, hobbies, social gatherings, daily routines, significant moments.\"}]",
+        "extracted_entities": {
+          "extracted_entities": [
+            {
+              "name": "Sarah",
+              "entity_type_id": 1
+            },
+            {
+              "name": "Blue Bottle Coffee",
+              "entity_type_id": 2
+            },
+            {
+              "name": "career goals",
+              "entity_type_id": 4
+            }
+          ]
+        }
+      },
+      {
+        "episode_content": "Mom and Dad came over for dinner. We actually had a good time for once, no arguments. Maybe things are getting better between us.",
+        "entity_types": "[{\"entity_type_id\": 0, \"entity_type_name\": \"Entity\", \"entity_type_description\": \"fallback for significant entities\"}, {\"entity_type_id\": 1, \"entity_type_name\": \"Person\", \"entity_type_description\": \"individuals mentioned in the journal. Extract individuals mentioned: friends, family, colleagues, romantic partners, professionals (therapists/doctors), acquaintances.\"}, {\"entity_type_id\": 2, \"entity_type_name\": \"Place\", \"entity_type_description\": \"specific locations and venues. Extract specific places visited or mentioned: coffee shops, parks, restaurants, cities, neighborhoods, venues, landmarks.\"}, {\"entity_type_id\": 3, \"entity_type_name\": \"Organization\", \"entity_type_description\": \"companies, institutions, groups. Extract organizations engaged with: workplaces, schools, clubs, community groups, institutions, companies.\"}, {\"entity_type_id\": 4, \"entity_type_name\": \"Concept\", \"entity_type_description\": \"abstract topics and life themes. Extract life themes and topics reflected on: personal growth, relationships, mental health, career, identity, values, beliefs.\"}, {\"entity_type_id\": 5, \"entity_type_name\": \"Activity\", \"entity_type_description\": \"events, activities, and experiences. Extract specific activities and events: appointments, outings, hobbies, social gatherings, daily routines, significant moments.\"}]",
+        "extracted_entities": {
+          "extracted_entities": [
+            {
+              "name": "Mom",
+              "entity_type_id": 1
+            },
+            {
+              "name": "Dad",
+              "entity_type_id": 1
+            },
+            {
+              "name": "dinner",
+              "entity_type_id": 5
+            }
+          ]
+        }
+      },
+      {
+        "episode_content": "Joined the Bay Area Runners group this morning. Met Hassan and Priya who are also training for the half marathon. Having accountability partners makes this less scary.",
+        "entity_types": "[{\"entity_type_id\": 0, \"entity_type_name\": \"Entity\", \"entity_type_description\": \"fallback for significant entities\"}, {\"entity_type_id\": 1, \"entity_type_name\": \"Person\", \"entity_type_description\": \"individuals mentioned in the journal. Extract individuals mentioned: friends, family, colleagues, romantic partners, professionals (therapists/doctors), acquaintances.\"}, {\"entity_type_id\": 2, \"entity_type_name\": \"Place\", \"entity_type_description\": \"specific locations and venues. Extract specific places visited or mentioned: coffee shops, parks, restaurants, cities, neighborhoods, venues, landmarks.\"}, {\"entity_type_id\": 3, \"entity_type_name\": \"Organization\", \"entity_type_description\": \"companies, institutions, groups. Extract organizations engaged with: workplaces, schools, clubs, community groups, institutions, companies.\"}, {\"entity_type_id\": 4, \"entity_type_name\": \"Concept\", \"entity_type_description\": \"abstract topics and life themes. Extract life themes and topics reflected on: personal growth, relationships, mental health, career, identity, values, beliefs.\"}, {\"entity_type_id\": 5, \"entity_type_name\": \"Activity\", \"entity_type_description\": \"events, activities, and experiences. Extract specific activities and events: appointments, outings, hobbies, social gatherings, daily routines, significant moments.\"}]",
+        "extracted_entities": {
+          "extracted_entities": [
+            {
+              "name": "Bay Area Runners",
+              "entity_type_id": 3
+            },
+            {
+              "name": "Hassan",
+              "entity_type_id": 1
+            },
+            {
+              "name": "Priya",
+              "entity_type_id": 1
+            },
+            {
+              "name": "running",
+              "entity_type_id": 5
+            },
+            {
+              "name": "accountability",
+              "entity_type_id": 4
+            }
+          ]
+        }
+      },
+      {
+        "episode_content": "Had a real talk with Alex tonight about our future. Kids, marriage, where we want to live. It's intense thinking about commitment like this but also exciting?",
+        "entity_types": "[{\"entity_type_id\": 0, \"entity_type_name\": \"Entity\", \"entity_type_description\": \"fallback for significant entities\"}, {\"entity_type_id\": 1, \"entity_type_name\": \"Person\", \"entity_type_description\": \"individuals mentioned in the journal. Extract individuals mentioned: friends, family, colleagues, romantic partners, professionals (therapists/doctors), acquaintances.\"}, {\"entity_type_id\": 2, \"entity_type_name\": \"Place\", \"entity_type_description\": \"specific locations and venues. Extract specific places visited or mentioned: coffee shops, parks, restaurants, cities, neighborhoods, venues, landmarks.\"}, {\"entity_type_id\": 3, \"entity_type_name\": \"Organization\", \"entity_type_description\": \"companies, institutions, groups. Extract organizations engaged with: workplaces, schools, clubs, community groups, institutions, companies.\"}, {\"entity_type_id\": 4, \"entity_type_name\": \"Concept\", \"entity_type_description\": \"abstract topics and life themes. Extract life themes and topics reflected on: personal growth, relationships, mental health, career, identity, values, beliefs.\"}, {\"entity_type_id\": 5, \"entity_type_name\": \"Activity\", \"entity_type_description\": \"events, activities, and experiences. Extract specific activities and events: appointments, outings, hobbies, social gatherings, daily routines, significant moments.\"}]",
+        "extracted_entities": {
+          "extracted_entities": [
+            {
+              "name": "Alex",
+              "entity_type_id": 1
+            },
+            {
+              "name": "future",
+              "entity_type_id": 4
+            },
+            {
+              "name": "commitment",
+              "entity_type_id": 4
+            }
+          ]
+        }
+      },
+      {
+        "episode_content": "First day at DataFlow Inc. Everyone seems nice but I'm overwhelmed trying to remember names. My team lead Miguel walked me through the codebase. Imposter syndrome is real.",
+        "entity_types": "[{\"entity_type_id\": 0, \"entity_type_name\": \"Entity\", \"entity_type_description\": \"fallback for significant entities\"}, {\"entity_type_id\": 1, \"entity_type_name\": \"Person\", \"entity_type_description\": \"individuals mentioned in the journal. Extract individuals mentioned: friends, family, colleagues, romantic partners, professionals (therapists/doctors), acquaintances.\"}, {\"entity_type_id\": 2, \"entity_type_name\": \"Place\", \"entity_type_description\": \"specific locations and venues. Extract specific places visited or mentioned: coffee shops, parks, restaurants, cities, neighborhoods, venues, landmarks.\"}, {\"entity_type_id\": 3, \"entity_type_name\": \"Organization\", \"entity_type_description\": \"companies, institutions, groups. Extract organizations engaged with: workplaces, schools, clubs, community groups, institutions, companies.\"}, {\"entity_type_id\": 4, \"entity_type_name\": \"Concept\", \"entity_type_description\": \"abstract topics and life themes. Extract life themes and topics reflected on: personal growth, relationships, mental health, career, identity, values, beliefs.\"}, {\"entity_type_id\": 5, \"entity_type_name\": \"Activity\", \"entity_type_description\": \"events, activities, and experiences. Extract specific activities and events: appointments, outings, hobbies, social gatherings, daily routines, significant moments.\"}]",
+        "extracted_entities": {
+          "extracted_entities": [
+            {
+              "name": "DataFlow Inc",
+              "entity_type_id": 3
+            },
+            {
+              "name": "Miguel",
+              "entity_type_id": 1
+            },
+            {
+              "name": "first day",
+              "entity_type_id": 5
+            },
+            {
+              "name": "imposter syndrome",
+              "entity_type_id": 4
+            }
+          ]
+        }
+      },
+      {
+        "episode_content": "Farmers market with Sam. Got fresh flowers and talked to the vendor about her farm. These simple Sunday mornings are what life's about.",
+        "entity_types": "[{\"entity_type_id\": 0, \"entity_type_name\": \"Entity\", \"entity_type_description\": \"fallback for significant entities\"}, {\"entity_type_id\": 1, \"entity_type_name\": \"Person\", \"entity_type_description\": \"individuals mentioned in the journal. Extract individuals mentioned: friends, family, colleagues, romantic partners, professionals (therapists/doctors), acquaintances.\"}, {\"entity_type_id\": 2, \"entity_type_name\": \"Place\", \"entity_type_description\": \"specific locations and venues. Extract specific places visited or mentioned: coffee shops, parks, restaurants, cities, neighborhoods, venues, landmarks.\"}, {\"entity_type_id\": 3, \"entity_type_name\": \"Organization\", \"entity_type_description\": \"companies, institutions, groups. Extract organizations engaged with: workplaces, schools, clubs, community groups, institutions, companies.\"}, {\"entity_type_id\": 4, \"entity_type_name\": \"Concept\", \"entity_type_description\": \"abstract topics and life themes. Extract life themes and topics reflected on: personal growth, relationships, mental health, career, identity, values, beliefs.\"}, {\"entity_type_id\": 5, \"entity_type_name\": \"Activity\", \"entity_type_description\": \"events, activities, and experiences. Extract specific activities and events: appointments, outings, hobbies, social gatherings, daily routines, significant moments.\"}]",
+        "extracted_entities": {
+          "extracted_entities": [
+            {
+              "name": "Sam",
+              "entity_type_id": 1
+            },
+            {
+              "name": "farmers market",
+              "entity_type_id": 5
+            },
+            {
+              "name": "simple living",
+              "entity_type_id": 4
+            }
+          ]
+        }
+      },
+      {
+        "episode_content": "Checkup with Dr. Chen. Told her about my anxiety getting worse. She referred me to a psychiatrist and we talked about medication. Scary but probably time.",
+        "entity_types": "[{\"entity_type_id\": 0, \"entity_type_name\": \"Entity\", \"entity_type_description\": \"fallback for significant entities\"}, {\"entity_type_id\": 1, \"entity_type_name\": \"Person\", \"entity_type_description\": \"individuals mentioned in the journal. Extract individuals mentioned: friends, family, colleagues, romantic partners, professionals (therapists/doctors), acquaintances.\"}, {\"entity_type_id\": 2, \"entity_type_name\": \"Place\", \"entity_type_description\": \"specific locations and venues. Extract specific places visited or mentioned: coffee shops, parks, restaurants, cities, neighborhoods, venues, landmarks.\"}, {\"entity_type_id\": 3, \"entity_type_name\": \"Organization\", \"entity_type_description\": \"companies, institutions, groups. Extract organizations engaged with: workplaces, schools, clubs, community groups, institutions, companies.\"}, {\"entity_type_id\": 4, \"entity_type_name\": \"Concept\", \"entity_type_description\": \"abstract topics and life themes. Extract life themes and topics reflected on: personal growth, relationships, mental health, career, identity, values, beliefs.\"}, {\"entity_type_id\": 5, \"entity_type_name\": \"Activity\", \"entity_type_description\": \"events, activities, and experiences. Extract specific activities and events: appointments, outings, hobbies, social gatherings, daily routines, significant moments.\"}]",
+        "extracted_entities": {
+          "extracted_entities": [
+            {
+              "name": "Dr. Chen",
+              "entity_type_id": 1
+            },
+            {
+              "name": "doctor appointment",
+              "entity_type_id": 5
+            },
+            {
+              "name": "anxiety",
+              "entity_type_id": 4
+            }
+          ]
+        }
+      },
+      {
+        "episode_content": "Had my session with Dr. Martinez today. We talked about my relationship patterns and why I keep pushing people away. Heavy stuff but necessary.",
+        "entity_types": "[{\"entity_type_id\": 0, \"entity_type_name\": \"Entity\", \"entity_type_description\": \"fallback for significant entities\"}, {\"entity_type_id\": 1, \"entity_type_name\": \"Person\", \"entity_type_description\": \"individuals mentioned in the journal. Extract individuals mentioned: friends, family, colleagues, romantic partners, professionals (therapists/doctors), acquaintances.\"}, {\"entity_type_id\": 2, \"entity_type_name\": \"Place\", \"entity_type_description\": \"specific locations and venues. Extract specific places visited or mentioned: coffee shops, parks, restaurants, cities, neighborhoods, venues, landmarks.\"}, {\"entity_type_id\": 3, \"entity_type_name\": \"Organization\", \"entity_type_description\": \"companies, institutions, groups. Extract organizations engaged with: workplaces, schools, clubs, community groups, institutions, companies.\"}, {\"entity_type_id\": 4, \"entity_type_name\": \"Concept\", \"entity_type_description\": \"abstract topics and life themes. Extract life themes and topics reflected on: personal growth, relationships, mental health, career, identity, values, beliefs.\"}, {\"entity_type_id\": 5, \"entity_type_name\": \"Activity\", \"entity_type_description\": \"events, activities, and experiences. Extract specific activities and events: appointments, outings, hobbies, social gatherings, daily routines, significant moments.\"}]",
+        "extracted_entities": {
+          "extracted_entities": [
+            {
+              "name": "Dr. Martinez",
+              "entity_type_id": 1
+            },
+            {
+              "name": "therapy session",
+              "entity_type_id": 5
+            },
+            {
+              "name": "relationship patterns",
+              "entity_type_id": 4
+            }
+          ]
+        }
+      },
+      {
+        "episode_content": "Finally hit a new PR at CrossFit Westside! My coach Ryan was pumped. Been working towards this for months. Proof that consistency pays off I guess.",
+        "entity_types": "[{\"entity_type_id\": 0, \"entity_type_name\": \"Entity\", \"entity_type_description\": \"fallback for significant entities\"}, {\"entity_type_id\": 1, \"entity_type_name\": \"Person\", \"entity_type_description\": \"individuals mentioned in the journal. Extract individuals mentioned: friends, family, colleagues, romantic partners, professionals (therapists/doctors), acquaintances.\"}, {\"entity_type_id\": 2, \"entity_type_name\": \"Place\", \"entity_type_description\": \"specific locations and venues. Extract specific places visited or mentioned: coffee shops, parks, restaurants, cities, neighborhoods, venues, landmarks.\"}, {\"entity_type_id\": 3, \"entity_type_name\": \"Organization\", \"entity_type_description\": \"companies, institutions, groups. Extract organizations engaged with: workplaces, schools, clubs, community groups, institutions, companies.\"}, {\"entity_type_id\": 4, \"entity_type_name\": \"Concept\", \"entity_type_description\": \"abstract topics and life themes. Extract life themes and topics reflected on: personal growth, relationships, mental health, career, identity, values, beliefs.\"}, {\"entity_type_id\": 5, \"entity_type_name\": \"Activity\", \"entity_type_description\": \"events, activities, and experiences. Extract specific activities and events: appointments, outings, hobbies, social gatherings, daily routines, significant moments.\"}]",
+        "extracted_entities": {
+          "extracted_entities": [
+            {
+              "name": "CrossFit Westside",
+              "entity_type_id": 3
+            },
+            {
+              "name": "Ryan",
+              "entity_type_id": 1
+            },
+            {
+              "name": "gym workout",
+              "entity_type_id": 5
+            },
+            {
+              "name": "consistency",
+              "entity_type_id": 4
+            }
+          ]
+        }
+      }
+    ],
+    "signature": {
+      "instructions": "Extract significant entities from personal journal entries focusing on people and emotions.",
+      "fields": [
+        {
+          "prefix": "Episode Content:",
+          "description": "personal journal entry describing the author's experiences and feelings"
+        },
+        {
+          "prefix": "Entity Types:",
+          "description": "available entity types: Person (people author interacts with), Emotion (feelings author experiences), Entity (rare fallback)"
+        },
+        {
+          "prefix": "Extracted Entities:",
+          "description": "significant entities: people (type_id=1) and emotions (type_id=2); avoid objects, places, activities"
+        }
+      ]
+    },
+    "lm": null
+  },
+  "metadata": {
+    "dependency_versions": {
+      "python": "3.13",
+      "dspy": "3.0.3",
+      "cloudpickle": "3.1"
+    }
+  }
+}

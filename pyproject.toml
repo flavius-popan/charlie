@@ -17,6 +17,7 @@ dependencies = [
     "numpy>=2.3.4",
     "onnxruntime>=1.23.2",
     "huggingface-hub>=0.20.0",
+    "falkordblite>=0.1.0"
 ]
 
 [tool.setuptools.packages.find]
@@ -37,3 +38,6 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
+filterwarnings = [
+    "ignore:Support for class-based `config` is deprecated:DeprecationWarning",
+]

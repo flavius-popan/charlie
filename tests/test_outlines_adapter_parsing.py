@@ -62,9 +62,10 @@ def test_adapter_initialization():
 def test_extract_constraint():
     """Test constraint extraction from signature."""
     adapter = OutlinesAdapter()
-    constraint = adapter._extract_constraint(SimpleSignature)
+    constraint, field_name = adapter._extract_constraint(SimpleSignature)
 
     assert constraint == SimpleOutput
+    assert field_name == "output"
 
 
 def test_has_tool_calls_false():
@@ -292,4 +293,4 @@ def test_context_window_error_propagates():
     # Should increment failures but not try JSON fallback
     assert adapter.metrics["chat_failures"] == 1
     assert adapter.metrics["json_success"] == 0
-    assert mock_lm.call_count == 0  # JSON fallback should not be attempted
+    assert mock_lm.call_count == 1  # LM called once in Chat tier, JSON fallback should not be attempted
