@@ -1,0 +1,77 @@
+{
+  "extractor.predict": {
+    "traces": [],
+    "train": [],
+    "demos": [
+      {
+        "augmented": true,
+        "episode_content": "Met Sarah at Blue Bottle Coffee this morning. We talked about our career goals and how we're both feeling stuck. It's nice to have someone who gets it.",
+        "entity_types": "[{\"entity_type_id\": 0, \"entity_type_name\": \"Entity\", \"entity_type_description\": \"fallback for significant entities\"}, {\"entity_type_id\": 1, \"entity_type_name\": \"Person\", \"entity_type_description\": \"individuals mentioned in the journal. Extract individuals mentioned: friends, family, colleagues, romantic partners, professionals (therapists/doctors), acquaintances.\"}, {\"entity_type_id\": 2, \"entity_type_name\": \"Place\", \"entity_type_description\": \"specific locations and venues. Extract specific places visited or mentioned: coffee shops, parks, restaurants, cities, neighborhoods, venues, landmarks.\"}, {\"entity_type_id\": 3, \"entity_type_name\": \"Organization\", \"entity_type_description\": \"companies, institutions, groups. Extract organizations engaged with: workplaces, schools, clubs, community groups, institutions, companies.\"}, {\"entity_type_id\": 4, \"entity_type_name\": \"Activity\", \"entity_type_description\": \"events, activities, and experiences. Extract specific activities and events: appointments, outings, hobbies, social gatherings, daily routines, significant moments.\"}]",
+        "reasoning": "The journal entry mentions \"Sarah,\" who is clearly an individual referenced in the context of a meeting. \"Blue Bottle Coffee\" is a specific coffee shop, which falls under a venue or location. The activity described is a meeting or conversation about career goals and feelings of being stuck, which constitutes a social interaction or event. These elements are clearly identifiable and align with the provided entity types. \"Sarah\" is classified as a Person (entity_type_id 1), \"Blue Bottle Coffee\" as a Place (entity_type_id 2), and the meeting itself as an Activity (entity_type_id 4). No organizations are explicitly mentioned, and no abstract concepts are named beyond the implied topic of career goals, which is not a standalone entity type in the schema. Therefore, only the named entities and the specific activity are extracted.",
+        "extracted_entities": {
+          "extracted_entities": [
+            {
+              "name": "Sarah",
+              "entity_type_id": 1
+            },
+            {
+              "name": "Blue Bottle Coffee",
+              "entity_type_id": 2
+            },
+            {
+              "name": "meeting",
+              "entity_type_id": 4
+            }
+          ]
+        }
+      },
+      {
+        "augmented": true,
+        "episode_content": "Had my session with Dr. Martinez today. We talked about my relationship patterns and why I keep pushing people away. Heavy stuff but necessary.",
+        "entity_types": "[{\"entity_type_id\": 0, \"entity_type_name\": \"Entity\", \"entity_type_description\": \"fallback for significant entities\"}, {\"entity_type_id\": 1, \"entity_type_name\": \"Person\", \"entity_type_description\": \"individuals mentioned in the journal. Extract individuals mentioned: friends, family, colleagues, romantic partners, professionals (therapists/doctors), acquaintances.\"}, {\"entity_type_id\": 2, \"entity_type_name\": \"Place\", \"entity_type_description\": \"specific locations and venues. Extract specific places visited or mentioned: coffee shops, parks, restaurants, cities, neighborhoods, venues, landmarks.\"}, {\"entity_type_id\": 3, \"entity_type_name\": \"Organization\", \"entity_type_description\": \"companies, institutions, groups. Extract organizations engaged with: workplaces, schools, clubs, community groups, institutions, companies.\"}, {\"entity_type_id\": 4, \"entity_type_name\": \"Activity\", \"entity_type_description\": \"events, activities, and experiences. Extract specific activities and events: appointments, outings, hobbies, social gatherings, daily routines, significant moments.\"}]",
+        "reasoning": "The journal entry mentions a session with Dr. Martinez, indicating a professional interaction. Dr. Martinez is identified as a therapist, which falls under the \"Person\" entity type. The activity described is a therapy session, which is a specific type of appointment or event, thus categorized as an \"Activity\". No specific place or organization is mentioned, and no other individuals or locations are referenced. Therefore, only the person and the activity are relevant and extractable based on the provided entity types.",
+        "extracted_entities": {
+          "extracted_entities": [
+            {
+              "name": "Dr. Martinez",
+              "entity_type_id": 1
+            },
+            {
+              "name": "session",
+              "entity_type_id": 4
+            }
+          ]
+        }
+      }
+    ],
+    "signature": {
+      "instructions": "Extract people, places, organizations, activities, and concepts from personal journal entries using clear, step-by-step reasoning. Identify and classify each entity as Person, Place, Organization, Activity, or Concept based on context and alignment with the provided entity types. Include only clearly named and identifiable entities, and justify each extraction in your reasoning. Use the fallback \"Entity\" type only when no specific category applies.",
+      "fields": [
+        {
+          "prefix": "Episode Content:",
+          "description": "personal journal entry describing experiences, relationships, locations, and reflections"
+        },
+        {
+          "prefix": "Entity Types:",
+          "description": "available entity types: Person, Place, Organization, Concept, Activity, and Entity (fallback for others)"
+        },
+        {
+          "prefix": "Reasoning: Let's think step by step in order to",
+          "description": "${reasoning}"
+        },
+        {
+          "prefix": "Extracted Entities:",
+          "description": "entities mentioned: individuals, specific venues/locations, institutions/groups, abstract topics/themes, and activities/events"
+        }
+      ]
+    },
+    "lm": null
+  },
+  "metadata": {
+    "dependency_versions": {
+      "python": "3.13",
+      "dspy": "3.0.3",
+      "cloudpickle": "3.1"
+    }
+  }
+}

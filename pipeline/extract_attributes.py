@@ -113,23 +113,29 @@ class AttributeExtractor(dspy.Module):
         )
     """
 
-    def __init__(self):
+    def __init__(self, entity_type_models: dict[str, type[BaseModel]] | None = None):
         super().__init__()
         self._predictors: dict[str, dspy.Module] = {}
         self._signatures: dict[str, type[dspy.Signature]] = {}
+        self._entity_type_models: dict[str, type[BaseModel]] = {}
 
-        for default_type, model in entity_types.items():
-            signature = _build_attribute_signature(default_type, model)
-            predictor = dspy.ChainOfThought(signature)
-            attr_name = self._predictor_attr_name(default_type)
-            setattr(self, attr_name, predictor)
-            self._predictors[default_type] = predictor
-            self._signatures[default_type] = signature
+        source_models = entity_type_models or entity_types
+        for type_name, model in source_models.items():
+            self._register_entity_model(type_name, model)
 
-        prompt_path = Path(__file__).parent / "prompts" / "extract_attributes.json"
-        if prompt_path.exists():
-            self.load(str(prompt_path))
-            logger.info("Loaded optimized prompts from %s", prompt_path)
+        for type_name, model in list(self._entity_type_models.items()):
+            self._get_or_create_predictor(type_name, model)
+
+        prompt_dir = Path(__file__).parent / "prompts"
+        candidate_paths = [
+            prompt_dir / "extract_attributes.json",
+            prompt_dir / "extract_attributes.pkl",
+        ]
+        for prompt_path in candidate_paths:
+            if prompt_path.exists():
+                self.load(str(prompt_path))
+                logger.info("Loaded optimized prompts from %s", prompt_path)
+                break
 
     def forward(
         self,
@@ -138,7 +144,7 @@ class AttributeExtractor(dspy.Module):
         entity_name: str,
         entity_type: str,
         existing_attributes: str,
-        response_model: type[BaseModel],
+        response_model: type[BaseModel] | None = None,
     ) -> dict[str, Any]:
         """Extract attributes for an entity from text content.
 
@@ -148,12 +154,13 @@ class AttributeExtractor(dspy.Module):
             entity_name: Name of entity to extract attributes for
             entity_type: Type of entity (e.g., "Person", "Activity", "Organization", "Place")
             existing_attributes: JSON string of current attributes
-            response_model: Pydantic model defining expected attributes
+            response_model: Optional override for the entity schema
 
         Returns:
             Dictionary of extracted attributes matching response_model schema
         """
-        predictor = self._get_or_create_predictor(entity_type, response_model)
+        model = self._resolve_response_model(entity_type, response_model)
+        predictor = self._get_or_create_predictor(entity_type, model)
 
         result = predictor(
             episode_content=episode_content,
@@ -170,6 +177,36 @@ class AttributeExtractor(dspy.Module):
         if isinstance(attributes, dict):
             return {k: v for k, v in attributes.items() if v is not None}
         return attributes
+
+    def _resolve_response_model(
+        self, entity_type: str, response_model: type[BaseModel] | str | None
+    ) -> type[BaseModel]:
+        """Resolve the schema to use for the given entity."""
+        model: type[BaseModel] | None = None
+
+        if response_model is not None:
+            if isinstance(response_model, str):
+                model = self._entity_type_models.get(response_model)
+            else:
+                model = response_model
+
+        if model is None and entity_type:
+            model = self._entity_type_models.get(entity_type)
+
+        if model is None:
+            raise ValueError(
+                f"No attribute schema registered for entity type '{entity_type}'. "
+                "Provide `response_model` or register the type before invoking AttributeExtractor."
+            )
+
+        self._register_entity_model(entity_type or model.__name__, model)
+        return model
+
+    def _register_entity_model(self, entity_type: str, model: type[BaseModel]) -> None:
+        """Register mappings for an entity type and its schema."""
+        key = entity_type or model.__name__
+        self._entity_type_models[key] = model
+        self._entity_type_models.setdefault(model.__name__, model)
 
     def _get_or_create_predictor(
         self, entity_type: str, response_model: type[BaseModel]

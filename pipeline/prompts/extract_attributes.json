@@ -1,0 +1,232 @@
+{
+  "_predictors['Person'].predict": {
+    "traces": [],
+    "train": [],
+    "demos": [
+      {
+        "augmented": true,
+        "episode_content": "Lena made blueberry pancakes and reminded me we've been friends since college.",
+        "previous_episodes": "[\"Lena texted last week about missing our Sunday breakfast ritual.\"]",
+        "entity_name": "Lena",
+        "entity_type": "Person",
+        "existing_attributes": "{\"relationship_type\": \"acquaintance\"}",
+        "reasoning": "The journal entry states that Lena \"reminded me we've been friends since college,\" which indicates a long-standing friendship. The previous episode mentions that Lena texted about missing their Sunday breakfast ritual, reinforcing the idea of a friendly, ongoing relationship. The existing relationship type was \"acquaintance,\" but the context clearly shows a deeper, established friendship. Therefore, the relationship type should be updated to \"friend\" to better reflect the nature of their connection.",
+        "attributes": {
+          "relationship_type": "friend"
+        }
+      },
+      {
+        "augmented": true,
+        "episode_content": "Coach Ray met me for hill repeats and tweaked my stride.",
+        "previous_episodes": "[\"Ray has been writing my running plans all winter.\"]",
+        "entity_name": "Ray",
+        "entity_type": "Person",
+        "existing_attributes": "{}",
+        "reasoning": "The journal entry states that \"Coach Ray met me for hill repeats and tweaked my stride,\" indicating a professional and active relationship involving training and guidance. The previous episode notes that \"Ray has been writing my running plans all winter,\" further supporting a coaching relationship. Given this context, Ray's role is clearly that of a coach. The existing attributes are empty, so no prior relationship type is present. Therefore, the most accurate and explicitly supported relationship type is \"coach.\"",
+        "attributes": {
+          "relationship_type": "coach"
+        }
+      }
+    ],
+    "signature": {
+      "instructions": "Extract attributes for the specified entity from the journal entry, using the previous episodes for context. Include only information explicitly mentioned in the text, and provide a step-by-step reasoning that justifies the extracted attributes. Update or create attributes based on the entity type (Person, Place, Organization, Activity) and the current and historical context.",
+      "fields": [
+        {
+          "prefix": "Episode Content:",
+          "description": "Current journal entry text"
+        },
+        {
+          "prefix": "Previous Episodes:",
+          "description": "Previous journal entries as JSON list for additional context"
+        },
+        {
+          "prefix": "Entity Name:",
+          "description": "Name of the entity to extract attributes for"
+        },
+        {
+          "prefix": "Entity Type:",
+          "description": "Type of entity (e.g., Person, Activity, Organization, Place)"
+        },
+        {
+          "prefix": "Existing Attributes:",
+          "description": "Current entity attributes as JSON dict (may be empty)"
+        },
+        {
+          "prefix": "Reasoning: Let's think step by step in order to",
+          "description": "${reasoning}"
+        },
+        {
+          "prefix": "Attributes:",
+          "description": "Extracted Person attributes based on schema. Only extract information explicitly present in the journal data."
+        }
+      ]
+    },
+    "lm": null
+  },
+  "_predictors['Place'].predict": {
+    "traces": [],
+    "train": [],
+    "demos": [],
+    "signature": {
+      "instructions": "Extract Place attributes from journal entries.",
+      "fields": [
+        {
+          "prefix": "Episode Content:",
+          "description": "Current journal entry text"
+        },
+        {
+          "prefix": "Previous Episodes:",
+          "description": "Previous journal entries as JSON list for additional context"
+        },
+        {
+          "prefix": "Entity Name:",
+          "description": "Name of the entity to extract attributes for"
+        },
+        {
+          "prefix": "Entity Type:",
+          "description": "Type of entity (e.g., Person, Activity, Organization, Place)"
+        },
+        {
+          "prefix": "Existing Attributes:",
+          "description": "Current entity attributes as JSON dict (may be empty)"
+        },
+        {
+          "prefix": "Reasoning: Let's think step by step in order to",
+          "description": "${reasoning}"
+        },
+        {
+          "prefix": "Attributes:",
+          "description": "Extracted Place attributes based on schema. Only extract information explicitly present in the journal data."
+        }
+      ]
+    },
+    "lm": null
+  },
+  "_predictors['Organization'].predict": {
+    "traces": [],
+    "train": [],
+    "demos": [
+      {
+        "episode_content": "Coach Ray met me for hill repeats and tweaked my stride.",
+        "previous_episodes": "[\"Ray has been writing my running plans all winter.\"]",
+        "entity_name": "Ray",
+        "entity_type": "Person",
+        "existing_attributes": "{}",
+        "attributes": {
+          "relationship_type": "coach"
+        }
+      },
+      {
+        "episode_content": "Lena made blueberry pancakes and reminded me we've been friends since college.",
+        "previous_episodes": "[\"Lena texted last week about missing our Sunday breakfast ritual.\"]",
+        "entity_name": "Lena",
+        "entity_type": "Person",
+        "existing_attributes": "{\"relationship_type\": \"acquaintance\"}",
+        "attributes": {
+          "relationship_type": "friend"
+        }
+      }
+    ],
+    "signature": {
+      "instructions": "Extract Organization attributes from journal entries.",
+      "fields": [
+        {
+          "prefix": "Episode Content:",
+          "description": "Current journal entry text"
+        },
+        {
+          "prefix": "Previous Episodes:",
+          "description": "Previous journal entries as JSON list for additional context"
+        },
+        {
+          "prefix": "Entity Name:",
+          "description": "Name of the entity to extract attributes for"
+        },
+        {
+          "prefix": "Entity Type:",
+          "description": "Type of entity (e.g., Person, Activity, Organization, Place)"
+        },
+        {
+          "prefix": "Existing Attributes:",
+          "description": "Current entity attributes as JSON dict (may be empty)"
+        },
+        {
+          "prefix": "Reasoning: Let's think step by step in order to",
+          "description": "${reasoning}"
+        },
+        {
+          "prefix": "Attributes:",
+          "description": "Extracted Organization attributes based on schema. Only extract information explicitly present in the journal data."
+        }
+      ]
+    },
+    "lm": null
+  },
+  "_predictors['Activity'].predict": {
+    "traces": [],
+    "train": [],
+    "demos": [
+      {
+        "episode_content": "Coach Ray met me for hill repeats and tweaked my stride.",
+        "previous_episodes": "[\"Ray has been writing my running plans all winter.\"]",
+        "entity_name": "Ray",
+        "entity_type": "Person",
+        "existing_attributes": "{}",
+        "attributes": {
+          "relationship_type": "coach"
+        }
+      },
+      {
+        "episode_content": "Lena made blueberry pancakes and reminded me we've been friends since college.",
+        "previous_episodes": "[\"Lena texted last week about missing our Sunday breakfast ritual.\"]",
+        "entity_name": "Lena",
+        "entity_type": "Person",
+        "existing_attributes": "{\"relationship_type\": \"acquaintance\"}",
+        "attributes": {
+          "relationship_type": "friend"
+        }
+      }
+    ],
+    "signature": {
+      "instructions": "Extract Activity attributes from journal entries by carefully analyzing the current journal entry and all previous journal entries provided in the JSON list. Begin by identifying any explicit mentions of activities, such as events, tasks, or scheduled actions, and determine their relevant characteristics (e.g., time, location, participants, purpose, duration). Use the step-by-step reasoning to justify each attribute extraction based on direct textual evidence, ensuring that only information explicitly stated in the journal entries is included. Incorporate context from prior episodes to detect patterns or changes in activity behavior, but do not infer or assume details not directly supported by the text. Finally, structure the extracted attributes according to the Activity schema, ensuring all fields are populated only if explicitly mentioned in the narrative. Avoid adding, modifying, or guessing any attribute not directly present in the input content.",
+      "fields": [
+        {
+          "prefix": "Episode Content:",
+          "description": "Current journal entry text"
+        },
+        {
+          "prefix": "Previous Episodes:",
+          "description": "Previous journal entries as JSON list for additional context"
+        },
+        {
+          "prefix": "Entity Name:",
+          "description": "Name of the entity to extract attributes for"
+        },
+        {
+          "prefix": "Entity Type:",
+          "description": "Type of entity (e.g., Person, Activity, Organization, Place)"
+        },
+        {
+          "prefix": "Existing Attributes:",
+          "description": "Current entity attributes as JSON dict (may be empty)"
+        },
+        {
+          "prefix": "Reasoning: Let's think step by step in order to",
+          "description": "${reasoning}"
+        },
+        {
+          "prefix": "Attributes:",
+          "description": "Extracted Activity attributes based on schema. Only extract information explicitly present in the journal data."
+        }
+      ]
+    },
+    "lm": null
+  },
+  "metadata": {
+    "dependency_versions": {
+      "python": "3.13",
+      "dspy": "3.0.3",
+      "cloudpickle": "3.1"
+    }
+  }
+}
