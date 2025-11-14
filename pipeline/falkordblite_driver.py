@@ -6,6 +6,9 @@ import asyncio
 import atexit
 import json
 import logging
+import os
+import signal
+import time
 from datetime import datetime
 from threading import Lock
 from typing import Any, Iterable
@@ -23,6 +26,11 @@ try:  # Optional dependency in CI / unit tests
     from redislite.falkordb_client import FalkorDB
 except Exception:  # noqa: BLE001
     FalkorDB = None  # type: ignore[assignment]
+
+try:  # Optional, used for graceful shutdown observation
+    import psutil  # type: ignore
+except Exception:  # noqa: BLE001
+    psutil = None  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
 
@@ -62,19 +70,116 @@ def _ensure_graph():
     return _graph
 
 
+def _pid_exists(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def _wait_for_exit(pid: int, timeout: float) -> bool:
+    """Return True when the process exits within timeout seconds."""
+    if pid <= 0:
+        return True
+
+    deadline = time.time() + timeout
+    if psutil is not None:
+        try:
+            process = psutil.Process(pid)
+        except psutil.NoSuchProcess:
+            return True
+        while time.time() < deadline:
+            if not process.is_running():
+                return True
+            try:
+                process.wait(0.1)
+                return True
+            except psutil.TimeoutExpired:
+                continue
+        return False
+
+    while time.time() < deadline:
+        if not _pid_exists(pid):
+            return True
+        time.sleep(0.1)
+    return False
+
+
+def _send_signal(pid: int, sig: signal.Signals) -> None:
+    if pid <= 0:
+        return
+    if psutil is not None:
+        try:
+            process = psutil.Process(pid)
+        except psutil.NoSuchProcess:
+            return
+        try:
+            process.send_signal(sig)
+        except Exception:  # noqa: BLE001
+            logger.debug("Failed to send %s to redis pid %s", sig.name, pid, exc_info=True)
+        return
+    try:
+        os.kill(pid, sig.value)
+    except OSError:  # noqa: BLE001
+        logger.debug("os.kill failed for pid %s signal %s", pid, sig, exc_info=True)
+
+
+def _ensure_redis_stopped(redis_client) -> None:
+    """Best-effort shutdown of the embedded redis-server process."""
+    if redis_client is None:
+        return
+
+    pid = getattr(redis_client, "pid", 0)
+    if pid <= 0:
+        return
+
+    try:
+        redis_client.connection_pool.disconnect()
+    except Exception:  # noqa: BLE001
+        logger.debug("Failed to disconnect redis connection pool cleanly", exc_info=True)
+
+    try:
+        redis_client.shutdown(save=True, now=True, force=True)
+    except Exception:  # noqa: BLE001
+        logger.debug("Redis SHUTDOWN command failed; will escalate", exc_info=True)
+    else:
+        if _wait_for_exit(pid, timeout=5.0):
+            return
+
+    _send_signal(pid, signal.SIGTERM)
+    if _wait_for_exit(pid, timeout=3.0):
+        return
+
+    logger.warning("redis-server pid %s ignored SIGTERM; sending SIGKILL", pid)
+    _send_signal(pid, signal.SIGKILL)
+    _wait_for_exit(pid, timeout=1.0)
+
+
 def _close_db():
     """Ensure the embedded FalkorDB process shuts down cleanly."""
     global _db, _graph
     with _db_lock:
         if _db is None:
             return
+        client = getattr(_db, "client", None)
         try:
             _db.close()
         except Exception:  # noqa: BLE001
             logger.debug("Failed to close FalkorDBLite cleanly", exc_info=True)
         finally:
-            _db = None
-            _graph = None
+            try:
+                _ensure_redis_stopped(client)
+            finally:
+                _db = None
+                _graph = None
+
+
+def shutdown_falkordb():
+    """Public helper for tests to forcefully stop the embedded database."""
+    _close_db()
 
 
 atexit.register(_close_db)
@@ -673,4 +778,5 @@ __all__ = [
     "persist_episode_and_nodes",
     "reset_database",
     "to_cypher_literal",
+    "shutdown_falkordb",
 ]

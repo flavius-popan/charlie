@@ -39,7 +39,7 @@ def falkordb_test_context(tmp_path_factory: pytest.TempPathFactory) -> Iterator[
     db_utils.DB_PATH = db_path  # type: ignore[assignment]
 
     # Reset cached connections before opening a new graph.
-    db_utils._close_db()
+    db_utils.shutdown_falkordb()
     db_utils._db = None  # type: ignore[assignment]
     db_utils._graph = None  # type: ignore[assignment]
     db_utils._db_unavailable = False  # type: ignore[assignment]
@@ -53,7 +53,7 @@ def falkordb_test_context(tmp_path_factory: pytest.TempPathFactory) -> Iterator[
         yield
     finally:
         graph.query("MATCH (n) DETACH DELETE n")
-        db_utils._close_db()
+        db_utils.shutdown_falkordb()
 
 
 @pytest.fixture
