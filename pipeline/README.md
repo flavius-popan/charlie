@@ -185,7 +185,7 @@ result = await extractor(content="...")
 ```
 ExtractNodesOutput (from Stage 1)
     ↓ extracted_nodes (original UUIDs)
-EdgeExtractor (DSPy) → ExtractedRelationships
+EdgeExtractor (DSPy) → ExtractedEdges (entity indices)
     ↓
 build_entity_edges() → EntityEdges with provisional UUIDs
     ↓ uuid_map (from Stage 1)

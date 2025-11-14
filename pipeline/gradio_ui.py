@@ -31,7 +31,12 @@ from pipeline.falkordblite_driver import (
     persist_episode_and_nodes,
     reset_database,
 )
-from pipeline.entity_edge_models import entity_types
+from pipeline.entity_edge_models import (
+    entity_types,
+    edge_types as DEFAULT_EDGE_TYPES,
+    edge_type_map as DEFAULT_EDGE_TYPE_MAP,
+    edge_meta as DEFAULT_EDGE_META,
+)
 from settings import (
     DB_PATH,
     DEFAULT_MODEL_PATH,
@@ -314,7 +319,13 @@ def on_extract(content: str):
         )
 
         logger.info("Starting Stage 2: Extract Edges")
-        edge_extractor = ExtractEdges(group_id=GROUP_ID, dedupe_enabled=True)
+        edge_extractor = ExtractEdges(
+            group_id=GROUP_ID,
+            dedupe_enabled=True,
+            edge_types=DEFAULT_EDGE_TYPES,
+            edge_type_map=DEFAULT_EDGE_TYPE_MAP,
+            edge_meta=DEFAULT_EDGE_META,
+        )
         edges_result = asyncio.run(
             edge_extractor(
                 episode=extract_result.episode,
