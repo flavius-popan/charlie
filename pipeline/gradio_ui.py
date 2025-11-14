@@ -732,7 +732,7 @@ Test the complete knowledge graph extraction pipeline with progressive stage upd
         with gr.Column(scale=2):
             db_stats_display = gr.Textbox(
                 label="Database Statistics",
-                value=get_initial_stats(),
+                value="Loading...",
                 interactive=False,
                 lines=2,
             )
@@ -798,6 +798,12 @@ Test the complete knowledge graph extraction pipeline with progressive stage upd
         on_reset_db,
         inputs=[],
         outputs=[write_result_display, db_stats_display],
+    )
+
+    app.load(
+        fn=get_initial_stats,
+        inputs=None,
+        outputs=db_stats_display,
     )
 
 
