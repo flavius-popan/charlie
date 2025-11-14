@@ -157,9 +157,9 @@ def optimize(trainset: list[dspy.Example]) -> AttributeExtractor:
     optimizer = MIPROv2(
         metric=attribute_extraction_metric,
         auto=None,
-        num_candidates=4,
-        init_temperature=1.0,
-        metric_threshold=0.85,
+        num_candidates=3,
+        init_temperature=0.5,
+        metric_threshold=0.90,
     )
 
     student = AttributeExtractor()
@@ -167,7 +167,7 @@ def optimize(trainset: list[dspy.Example]) -> AttributeExtractor:
         student=student,
         trainset=trainset,
         num_trials=8,
-        max_bootstrapped_demos=2,
+        max_bootstrapped_demos=3,
         max_labeled_demos=3,
         minibatch_size=2,
         requires_permission_to_run=False,

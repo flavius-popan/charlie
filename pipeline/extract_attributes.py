@@ -45,28 +45,13 @@ logger = logging.getLogger(__name__)
 
 
 class AttributeExtractionSignature(dspy.Signature):
-    """Extract entity attributes from journal entries.
+    """Extract type-specific attributes for an entity from journal context."""
 
-    Given an entity (name and type) and journal context, extract structured attributes
-    based on the entity type's Pydantic schema. Only extract information explicitly
-    present in the provided messages.
-    """
-
-    episode_content: str = dspy.InputField(
-        desc="Current journal entry text"
-    )
-    previous_episodes: str = dspy.InputField(
-        desc="Previous journal entries as JSON list for additional context"
-    )
-    entity_name: str = dspy.InputField(
-        desc="Name of the entity to extract attributes for"
-    )
-    entity_type: str = dspy.InputField(
-        desc="Type of entity (e.g., Person, Emotion)"
-    )
-    existing_attributes: str = dspy.InputField(
-        desc="Current entity attributes as JSON dict (may be empty)"
-    )
+    episode_content: str = dspy.InputField(desc="current journal entry")
+    previous_episodes: str = dspy.InputField(desc="previous entries for context")
+    entity_name: str = dspy.InputField(desc="entity to extract attributes for")
+    entity_type: str = dspy.InputField(desc="type of entity")
+    existing_attributes: str = dspy.InputField(desc="current entity attributes")
 
     # Output field is dynamically set based on entity type in forward()
 

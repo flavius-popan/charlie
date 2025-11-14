@@ -2,29 +2,44 @@
   "predict_reflexion": {
     "traces": [],
     "train": [],
-    "demos": [],
+    "demos": [
+      {
+        "episode_content": "Went running with Marcus this morning. Felt great to focus on my fitness goals.",
+        "previous_episodes": "[\"Marcus and I have been training together.\"]",
+        "entity_types": "[{\"entity_type_id\": 1, \"entity_type_name\": \"Person\"}, {\"entity_type_id\": 4, \"entity_type_name\": \"Concept\"}, {\"entity_type_id\": 5, \"entity_type_name\": \"Activity\"}]",
+        "extracted_entities": "[\"Marcus\", \"running\"]",
+        "missed_entities": "{\"missed_entities\": [{\"name\": \"fitness goals\", \"entity_type\": \"Concept\"}]}"
+      },
+      {
+        "episode_content": "Stopped by the library to pick up some books. The new sci-fi section looks amazing.",
+        "previous_episodes": "[]",
+        "entity_types": "[{\"entity_type_id\": 2, \"entity_type_name\": \"Place\"}, {\"entity_type_id\": 4, \"entity_type_name\": \"Concept\"}]",
+        "extracted_entities": "[\"library\", \"books\", \"sci-fi section\"]",
+        "missed_entities": "{\"missed_entities\": []}"
+      }
+    ],
     "signature": {
-      "instructions": "You mirror graphiti-core's reflexion step. Given PREVIOUS EPISODES (context only), the CURRENT EPISODE text, ENTITY TYPES (JSON list describing custom journaling schemas), and the JSON list of already EXTRACTED ENTITIES, identify significant entities that are explicitly or implicitly mentioned in the CURRENT EPISODE but missing from the extracted list. Return a JSON object with `missed_entities`, where each item is an object containing the entity `name` and, when obvious, the matching `entity_type`. Do not output commentary, headings, or placeholder strings. If nothing is missing, return `{ \"missed_entities\": [] }`.",
+      "instructions": "Suggest entities missed by the initial extraction.",
       "fields": [
         {
-          "prefix": "Previous Episodes:",
-          "description": "JSON list of previous episode excerpts for context"
+          "prefix": "Episode Content:",
+          "description": "journal entry text"
         },
         {
-          "prefix": "Episode Content:",
-          "description": "current journal entry text"
+          "prefix": "Previous Episodes:",
+          "description": "previous entries for context"
         },
         {
           "prefix": "Entity Types:",
-          "description": "JSON string describing the available entity types and their extraction guidelines"
+          "description": "available entity types"
         },
         {
           "prefix": "Extracted Entities:",
-          "description": "JSON list of entity names already extracted"
+          "description": "already extracted entities"
         },
         {
           "prefix": "Missed Entities:",
-          "description": "entities the pipeline should still add"
+          "description": "entities to add"
         }
       ]
     },

@@ -40,24 +40,12 @@ logger = logging.getLogger(__name__)
 class ExtractedRelationship(BaseModel):
     """Relationship between two entities with supporting fact."""
 
-    source: str = Field(
-        description="Source entity name (must match extracted entities)"
-    )
-    target: str = Field(
-        description="Target entity name (must match extracted entities)"
-    )
-    relation: str = Field(
-        description="Relationship type in SCREAMING_SNAKE_CASE (e.g., WORKS_AT, KNOWS)"
-    )
-    fact: str = Field(
-        description="Natural language description of the relationship from the text"
-    )
-    valid_at: str | None = Field(
-        None, description="ISO 8601 datetime when relationship became true (optional)"
-    )
-    invalid_at: str | None = Field(
-        None, description="ISO 8601 datetime when relationship ended (optional)"
-    )
+    source: str = Field(description="Source entity name")
+    target: str = Field(description="Target entity name")
+    relation: str = Field(description="Type of relationship")
+    fact: str = Field(description="Description of the relationship")
+    valid_at: str | None = Field(None, description="When relationship started")
+    invalid_at: str | None = Field(None, description="When relationship ended")
 
 
 class ExtractedRelationships(BaseModel):
@@ -67,31 +55,14 @@ class ExtractedRelationships(BaseModel):
 
 
 class RelationshipExtractionSignature(dspy.Signature):
-    """Extract relationships between entities from journal text.
+    """Extract relationships between entities mentioned in journal entries."""
 
-    For each relationship, extract:
-    - Source and target entities (must be from the provided entity list)
-    - Relation type as SCREAMING_SNAKE_CASE (e.g., WORKS_AT, FRIEND_OF, KNOWS)
-    - Supporting fact: a natural paraphrasing from the text
-    - Optional: valid_at (when relationship started) as ISO 8601 string
-    - Optional: invalid_at (when relationship ended) as ISO 8601 string
-
-    Focus on relationships explicitly mentioned in the text.
-    Use reference_time for resolving relative dates.
-    """
-
-    episode_content: str = dspy.InputField(
-        desc="Journal entry text describing relationships between entities"
-    )
-    entities: list[str] = dspy.InputField(
-        desc="List of entity names to consider for relationships"
-    )
-    reference_time: str = dspy.InputField(
-        desc="Current timestamp for resolving relative dates (ISO 8601 format)"
-    )
+    episode_content: str = dspy.InputField(desc="journal entry text")
+    entities: list[str] = dspy.InputField(desc="entities to consider")
+    reference_time: str = dspy.InputField(desc="timestamp for date resolution")
 
     relationships: ExtractedRelationships = dspy.OutputField(
-        desc="Relationships between entities with supporting facts and optional temporal metadata"
+        desc="relationships found between entities"
     )
 
 

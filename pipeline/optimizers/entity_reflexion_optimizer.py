@@ -270,9 +270,9 @@ def optimize(trainset: list[dspy.Example]) -> EntityReflexionModule:
     optimizer = MIPROv2(
         metric=reflexion_metric,
         auto=None,
-        num_candidates=5,
-        init_temperature=1.0,
-        metric_threshold=0.8,
+        num_candidates=3,
+        init_temperature=0.5,
+        metric_threshold=0.90,
     )
 
     student = EntityReflexionModule()
@@ -280,7 +280,7 @@ def optimize(trainset: list[dspy.Example]) -> EntityReflexionModule:
         student=student,
         trainset=trainset,
         num_trials=10,
-        max_bootstrapped_demos=2,
+        max_bootstrapped_demos=3,
         max_labeled_demos=3,
         minibatch_size=2,
         requires_permission_to_run=False,
@@ -298,6 +298,7 @@ def evaluate(module: EntityReflexionModule, dataset: list[dspy.Example]) -> floa
         prediction = module(
             episode_content=example.episode_content,
             previous_episodes=example.previous_episodes,
+            entity_types=example.entity_types,
             extracted_entities=example.extracted_entities,
         )
         scores.append(reflexion_metric(example, prediction))

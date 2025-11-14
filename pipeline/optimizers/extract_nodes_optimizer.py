@@ -350,9 +350,9 @@ def optimize(trainset: list[dspy.Example]) -> EntityExtractor:
     optimizer = MIPROv2(
         metric=entity_extraction_metric,
         auto=None,
-        num_candidates=5,
-        init_temperature=1.0,
-        metric_threshold=0.85,
+        num_candidates=3,
+        init_temperature=0.5,
+        metric_threshold=0.90,
     )
 
     student = EntityExtractor()

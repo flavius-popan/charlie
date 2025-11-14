@@ -100,38 +100,26 @@ class ReflexionEntities(BaseModel):
 
 # DSPy signature for entity extraction
 class EntityExtractionSignature(dspy.Signature):
-    """Extract significant entities from personal journal entries: people, places, organizations, concepts, and activities."""
+    """Extract entities from journal entries based on the provided schema."""
 
-    episode_content: str = dspy.InputField(
-        desc="personal journal entry describing experiences, relationships, locations, and reflections"
-    )
-    entity_types: str = dspy.InputField(
-        desc="available entity types: Person, Place, Organization, Concept, Activity, and Entity (fallback for others)"
-    )
+    episode_content: str = dspy.InputField(desc="journal entry text")
+    entity_types: str = dspy.InputField(desc="JSON list of entity type definitions")
 
     extracted_entities: ExtractedEntities = dspy.OutputField(
-        desc="entities mentioned: individuals, specific venues/locations, institutions/groups, abstract topics/themes, and activities/events"
+        desc="entities found in the text, classified by type"
     )
 
 
 class EntityReflexionSignature(dspy.Signature):
-    """Suggest entities that were missed by the fast extractor."""
+    """Suggest entities missed by the initial extraction."""
 
-    episode_content: str = dspy.InputField(
-        desc="current journal entry text"
-    )
-    previous_episodes: str = dspy.InputField(
-        desc="JSON list of previous episode excerpts for context"
-    )
-    entity_types: str = dspy.InputField(
-        desc="JSON string that lists available entity types with descriptions"
-    )
-    extracted_entities: str = dspy.InputField(
-        desc="JSON list of entity names already extracted"
-    )
+    episode_content: str = dspy.InputField(desc="journal entry text")
+    previous_episodes: str = dspy.InputField(desc="previous entries for context")
+    entity_types: str = dspy.InputField(desc="available entity types")
+    extracted_entities: str = dspy.InputField(desc="already extracted entities")
 
     missed_entities: ReflexionEntities = dspy.OutputField(
-        desc="entities the pipeline should still add"
+        desc="entities to add"
     )
 
 
@@ -691,21 +679,7 @@ class ExtractNodes:
 
         types_list = [base_type]
         for i, (name, model) in enumerate(entity_types.items()):
-            base_desc = model.__doc__ or ""
-
-            # Enhance with extraction guidance for personal journaling
-            if name == "Person":
-                desc = f"{base_desc} Extract individuals mentioned: friends, family, colleagues, romantic partners, professionals (therapists/doctors), acquaintances."
-            elif name == "Place":
-                desc = f"{base_desc} Extract specific places visited or mentioned: coffee shops, parks, restaurants, cities, neighborhoods, venues, landmarks."
-            elif name == "Organization":
-                desc = f"{base_desc} Extract organizations engaged with: workplaces, schools, clubs, community groups, institutions, companies."
-            elif name == "Concept":
-                desc = f"{base_desc} Extract life themes and topics reflected on: personal growth, relationships, mental health, career, identity, values, beliefs."
-            elif name == "Activity":
-                desc = f"{base_desc} Extract specific activities and events: appointments, outings, hobbies, social gatherings, daily routines, significant moments."
-            else:
-                desc = base_desc
+            desc = model.__doc__ or ""
 
             types_list.append(
                 {

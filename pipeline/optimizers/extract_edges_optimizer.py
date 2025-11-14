@@ -84,25 +84,31 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
     all_examples.append(
         dspy.Example(
             episode_content=(
-                "Spent the evening on video call with Dr. Perez at City Hospital "
-                "while he checked on Grandma Lila's breathing. "
-                "He promised to swing by her room again at dawn."
+                "Had coffee with Sarah at Blue Bottle downtown. "
+                "She mentioned her new job at Stripe and invited me to game night "
+                "at her place next Friday."
             ),
-            entities=["Dr. Perez", "City Hospital", "Grandma Lila"],
-            reference_time="2025-01-28T22:15:00Z",
+            entities=["Sarah", "Blue Bottle", "Stripe", "game night"],
+            reference_time="2025-01-28T14:30:00Z",
             relationships=ExtractedRelationships(
                 relationships=[
                     ExtractedRelationship(
-                        source="Dr. Perez",
-                        target="City Hospital",
-                        relation="WORKS_AT",
-                        fact="Dr. Perez called from City Hospital.",
+                        source="Sarah",
+                        target="Blue Bottle",
+                        relation="MEETS_AT",
+                        fact="Had coffee with Sarah at Blue Bottle downtown.",
                     ),
                     ExtractedRelationship(
-                        source="Dr. Perez",
-                        target="Grandma Lila",
-                        relation="TREATS",
-                        fact="He monitored Grandma Lila's breathing.",
+                        source="Sarah",
+                        target="Stripe",
+                        relation="WORKS_AT",
+                        fact="She mentioned her new job at Stripe.",
+                    ),
+                    ExtractedRelationship(
+                        source="Sarah",
+                        target="game night",
+                        relation="HOSTS",
+                        fact="She invited me to game night at her place next Friday.",
                     ),
                 ]
             ),
@@ -284,30 +290,31 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
     all_examples.append(
         dspy.Example(
             episode_content=(
-                "Camped out at Harbor Clinic this afternoon. Nurse Tami introduced me to "
-                "social worker Ben so we can finally tackle mom's paperwork."
+                "Spent the afternoon at Green Apple Books on Clement Street. "
+                "The owner Rachel recommended a book to me and introduced me to "
+                "her friend Marcus who runs the poetry reading group there."
             ),
-            entities=["Harbor Clinic", "Nurse Tami", "Ben", "mom's paperwork"],
+            entities=["Green Apple Books", "Rachel", "Marcus", "poetry reading group"],
             reference_time="2025-02-02T16:10:00Z",
             relationships=ExtractedRelationships(
                 relationships=[
                     ExtractedRelationship(
-                        source="Nurse Tami",
-                        target="Harbor Clinic",
-                        relation="WORKS_AT",
-                        fact="Nurse Tami works out of Harbor Clinic.",
+                        source="Rachel",
+                        target="Green Apple Books",
+                        relation="OWNS",
+                        fact="Rachel is the owner of Green Apple Books.",
                     ),
                     ExtractedRelationship(
-                        source="Nurse Tami",
-                        target="Ben",
+                        source="Rachel",
+                        target="Marcus",
                         relation="INTRODUCES",
-                        fact="She introduced me to Ben.",
+                        fact="Rachel introduced me to her friend Marcus.",
                     ),
                     ExtractedRelationship(
-                        source="Ben",
-                        target="mom's paperwork",
-                        relation="ASSISTS_WITH",
-                        fact="Ben is helping with mom's paperwork.",
+                        source="Marcus",
+                        target="poetry reading group",
+                        relation="RUNS",
+                        fact="Marcus runs the poetry reading group at the bookstore.",
                     ),
                 ]
             ),
@@ -383,9 +390,9 @@ def optimize(trainset: list[dspy.Example]) -> EdgeExtractor:
     optimizer = MIPROv2(
         metric=relationship_extraction_metric,
         auto=None,
-        num_candidates=5,
-        init_temperature=1.0,
-        metric_threshold=0.8,
+        num_candidates=3,
+        init_temperature=0.5,
+        metric_threshold=0.90,
     )
 
     student = EdgeExtractor()

@@ -2,29 +2,46 @@
   "extractor": {
     "traces": [],
     "train": [],
-    "demos": [],
+    "demos": [
+      {
+        "episode_content": "Had coffee with Sarah today at Blue Bottle. She's been such a good friend through everything.",
+        "previous_episodes": "[]",
+        "entity_name": "Sarah",
+        "entity_type": "Person",
+        "existing_attributes": "{}",
+        "attributes": "{\"relationship_type\": \"friend\"}"
+      },
+      {
+        "episode_content": "Mom called to check in. She's worried about my job search but trying to be supportive.",
+        "previous_episodes": "[\"Mom has been helping me update my resume.\"]",
+        "entity_name": "Mom",
+        "entity_type": "Person",
+        "existing_attributes": "{\"relationship_type\": \"family\"}",
+        "attributes": "{\"relationship_type\": \"family\"}"
+      }
+    ],
     "signature": {
-      "instructions": "Extract entity attributes from journal entries.\n\nGiven an entity (name and type) and journal context, extract structured attributes\nbased on the entity type's Pydantic schema. Only extract information explicitly\npresent in the provided messages.",
+      "instructions": "Extract type-specific attributes for an entity from journal context.",
       "fields": [
         {
           "prefix": "Episode Content:",
-          "description": "Current journal entry text"
+          "description": "current journal entry"
         },
         {
           "prefix": "Previous Episodes:",
-          "description": "Previous journal entries as JSON list for additional context"
+          "description": "previous entries for context"
         },
         {
           "prefix": "Entity Name:",
-          "description": "Name of the entity to extract attributes for"
+          "description": "entity to extract attributes for"
         },
         {
           "prefix": "Entity Type:",
-          "description": "Type of entity (e.g., Person, Emotion)"
+          "description": "type of entity"
         },
         {
           "prefix": "Existing Attributes:",
-          "description": "Current entity attributes as JSON dict (may be empty)"
+          "description": "current entity attributes"
         }
       ]
     },
