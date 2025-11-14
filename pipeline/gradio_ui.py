@@ -22,14 +22,25 @@ from pipeline import (
     GenerateSummaries,
 )
 from pipeline.falkordblite_driver import (
+    enable_tcp_server,
     fetch_entities_by_group,
     fetch_recent_episodes,
     get_db_stats,
+    get_tcp_server_endpoint,
+    get_tcp_server_password,
     persist_episode_and_nodes,
     reset_database,
 )
 from pipeline.entity_edge_models import entity_types
-from settings import DB_PATH, GROUP_ID, MODEL_CONFIG, DEFAULT_MODEL_PATH
+from settings import (
+    DB_PATH,
+    DEFAULT_MODEL_PATH,
+    FALKORLITE_TCP_HOST,
+    FALKORLITE_TCP_PASSWORD,
+    FALKORLITE_TCP_PORT,
+    GROUP_ID,
+    MODEL_CONFIG,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -41,6 +52,28 @@ logger.info("Initializing ExtractNodes UI")
 logger.info("Database: %s", DB_PATH)
 logger.info("Model: %s", DEFAULT_MODEL_PATH)
 logger.info("Model config: %s", MODEL_CONFIG)
+
+enable_tcp_server(
+    host=FALKORLITE_TCP_HOST,
+    port=FALKORLITE_TCP_PORT,
+    password=FALKORLITE_TCP_PASSWORD,
+)
+tcp_endpoint = get_tcp_server_endpoint()
+if tcp_endpoint:
+    host, port = tcp_endpoint
+    password = get_tcp_server_password()
+    if password:
+        logger.info(
+            "FalkorDB Lite TCP debug endpoint listening on %s:%d (password required)",
+            host,
+            port,
+        )
+    else:
+        logger.info(
+            "FalkorDB Lite TCP debug endpoint listening on %s:%d (no password)",
+            host,
+            port,
+        )
 
 lm = OutlinesLM(model_path=DEFAULT_MODEL_PATH, generation_config=MODEL_CONFIG)
 adapter = OutlinesAdapter()
