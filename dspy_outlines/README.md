@@ -10,7 +10,7 @@ DSPy Signature → OutlinesAdapter (3-tier fallback) → OutlinesLM → Outlines
 
 **Three-tier fallback strategy:**
 - **Chat**: ChatAdapter field-marker format (fastest, tries first)
-- **JSON**: JSON unconstrained generation (fast, json_repair parsing)
+- **JSON**: JSON unconstrained generation (fast, DSPy JSONAdapter parsing)
 - **OutlinesJSON**: Outlines constrained generation (slow, guaranteed valid)
 
 Each tier falls back to the next on failure. Metrics track success/failure rates for experimentation.
@@ -21,7 +21,7 @@ Each tier falls back to the next on failure. Metrics track success/failure rates
 **Purpose**: Three-tier fallback with automatic constraint extraction.
 
 - Chat: Delegates to `ChatAdapter` (field markers like `Result: ...`)
-- JSON: Prompts for JSON, parses with `json_repair` (robustness)
+- JSON: Prompts for JSON, parses with DSPy `JSONAdapter` (robustness)
 - OutlinesJSON: Adds `_outlines_constraint` kwarg for constrained generation
 - Extracts constraints from signature output fields (Pydantic, Literal, Regex, etc.)
 - Tracks metrics: `adapter.metrics['chat_success']`, etc.
@@ -43,8 +43,8 @@ Each tier falls back to the next on failure. Metrics track success/failure rates
 ### MLX Loader (`mlx_loader.py`)
 **Purpose**: Load quantized MLX models for Outlines.
 
-- Loads from `.models/` directory (not default location)
-- Default: `mlx-community--Qwen3-4B-Instruct-2507-8bit`
+- Loads from HuggingFace cache (`~/.cache/huggingface/hub/`), downloads if not cached
+- Default: `mlx-community/Qwen3-4B-Instruct-2507-4bit-DWQ-2510`
 - Creates Outlines wrapper via `outlines.from_mlxlm()`
 
 **Thread Safety**: ✅ Model loading is single-threaded during initialization
@@ -126,17 +126,17 @@ from outlines.types import Regex
 lm = OutlinesLM()
 
 # Multiple choice (Literal)
-city = lm.model("Name a European capital:", Literal["Paris", "London", "Rome"])
+city = lm.outlines_model("Name a European capital:", Literal["Paris", "London", "Rome"])
 
 # Regex pattern
-phone = lm.model("Your phone number:", Regex(r"\d{3}-\d{4}"))
+phone = lm.outlines_model("Your phone number:", Regex(r"\d{3}-\d{4}"))
 
 # Context-free grammar
 from outlines.types import CFG
-result = lm.model("Calculate:", CFG(arithmetic_grammar))
+result = lm.outlines_model("Calculate:", CFG(arithmetic_grammar))
 ```
 
-**Why direct access?** DSPy signatures add overhead for simple tasks. For one-off extractions with non-Pydantic constraints, `lm.model()` provides direct Outlines access.
+**Why direct access?** DSPy signatures add overhead for simple tasks. For one-off extractions with non-Pydantic constraints, `lm.outlines_model()` provides direct Outlines access.
 
 ## Metrics Tracking
 
@@ -183,8 +183,8 @@ Lock scope: Only wraps `self.model()` call, not entire `forward()`. Prompt forma
 
 ```bash
 pytest tests/test_outlines_adapter_parsing.py -v  # Adapter parsing and integration tests
-pytest tests/test_mlx_loader.py -v                # MLX model loading
-pytest tests/test_mlx_lock.py -v                  # Thread safety verification
+pytest tests/test_mlx.py -v                       # MLX model loading and basic functionality
+pytest tests/test_direct_outlines_model.py -v     # Direct Outlines model access (all constraint types)
 ```
 ## Enabling Prompt Cache (optional)
 
