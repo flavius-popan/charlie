@@ -15,7 +15,7 @@ from typing import Any, Iterable
 
 from graphiti_core.driver.driver import GraphDriver, GraphDriverSession, GraphProvider
 from graphiti_core.edges import EntityEdge, EpisodicEdge
-from graphiti_core.embedder.client import EmbedderClient
+from graphiti_core.embedder.client import EmbedderClient, EMBEDDING_DIM
 from graphiti_core.helpers import get_default_group_id
 from graphiti_core.nodes import EntityNode, EpisodicNode, EpisodeType
 from graphiti_core.utils.bulk_utils import add_nodes_and_edges_bulk
@@ -48,6 +48,42 @@ try:  # Optional, used for graceful shutdown observation
     import psutil  # type: ignore
 except Exception:  # noqa: BLE001
     psutil = None  # type: ignore[assignment]
+
+STOPWORDS = [
+    'a',
+    'is',
+    'the',
+    'an',
+    'and',
+    'are',
+    'as',
+    'at',
+    'be',
+    'but',
+    'by',
+    'for',
+    'if',
+    'in',
+    'into',
+    'it',
+    'no',
+    'not',
+    'of',
+    'on',
+    'or',
+    'such',
+    'that',
+    'their',
+    'then',
+    'there',
+    'these',
+    'they',
+    'this',
+    'to',
+    'was',
+    'will',
+    'with',
+]
 
 logger = logging.getLogger(__name__)
 
@@ -374,6 +410,11 @@ atexit.register(_close_db)
 def get_falkordb_graph():
     """Return the shared FalkorDB graph instance (None if unavailable)."""
     return _ensure_graph()
+
+
+def get_driver() -> GraphDriver:
+    """Expose the shared Falkor Lite driver."""
+    return _get_driver()
 
 
 def to_cypher_literal(value: Any) -> str:
@@ -918,9 +959,40 @@ class FalkorLiteDriver(GraphDriver):
         self._database = "falkordb-lite"
 
     async def execute_query(self, cypher_query_, **kwargs: Any):
-        raise NotImplementedError(
-            "Direct query execution is not implemented for FalkorLiteDriver"
-        )
+        graph = _ensure_graph()
+        if graph is None:
+            raise RuntimeError("FalkorDB Lite is unavailable")
+
+        params = dict(kwargs)
+        params.pop("routing_", None)
+        params = convert_datetimes_to_strings(params)
+
+        def _inject(query: str, substitutions: dict[str, Any]) -> str:
+            for key, value in substitutions.items():
+                placeholder = f"${key}"
+                literal = to_cypher_literal(value)
+                query = query.replace(placeholder, literal)
+            return query
+
+        formatted_query = _inject(cypher_query_, params)
+        result = await asyncio.to_thread(graph.query, formatted_query, None)
+
+        raw = getattr(result, "_raw_response", None)
+        records: list[dict[str, Any]] = []
+        header: list[str] = []
+        rows = []
+        if isinstance(raw, list) and len(raw) >= 2:
+            header = [_decode_value(col[1]) for col in raw[0]]
+            rows = raw[1]
+
+        for row in rows:
+            record: dict[str, Any] = {}
+            for idx, field_name in enumerate(header):
+                value = row[idx][1] if idx < len(row) else None
+                record[str(field_name)] = _decode_value(value)
+            records.append(record)
+
+        return records, header, None
 
     def session(self, database: str | None = None) -> GraphDriverSession:
         return FalkorLiteSession()
@@ -931,6 +1003,66 @@ class FalkorLiteDriver(GraphDriver):
     async def delete_all_indexes(self):
         logger.debug("FalkorDB Lite does not expose index management APIs")
 
+    @staticmethod
+    def _sanitize_fulltext(query: str) -> str:
+        separator_map = str.maketrans(
+            {
+                ',': ' ',
+                '.': ' ',
+                '<': ' ',
+                '>': ' ',
+                '{': ' ',
+                '}': ' ',
+                '[': ' ',
+                ']': ' ',
+                '"': ' ',
+                "'": ' ',
+                ':': ' ',
+                ';': ' ',
+                '!': ' ',
+                '@': ' ',
+                '#': ' ',
+                '$': ' ',
+                '%': ' ',
+                '^': ' ',
+                '&': ' ',
+                '*': ' ',
+                '(': ' ',
+                ')': ' ',
+                '-': ' ',
+                '+': ' ',
+                '=': ' ',
+                '~': ' ',
+                '?': ' ',
+            }
+        )
+        sanitized = query.translate(separator_map)
+        return " ".join(sanitized.split())
+
+    def build_fulltext_query(
+        self, query: str, group_ids: list[str] | None = None, max_query_length: int = 128
+    ) -> str:
+        """Simplified fulltext query builder for local Falkor Lite."""
+        group_filter = (
+            f"(@group_id:{'|'.join(group_ids)})" if group_ids and len(group_ids) > 0 else ""
+        )
+        sanitized_query = self._sanitize_fulltext(query)
+        filtered_words = [word for word in sanitized_query.split() if word.lower() not in STOPWORDS]
+        sanitized_query = " | ".join(filtered_words)
+
+        if len(sanitized_query.split(" ")) + len(group_filter.split(" ")) >= max_query_length:
+            return ""
+
+        if not sanitized_query and not group_filter:
+            return ""
+
+        if not sanitized_query:
+            return group_filter
+
+        if group_filter:
+            return f"{group_filter} ({sanitized_query})"
+        return f"({sanitized_query})"
+
 
 _driver: FalkorLiteDriver | None = None
 
@@ -939,7 +1071,7 @@ class NullEmbedder(EmbedderClient):
     """Fallback embedder that returns empty vectors when embeddings are unavailable."""
 
     async def create(self, input_data):  # type: ignore[override]
-        return []
+        return [[0.0] * EMBEDDING_DIM for _ in input_data]
 
 
 _embedder = NullEmbedder()
@@ -1022,6 +1154,7 @@ __all__ = [
     "get_tcp_server_password",
     "get_db_stats",
     "get_falkordb_graph",
+    "get_driver",
     "persist_episode_and_nodes",
     "reset_database",
     "to_cypher_literal",

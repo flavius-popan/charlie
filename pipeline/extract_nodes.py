@@ -44,8 +44,10 @@ from graphiti_core.utils.maintenance.dedup_helpers import (
     DedupCandidateIndexes,
     DedupResolutionState,
     _build_candidate_indexes,
+    _normalize_string_exact,
     _resolve_with_similarity,
 )
+from graphiti_core.utils.maintenance.edge_operations import filter_existing_duplicate_of_edges
 from graphiti_core.utils.ontology_utils.entity_types_utils import validate_entity_types
 from pydantic import BaseModel, Field, model_validator
 
@@ -60,6 +62,7 @@ from pipeline.self_reference import (
     contains_first_person_reference,
     is_self_entity_name,
 )
+from pipeline.falkordblite_driver import get_driver
 
 
 logger = logging.getLogger(__name__)
@@ -266,17 +269,18 @@ class ExtractNodes:
 
         # Stage 2: Resolve against existing graph (async DB + sync resolution)
         existing_entities = await fetch_entities_by_group(self.group_id)
+        existing_uuid_set = set(existing_entities.keys())
         logger.info("Resolving against %d existing entities", len(existing_entities))
 
-        nodes, uuid_map, duplicate_pairs = self._resolve_entities(
-            provisional_nodes, existing_entities
+        nodes, uuid_map, duplicate_pairs = await self._resolve_entities(
+            provisional_nodes,
+            existing_entities,
+            episode,
+            previous_episodes,
+            entity_types,
         )
 
-        new_entities = sum(
-            1
-            for provisional_uuid, resolved_uuid in uuid_map.items()
-            if provisional_uuid == resolved_uuid
-        )
+        new_entities = sum(1 for node in nodes if node.uuid not in existing_uuid_set)
         metadata = {
             "extracted_count": len(provisional_nodes),
             "resolved_count": len(nodes),
@@ -289,6 +293,7 @@ class ExtractNodes:
             "new_entities": new_entities,
             "first_person_detected": first_person_detected,
             "self_node_injected": self_injected,
+            "existing_entity_uuids": list(existing_uuid_set),
         }
 
         logger.info(
@@ -375,29 +380,31 @@ class ExtractNodes:
         first_person_detected = pronoun_detected or has_llm_self
         return first_person_detected, injected
 
-    def _resolve_entities(
+    async def _resolve_entities(
         self,
         provisional_nodes: list[EntityNode],
         existing_nodes: dict[str, EntityNode],
+        episode: EpisodicNode,
+        previous_episodes: list[EpisodicNode],
+        entity_types: dict | None,
     ) -> tuple[list[EntityNode], dict[str, str], list[tuple[EntityNode, EntityNode]]]:
-        """Resolve provisional nodes using graphiti-core's deterministic matching.
-
-        Two-pass resolution:
-        1. Exact match: Normalized string equality
-        2. Fuzzy match: MinHash LSH + Jaccard similarity (threshold=0.9)
-
-        LLM disambiguation (Pass 3) is stubbed for future implementation.
-        """
+        """Resolve provisional nodes using graphiti-core's deterministic + LLM passes."""
         if not self.dedupe_enabled:
             uuid_map = {node.uuid: node.uuid for node in provisional_nodes}
             return provisional_nodes, uuid_map, []
 
-        # Build candidate indexes for fuzzy matching
         indexes: DedupCandidateIndexes = _build_candidate_indexes(
             list(existing_nodes.values())
         )
+        logger.debug(
+            "Existing candidates: %s",
+            [(node.name, node.uuid) for node in existing_nodes.values()],
+        )
+        logger.debug(
+            "Normalized existing keys: %s",
+            list(indexes.normalized_existing.keys()),
+        )
 
-        # Track resolution state
         state = DedupResolutionState(
             resolved_nodes=[None] * len(provisional_nodes),
             uuid_map={},
@@ -405,16 +412,14 @@ class ExtractNodes:
             duplicate_pairs=[],
         )
 
-        # Pass 1 & 2: Exact + fuzzy matching (deterministic)
         _resolve_with_similarity(provisional_nodes, indexes, state)
+        _resolve_exact_names(provisional_nodes, indexes, state)
 
-        # Pass 3: LLM disambiguation (stubbed - treat unresolved as new)
         for idx in state.unresolved_indices:
             node = provisional_nodes[idx]
             state.resolved_nodes[idx] = node
             state.uuid_map[node.uuid] = node.uuid
 
-        # Filter out None entries and deduplicate by canonical UUID
         unique_nodes: dict[str, EntityNode] = {}
         for node in state.resolved_nodes:
             if node is None:
@@ -422,7 +427,11 @@ class ExtractNodes:
             if node.uuid not in unique_nodes:
                 unique_nodes[node.uuid] = node
 
-        return list(unique_nodes.values()), state.uuid_map, state.duplicate_pairs
+        duplicate_pairs = await filter_existing_duplicate_of_edges(
+            get_driver(), state.duplicate_pairs
+        )
+
+        return list(unique_nodes.values()), state.uuid_map, duplicate_pairs
 
     def _format_entity_types(self, entity_types: dict | None) -> str:
         """Format entity type schemas for entity_types input field."""
@@ -499,3 +508,32 @@ __all__ = [
     "ExtractNodes",
     "ExtractNodesOutput",
 ]
+def _resolve_exact_names(
+    provisional_nodes: list[EntityNode],
+    indexes: DedupCandidateIndexes,
+    state: DedupResolutionState,
+) -> None:
+    """Resolve nodes via case-insensitive exact-name hits before fuzzy matching."""
+    for idx, node in enumerate(provisional_nodes):
+        if state.resolved_nodes[idx] is not None:
+            continue
+        normalized = _normalize_string_exact(node.name)
+        if not normalized:
+            continue
+        candidates = indexes.normalized_existing.get(normalized)
+        if not candidates:
+            continue
+        canonical = candidates[0]
+        logger.debug(
+            "Exact name resolved %s -> %s",
+            node.name,
+            canonical.uuid,
+        )
+        state.resolved_nodes[idx] = canonical
+        state.uuid_map[node.uuid] = canonical.uuid
+        if canonical.uuid != node.uuid:
+            state.duplicate_pairs.append((node, canonical))
+        try:
+            state.unresolved_indices.remove(idx)
+        except ValueError:
+            pass

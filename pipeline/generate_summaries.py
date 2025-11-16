@@ -40,6 +40,8 @@ from graphiti_core.nodes import EntityNode, EpisodicNode
 from graphiti_core.utils.text_utils import truncate_at_sentence, MAX_SUMMARY_CHARS
 from pydantic import BaseModel, Field
 
+from pipeline.self_reference import SELF_ENTITY_UUID
+
 logger = logging.getLogger(__name__)
 
 
@@ -224,6 +226,9 @@ class GenerateSummaries:
 
         # MLX inference currently serializes LLM generations, so this loop stays sequential.
         for node in nodes:
+            if node.uuid == str(SELF_ENTITY_UUID):
+                logger.debug("Skipping SELF entity for summary generation")
+                continue
             entity_type_name = next((item for item in node.labels if item != 'Entity'), 'Entity')
 
             logger.info(

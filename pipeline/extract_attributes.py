@@ -40,6 +40,7 @@ from graphiti_core.nodes import EntityNode, EpisodicNode
 from pydantic import BaseModel
 
 from pipeline.entity_edge_models import entity_types
+from pipeline.self_reference import SELF_ENTITY_UUID
 
 logger = logging.getLogger(__name__)
 
@@ -309,6 +310,10 @@ class ExtractAttributes:
         attributes_extracted_by_type: dict[str, int] = {}
 
         for node in nodes:
+            if node.uuid == str(SELF_ENTITY_UUID):
+                logger.debug("Skipping SELF entity for attribute extraction")
+                nodes_skipped += 1
+                continue
             entity_type_name = next((item for item in node.labels if item != 'Entity'), '')
 
             if not entity_type_name or entity_type_name not in entity_types:

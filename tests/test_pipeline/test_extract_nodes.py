@@ -62,8 +62,28 @@ async def test_extract_nodes_resolves_against_existing_entities(
         reference_time=datetime(2024, 3, 10, 16, 45, tzinfo=timezone.utc),
     )
 
-    assert result.metadata["resolved_count"] >= 1
     assert existing_uuid in result.uuid_map.values()
+    assert any(node.uuid == existing_uuid for node in result.nodes)
+
+
+@pytest.mark.asyncio
+async def test_extract_nodes_reuses_existing_self_and_friend(isolated_graph, seed_entity) -> None:
+    """Ensure canonical SELF and existing friends are reused, not duplicated."""
+    group_id = "self-dedupe"
+    friend_uuid = "55555555-5555-4555-8555-555555555555"
+    seed_entity(uuid=friend_uuid, name="Jefe", group_id=group_id, labels=["Entity", "Person"])
+
+    extractor = ExtractNodes(group_id=group_id)
+    result = await extractor(
+        content="I met Jefe for lunch today.",
+        reference_time=datetime(2024, 4, 1, 12, 0, tzinfo=timezone.utc),
+    )
+
+    resolved_ids = set(result.uuid_map.values())
+    assert friend_uuid in resolved_ids, "Existing friend should be reused"
+    assert any(node.uuid == friend_uuid for node in result.nodes)
+    self_nodes = [node for node in result.nodes if node.name == "Self"]
+    assert len(self_nodes) == 1, "Self should only appear once"
 
 
 @pytest.mark.asyncio

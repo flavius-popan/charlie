@@ -117,7 +117,7 @@ Fuzzy matches: {metadata.get("fuzzy_matches", 0)}
 New entities: {metadata.get("new_entities", 0)}{pronoun_line}"""
 
 
-def _format_uuid_map(uuid_map: dict, nodes) -> str:
+def _format_uuid_map(uuid_map: dict, nodes, metadata: dict | None = None) -> str:
     """Format UUID mapping table."""
     if not uuid_map:
         return "(no UUID mappings)"
@@ -126,10 +126,13 @@ def _format_uuid_map(uuid_map: dict, nodes) -> str:
     lines.append("-" * 50)
 
     node_names = {node.uuid: node.name for node in nodes}
+    existing_set = set()
+    if metadata:
+        existing_set = set(metadata.get("existing_entity_uuids", []))
 
     for prov_uuid, res_uuid in uuid_map.items():
         name = node_names.get(res_uuid, "Unknown")
-        status = "NEW" if prov_uuid == res_uuid else "MATCHED"
+        status = "MATCHED" if res_uuid in existing_set else "NEW"
         lines.append(f"{prov_uuid[:8]}... → {res_uuid[:8]}... [{status}] ({name})")
 
     return "\n".join(lines)
@@ -303,7 +306,9 @@ def on_extract(content: str):
 
         entity_list = _format_entity_list(extract_result.nodes)
         stats = _format_stats(extract_result.metadata)
-        uuid_map = _format_uuid_map(extract_result.uuid_map, extract_result.nodes)
+        uuid_map = _format_uuid_map(
+            extract_result.uuid_map, extract_result.nodes, extract_result.metadata
+        )
         episode_details = _format_episode(extract_result.episode)
 
         logger.info("Stage 1 complete: %d nodes extracted", len(extract_result.nodes))
@@ -548,17 +553,26 @@ Test the complete knowledge graph extraction pipeline with progressive stage upd
 
     gr.Markdown("### Stage 1: Entity Extraction")
     with gr.Row():
-        entity_list_output = gr.Textbox(
-            label="Extracted Entities",
-            interactive=False,
-            lines=8,
-        )
+        with gr.Column():
+            entity_list_output = gr.Textbox(
+                label="Extracted Entities",
+                interactive=False,
+                lines=8,
+            )
 
-        stats_output = gr.Textbox(
-            label="Extraction Statistics",
-            interactive=False,
-            lines=8,
-        )
+        with gr.Column():
+            stats_output = gr.Textbox(
+                label="Extraction Statistics",
+                interactive=False,
+                lines=8,
+            )
+
+        with gr.Column():
+            uuid_map_output = gr.Textbox(
+                label="UUID Mapping (Provisional → Resolved)",
+                interactive=False,
+                lines=8,
+            )
 
     gr.Markdown("### Stage 2: Relationship Extraction")
     with gr.Row():
@@ -603,18 +617,11 @@ Test the complete knowledge graph extraction pipeline with progressive stage upd
         )
 
     gr.Markdown("### Debug Information")
-    with gr.Row():
-        uuid_map_output = gr.Textbox(
-            label="UUID Mapping (Provisional → Resolved)",
-            interactive=False,
-            lines=8,
-        )
-
-        episode_output = gr.Textbox(
-            label="Episode Details",
-            interactive=False,
-            lines=8,
-        )
+    episode_output = gr.Textbox(
+        label="Episode Details",
+        interactive=False,
+        lines=8,
+    )
 
     gr.Markdown("## Database Controls")
 
