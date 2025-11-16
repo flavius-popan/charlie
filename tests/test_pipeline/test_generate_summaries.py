@@ -252,7 +252,7 @@ async def test_generate_summaries_handles_empty_existing_summary(isolated_graph)
 
 @pytest.mark.asyncio
 async def test_generate_summaries_processes_all_entity_types(isolated_graph) -> None:
-    """Mix of Person, Emotion, generic Entity should all get summaries."""
+    """Mix of Person, Activity, generic Entity should all get summaries."""
     group_id = "summary-types"
 
     episode = EpisodicNode(
@@ -277,10 +277,10 @@ async def test_generate_summaries_processes_all_entity_types(isolated_graph) -> 
         created_at=utc_now(),
     )
 
-    anxiety = EntityNode(
-        uuid="anxiety-uuid",
-        name="anxiety",
-        labels=["Entity", "Emotion"],
+    activity = EntityNode(
+        uuid="activity-uuid",
+        name="morning walk",
+        labels=["Entity", "Activity"],
         attributes={},
         summary="",
         group_id=group_id,
@@ -299,7 +299,7 @@ async def test_generate_summaries_processes_all_entity_types(isolated_graph) -> 
 
     generator = GenerateSummaries(group_id=group_id)
     result = await generator(
-        nodes=[maria, anxiety, project],
+        nodes=[maria, activity, project],
         episode=episode,
         previous_episodes=[],
     )

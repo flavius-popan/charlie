@@ -31,7 +31,12 @@ from .extract_nodes import ExtractNodes, ExtractNodesOutput
 from .extract_edges import ExtractEdges, ExtractEdgesOutput
 from .extract_attributes import ExtractAttributes, ExtractAttributesOutput
 from .generate_summaries import GenerateSummaries, GenerateSummariesOutput
-from .entity_edge_models import entity_types, edge_types, edge_type_map
+from .entity_edge_models import (
+    entity_types as DEFAULT_ENTITY_TYPES,
+    edge_types as DEFAULT_EDGE_TYPES,
+    edge_type_map as DEFAULT_EDGE_TYPE_MAP,
+    edge_meta as DEFAULT_EDGE_META,
+)
 from .falkordblite_driver import persist_episode_and_nodes
 
 logger = logging.getLogger(__name__)
@@ -57,12 +62,12 @@ async def add_journal(
     reference_time: datetime | None = None,
     name: str | None = None,
     source_description: str = "Journal entry",
-    entity_types: dict | None = entity_types,
+    entity_types: dict | None = None,
     excluded_entity_types: list[str] | None = None,
     extract_nodes_factory: Callable[[str], ExtractNodes] | None = None,
-    use_ner_extractor: bool = False,
     edge_types: dict | None = None,
     edge_type_map: dict | None = None,
+    edge_meta: dict | None = None,
     persist: bool = True,
 ) -> AddJournalResults:
     """Process a journal entry and extract knowledge graph elements.
@@ -83,9 +88,9 @@ async def add_journal(
         entity_types: Custom entity type schemas
         excluded_entity_types: Entity types to exclude from extraction
         extract_nodes_factory: Optional hook returning an ExtractNodes module for the given group_id
-        use_ner_extractor: When True, use the DistilBERT+Reflexion path for Stage 1
         edge_types: Custom edge type schemas (for future Stage 2 enhancement)
         edge_type_map: Maps (source_label, target_label) to allowed edge types
+        edge_meta: Metadata describing relation descriptions and allowed signatures
         persist: Whether to write results to FalkorDB (defaults to True)
 
     Returns:
@@ -109,6 +114,11 @@ async def add_journal(
         ```
     """
     # Validate inputs using graphiti-core validators
+    entity_types = entity_types or DEFAULT_ENTITY_TYPES
+    edge_types = edge_types or DEFAULT_EDGE_TYPES
+    edge_type_map = edge_type_map or DEFAULT_EDGE_TYPE_MAP
+    edge_meta = edge_meta or DEFAULT_EDGE_META
+
     validate_entity_types(entity_types)
     validate_excluded_entity_types(excluded_entity_types, entity_types)
     validate_group_id(group_id)
@@ -121,7 +131,6 @@ async def add_journal(
         return ExtractNodes(
             group_id=gid,
             dedupe_enabled=True,
-            use_ner_extractor=use_ner_extractor,
         )
 
     factory = extract_nodes_factory or _default_extract_nodes_factory
@@ -140,6 +149,7 @@ async def add_journal(
         dedupe_enabled=True,
         edge_types=edge_types,
         edge_type_map=edge_type_map,
+        edge_meta=edge_meta,
     )
     extract_edges_result = await edge_extractor(
         episode=extract_result.episode,

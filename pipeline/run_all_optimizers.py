@@ -12,7 +12,6 @@ from typing import Dict
 
 OPTIMIZERS: Dict[str, str] = {
     "extract_nodes": "pipeline.optimizers.extract_nodes_optimizer",
-    "entity_reflexion": "pipeline.optimizers.entity_reflexion_optimizer",
     "extract_edges": "pipeline.optimizers.extract_edges_optimizer",
     "extract_attributes": "pipeline.optimizers.extract_attributes_optimizer",
     "generate_summaries": "pipeline.optimizers.generate_summaries_optimizer",

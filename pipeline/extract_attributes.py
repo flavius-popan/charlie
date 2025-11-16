@@ -44,31 +44,46 @@ from pipeline.entity_edge_models import entity_types
 logger = logging.getLogger(__name__)
 
 
-class AttributeExtractionSignature(dspy.Signature):
-    """Extract entity attributes from journal entries.
+def _build_attribute_signature(
+    entity_type: str, response_model: type[BaseModel]
+) -> type[dspy.Signature]:
+    """Create a signature class for a specific entity type."""
 
-    Given an entity (name and type) and journal context, extract structured attributes
-    based on the entity type's Pydantic schema. Only extract information explicitly
-    present in the provided messages.
-    """
+    safe_name = "".join(ch for ch in (entity_type or response_model.__name__) if ch.isalnum()) or "Generic"
+    class_name = f"{safe_name}AttributeSignature"
+    doc = f"Extract {entity_type or response_model.__name__} attributes from journal entries."
 
-    episode_content: str = dspy.InputField(
-        desc="Current journal entry text"
-    )
-    previous_episodes: str = dspy.InputField(
-        desc="Previous journal entries as JSON list for additional context"
-    )
-    entity_name: str = dspy.InputField(
-        desc="Name of the entity to extract attributes for"
-    )
-    entity_type: str = dspy.InputField(
-        desc="Type of entity (e.g., Person, Emotion)"
-    )
-    existing_attributes: str = dspy.InputField(
-        desc="Current entity attributes as JSON dict (may be empty)"
-    )
+    annotations = {
+        "episode_content": str,
+        "previous_episodes": str,
+        "entity_name": str,
+        "entity_type": str,
+        "existing_attributes": str,
+        "attributes": response_model,
+    }
 
-    # Output field is dynamically set based on entity type in forward()
+    attrs = {
+        "__doc__": doc,
+        "__annotations__": annotations,
+        "episode_content": dspy.InputField(desc="Current journal entry text"),
+        "previous_episodes": dspy.InputField(
+            desc="Previous journal entries as JSON list for additional context"
+        ),
+        "entity_name": dspy.InputField(
+            desc="Name of the entity to extract attributes for"
+        ),
+        "entity_type": dspy.InputField(
+            desc="Type of entity (e.g., Person, Activity, Organization, Place)"
+        ),
+        "existing_attributes": dspy.InputField(
+            desc="Current entity attributes as JSON dict (may be empty)"
+        ),
+        "attributes": dspy.OutputField(
+            desc=f"Extracted {entity_type or response_model.__name__} attributes based on schema. Only extract information explicitly present in the journal data."
+        ),
+    }
+
+    return type(class_name, (dspy.Signature,), attrs)
 
 
 @dataclass
@@ -98,14 +113,29 @@ class AttributeExtractor(dspy.Module):
         )
     """
 
-    def __init__(self):
+    def __init__(self, entity_type_models: dict[str, type[BaseModel]] | None = None):
         super().__init__()
-        self.extractor = dspy.Predict(AttributeExtractionSignature)
+        self._predictors: dict[str, dspy.Module] = {}
+        self._signatures: dict[str, type[dspy.Signature]] = {}
+        self._entity_type_models: dict[str, type[BaseModel]] = {}
 
-        prompt_path = Path(__file__).parent / "prompts" / "extract_attributes.json"
-        if prompt_path.exists():
-            self.load(str(prompt_path))
-            logger.info("Loaded optimized prompts from %s", prompt_path)
+        source_models = entity_type_models or entity_types
+        for type_name, model in source_models.items():
+            self._register_entity_model(type_name, model)
+
+        for type_name, model in list(self._entity_type_models.items()):
+            self._get_or_create_predictor(type_name, model)
+
+        prompt_dir = Path(__file__).parent / "prompts"
+        candidate_paths = [
+            prompt_dir / "extract_attributes.json",
+            prompt_dir / "extract_attributes.pkl",
+        ]
+        for prompt_path in candidate_paths:
+            if prompt_path.exists():
+                self.load(str(prompt_path))
+                logger.info("Loaded optimized prompts from %s", prompt_path)
+                break
 
     def forward(
         self,
@@ -114,7 +144,7 @@ class AttributeExtractor(dspy.Module):
         entity_name: str,
         entity_type: str,
         existing_attributes: str,
-        response_model: type[BaseModel],
+        response_model: type[BaseModel] | None = None,
     ) -> dict[str, Any]:
         """Extract attributes for an entity from text content.
 
@@ -122,50 +152,15 @@ class AttributeExtractor(dspy.Module):
             episode_content: Current journal entry text
             previous_episodes: JSON string of previous episode contents
             entity_name: Name of entity to extract attributes for
-            entity_type: Type of entity (e.g., "Person", "Emotion")
+            entity_type: Type of entity (e.g., "Person", "Activity", "Organization", "Place")
             existing_attributes: JSON string of current attributes
-            response_model: Pydantic model defining expected attributes
+            response_model: Optional override for the entity schema
 
         Returns:
             Dictionary of extracted attributes matching response_model schema
         """
-        # Create a dynamic signature class with the specific response model
-        # Using type() to create a new class with proper annotations at runtime
-        # This allows OutlinesAdapter to extract the Pydantic constraint correctly
-        DynamicSignature = type(
-            f'AttributeExtractionSignature_{response_model.__name__}',
-            (dspy.Signature,),
-            {
-                '__doc__': f"Extract {response_model.__name__} attributes from journal entries.",
-                '__annotations__': {
-                    'episode_content': str,
-                    'previous_episodes': str,
-                    'entity_name': str,
-                    'entity_type': str,
-                    'existing_attributes': str,
-                    'attributes': response_model,  # Dynamic Pydantic model
-                },
-                'episode_content': dspy.InputField(desc="Current journal entry text"),
-                'previous_episodes': dspy.InputField(
-                    desc="Previous journal entries as JSON list for additional context"
-                ),
-                'entity_name': dspy.InputField(
-                    desc="Name of the entity to extract attributes for"
-                ),
-                'entity_type': dspy.InputField(
-                    desc="Type of entity (e.g., Person, Emotion)"
-                ),
-                'existing_attributes': dspy.InputField(
-                    desc="Current entity attributes as JSON dict (may be empty)"
-                ),
-                'attributes': dspy.OutputField(
-                    desc=f"Extracted {entity_type} attributes based on schema. Only extract information explicitly present in messages."
-                ),
-            }
-        )
-
-        # Create a predictor with the dynamic signature
-        predictor = dspy.Predict(DynamicSignature)
+        model = self._resolve_response_model(entity_type, response_model)
+        predictor = self._get_or_create_predictor(entity_type, model)
 
         result = predictor(
             episode_content=episode_content,
@@ -175,8 +170,64 @@ class AttributeExtractor(dspy.Module):
             existing_attributes=existing_attributes,
         )
 
-        # Return the attributes as a dict
-        return result.attributes.model_dump(exclude_none=True)
+        attributes = getattr(result, "attributes", result)
+
+        if isinstance(attributes, BaseModel):
+            return attributes.model_dump(exclude_none=True)
+        if isinstance(attributes, dict):
+            return {k: v for k, v in attributes.items() if v is not None}
+        return attributes
+
+    def _resolve_response_model(
+        self, entity_type: str, response_model: type[BaseModel] | str | None
+    ) -> type[BaseModel]:
+        """Resolve the schema to use for the given entity."""
+        model: type[BaseModel] | None = None
+
+        if response_model is not None:
+            if isinstance(response_model, str):
+                model = self._entity_type_models.get(response_model)
+            else:
+                model = response_model
+
+        if model is None and entity_type:
+            model = self._entity_type_models.get(entity_type)
+
+        if model is None:
+            raise ValueError(
+                f"No attribute schema registered for entity type '{entity_type}'. "
+                "Provide `response_model` or register the type before invoking AttributeExtractor."
+            )
+
+        self._register_entity_model(entity_type or model.__name__, model)
+        return model
+
+    def _register_entity_model(self, entity_type: str, model: type[BaseModel]) -> None:
+        """Register mappings for an entity type and its schema."""
+        key = entity_type or model.__name__
+        self._entity_type_models[key] = model
+        self._entity_type_models.setdefault(model.__name__, model)
+
+    def _get_or_create_predictor(
+        self, entity_type: str, response_model: type[BaseModel]
+    ) -> dspy.Module:
+        """Retrieve or build a predictor for the requested entity type."""
+        key = entity_type or response_model.__name__
+        if key in self._predictors:
+            return self._predictors[key]
+
+        signature = _build_attribute_signature(key, response_model)
+        predictor = dspy.ChainOfThought(signature)
+        attr_name = self._predictor_attr_name(key)
+        setattr(self, attr_name, predictor)
+        self._predictors[key] = predictor
+        self._signatures[key] = signature
+        return predictor
+
+    @staticmethod
+    def _predictor_attr_name(key: str) -> str:
+        safe = "".join(ch if ch.isalnum() else "_" for ch in (key or "generic"))
+        return f"{safe.lower()}_predictor"
 
 
 class ExtractAttributes:
@@ -234,7 +285,7 @@ class ExtractAttributes:
             nodes: Entity nodes to extract attributes for
             episode: Current episode being processed
             previous_episodes: Previous episodes for context
-            entity_types: Custom entity type schemas (defaults to Person and Emotion)
+            entity_types: Custom entity type schemas (defaults to Person, Place, Organization, Activity)
 
         Returns:
             ExtractAttributesOutput with nodes (attributes populated) and metadata

@@ -87,10 +87,10 @@ class ExtractNodesOutput:
     metadata: dict[str, Any]           # Statistics: extracted_count, exact_matches, fuzzy_matches, new_entities
 ```
 
-**Extractor options**
+**Extractor**
 
-- Default mode uses the DSPy `EntityExtractor`.
-- Pass `use_ner_extractor=True` (or toggle the checkbox in `pipeline/gradio_ui.py`) to run the DistilBERT + Reflexion path. DistilBERT handles the fast first pass, then a DSPy reflexion signature (mirroring graphiti-core’s prompt) names any missed entities which are converted into `EntityNode`s before resolution.
+- Stage 1 uses a single DSPy `EntityExtractor` module (same structure as graphiti-core for easy optimization).
+- Reflexion/NER experiments have been rolled back; future iterative passes will plug into the existing stubs in `pipeline/extract_nodes.py` if needed.
 
 ### Stage 2: Extract Edges
 
@@ -145,6 +145,8 @@ Journal Text → add_journal() → ExtractNodes → ExtractEdges → ExtractAttr
 1. **`EntityExtractor`** (dspy.Module): Pure LLM extraction. Sync, no DB. Optimizable.
 2. **`ExtractNodes`** (orchestrator): Full pipeline with DB, episode creation, MinHash LSH resolution.
 
+**Default schema**: `pipeline/entity_edge_models.py` defines the four baseline entity types (Person, Place, Organization, Activity) plus the journaling-focused edge catalog (`Knows`, `SpendsTimeWith`, `Supports`, `ConflictsWith`, `ParticipatesIn`, `OccursAt`, `Visits`, with `RELATES_TO` as the automatic fallback). Keeping that file in sync with any schema tweaks ensures the runtime pipeline and all DSPy optimizers stay aligned without rerunning expensive compilation jobs.
+
 ```python
 # Standard usage
 extractor = ExtractNodes(group_id="user_123")
@@ -157,7 +159,7 @@ extractor = ExtractNodes(group_id="user_123", entity_extractor=compiled)
 result = await extractor(content="...")
 ```
 
-**Important**: Stage 1 extracts entity names and types ONLY. Custom attributes (e.g., Person.relationship_type, Emotion.specific_emotion) are extracted in Stage 3, following graphiti-core's separation of concerns.
+**Important**: Stage 1 extracts entity names and types ONLY. Custom attributes (e.g., Person.relationship_type, Activity.activity_type) are extracted in Stage 3, following graphiti-core's separation of concerns.
 
 **Pattern for Future Stages**: Repeat this two-layer design. Create a pure `dspy.Module` for each LLM operation, inject into orchestrator.
 
@@ -183,7 +185,7 @@ result = await extractor(content="...")
 ```
 ExtractNodesOutput (from Stage 1)
     ↓ extracted_nodes (original UUIDs)
-EdgeExtractor (DSPy) → ExtractedRelationships
+EdgeExtractor (DSPy) → ExtractedEdges (entity indices)
     ↓
 build_entity_edges() → EntityEdges with provisional UUIDs
     ↓ uuid_map (from Stage 1)
@@ -213,9 +215,13 @@ extractor = ExtractEdges(group_id="user_123", edge_extractor=compiled)
 result = await extractor(...)
 ```
 
+**Schema context**: `ExtractEdges` rebuilds the edge-type context for every call using `edge_types`, `edge_type_map`, and `edge_meta`. If a suggested edge label is not allowed for the source/target pair, `_enforce_edge_type_rules()` rewrites it to Graphiti’s default `RELATES_TO`, ensuring we never drop a relationship silently. Episodic `MENTIONS` edges remain automatic via `graphiti_core.utils.maintenance.edge_operations.build_episodic_edges`.
+
 **Important Implementation Details**:
 
 1. **Node Indexing**: LLM extracts edges using `extracted_nodes` (original UUIDs) because indices must match the node list passed to the LLM.
+
+> See [Graphiti custom entity/edge docs](https://help.getzep.com/graphiti/core-concepts/custom-entity-and-edge-types) for ontology guidance and [DSPy optimizer docs](../docs/learn/optimization/optimizers.md) for teleprompter behavior referenced by these stages.
 
 2. **UUID Remapping**: After extraction, `resolve_edge_pointers(edges, uuid_map)` remaps edge source/target UUIDs from provisional → canonical.
 
@@ -247,7 +253,9 @@ result = await extractor(...)
 **Design**:
 - For each resolved entity from Stage 1, extract type-specific attributes:
   - **Person**: `relationship_type` (e.g., "friend", "colleague", "family")
-  - **Emotion**: `specific_emotion` (e.g., "anxiety", "joy"), `category` (e.g., "positive", "negative")
+  - **Activity**: `activity_type` (e.g., "walk", "therapy session")
+  - **Place**: `category` (e.g., "park", "clinic")
+  - **Organization**: `category` (e.g., "company", "nonprofit")
 - Pass entity's Pydantic model (from `entity_edge_models.py`) as `response_model` to LLM
 - LLM extracts attributes based on episode context and previous_episodes
 - Results merged into `EntityNode.attributes` dict
@@ -288,12 +296,12 @@ result = await extractor(...)
 Stage 1 extracts:
 ```python
 EntityNode(name="Sarah", labels=["Entity", "Person"], attributes={})
-EntityNode(name="anxiety", labels=["Entity", "Emotion"], attributes={})
+EntityNode(name="morning walk", labels=["Entity", "Activity"], attributes={})
 ```
 
 Stage 3 enriches with type-specific attributes:
 ```python
-# For episode: "Today I met with my friend Sarah. Feeling anxious about the presentation."
+# For episode: "Today I met with my friend Sarah. We took a brisk morning walk before work."
 
 # Person entity enriched:
 EntityNode(
@@ -302,14 +310,11 @@ EntityNode(
     attributes={"relationship_type": "friend"}  # Extracted from "my friend Sarah"
 )
 
-# Emotion entity enriched:
+# Activity entity enriched:
 EntityNode(
-    name="anxiety",
-    labels=["Entity", "Emotion"],
-    attributes={
-        "specific_emotion": "anxiety",
-        "category": "high_energy_unpleasant"
-    }
+    name="morning walk",
+    labels=["Entity", "Activity"],
+    attributes={"activity_type": "walk"}
 )
 ```
 
@@ -404,7 +409,7 @@ result = await generator(...)
 # Good summaries (factual, concise, under 250 chars)
 "Sarah is a friend. Met on 2025-01-06 to discuss AI ethics at Stanford."
 
-"Anxiety about presentation. High energy unpleasant emotion. Experienced on 2025-01-06."
+"Morning walk on 2025-01-06 with Sarah around Lake Lynn before work."
 
 # Bad summaries (avoid)
 "This is the only activity in the context. The user met with Sarah. No other details were provided."
@@ -423,7 +428,7 @@ result = await generator(...)
    - `truncate_at_sentence()` from `graphiti_core.utils.text_utils`
    - `MAX_SUMMARY_CHARS = 250` constant
 
-4. **Process all entities**: No filtering by entity type (summaries for Person, Emotion, and Entity)
+4. **Process all entities**: No filtering by entity type (summaries for Person, Activity, Place, Organization, generic Entity)
 
 5. **Metadata tracking**: Nodes processed, average summary length, truncation count
 

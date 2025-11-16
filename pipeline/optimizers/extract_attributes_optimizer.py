@@ -9,6 +9,7 @@ Usage:
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 import logging
 import dspy
@@ -16,7 +17,7 @@ from dspy.teleprompt import MIPROv2
 
 from dspy_outlines import OutlinesAdapter, OutlinesLM
 from pipeline.extract_attributes import AttributeExtractor
-from pipeline.entity_edge_models import Person
+from pipeline.entity_edge_models import Activity, Organization, Person, Place
 from settings import DEFAULT_MODEL_PATH, MODEL_CONFIG
 
 
@@ -34,95 +35,157 @@ def configure_dspy():
 
 
 def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
-    """Create light-weight attribute examples centered on relationships."""
+    """Create light-weight attribute examples covering multiple entity types."""
 
     def example(
+        *,
         episode_content: str,
         previous_notes: list[str],
         entity_name: str,
+        entity_type: str,
         existing: dict[str, str],
-        label: str,
+        attributes: dict[str, str],
     ) -> dspy.Example:
         return dspy.Example(
             episode_content=episode_content,
             previous_episodes=json.dumps(previous_notes),
             entity_name=entity_name,
-            entity_type="Person",
+            entity_type=entity_type,
             existing_attributes=json.dumps(existing),
-            response_model=Person,
-            attributes={"relationship_type": label},
+            attributes=attributes,
         ).with_inputs(
             "episode_content",
             "previous_episodes",
             "entity_name",
             "entity_type",
             "existing_attributes",
-            "response_model",
         )
 
     all_examples = [
         example(
-            episode_content=(
-                "Lena made blueberry pancakes and reminded me we've been friends since college."
-            ),
+            episode_content="Lena made blueberry pancakes and reminded me we've been friends since college.",
             previous_notes=["Lena texted last week about missing our Sunday breakfast ritual."],
             entity_name="Lena",
+            entity_type="Person",
             existing={"relationship_type": "acquaintance"},
-            label="friend",
+            attributes={
+                "relationship_type": "friend",
+                "closeness": 0.82,
+                "overall_valence": 0.65,
+            },
         ),
         example(
             episode_content="Coach Ray met me for hill repeats and tweaked my stride.",
             previous_notes=["Ray has been writing my running plans all winter."],
             entity_name="Ray",
+            entity_type="Person",
             existing={},
-            label="coach",
+            attributes={
+                "relationship_type": "coach",
+                "closeness": 0.4,
+                "overall_valence": 0.2,
+            },
         ),
         example(
             episode_content="Therapy with Dr. Hwang today felt steadier; she tracked my breath with me.",
             previous_notes=["Dr. Hwang has seen me since last spring."],
             entity_name="Dr. Hwang",
+            entity_type="Person",
             existing={"relationship_type": ""},
-            label="therapist",
-        ),
-        example(
-            episode_content="Video call with cousin Eli to plan the Diaz reunion.",
-            previous_notes=["Eli keeps the family spreadsheet updated."],
-            entity_name="Eli",
-            existing={"relationship_type": "family"},
-            label="family",
+            attributes={
+                "relationship_type": "therapist",
+                "closeness": 0.35,
+                "overall_valence": -0.25,
+            },
         ),
         example(
             episode_content="Priya and I paired at the studio to fix our team's prototype.",
             previous_notes=["She sits two desks over at the co-op space."],
             entity_name="Priya",
+            entity_type="Person",
             existing={},
-            label="colleague",
+            attributes={
+                "relationship_type": "colleague",
+                "closeness": 0.55,
+                "overall_valence": 0.4,
+            },
         ),
         example(
             episode_content="Slow dinner date with Sam on the roof, just holding hands and eating takeout.",
             previous_notes=["Sam and I have been dating since the fall festival."],
             entity_name="Sam",
+            entity_type="Person",
             existing={"relationship_type": "friend"},
-            label="romantic partner",
+            attributes={
+                "relationship_type": "romantic partner",
+                "closeness": 0.9,
+                "overall_valence": 0.85,
+            },
         ),
         example(
             episode_content="Neighbor Laila dropped off soup when the migraine kicked in.",
             previous_notes=["She shares tomatoes from her garden every July."],
             entity_name="Laila",
+            entity_type="Person",
             existing={},
-            label="neighbor",
+            attributes={
+                "relationship_type": "neighbor",
+                "closeness": 0.6,
+                "overall_valence": 0.5,
+            },
         ),
         example(
-            episode_content="Pastor Miguel prayed with me after service and reminded me to journal nightly.",
-            previous_notes=["Miguel has basically mentored me since high school youth group."],
-            entity_name="Miguel",
-            existing={"relationship_type": "pastor"},
-            label="mentor",
+            episode_content="Lake Merritt felt calm tonight; the walking path lights flickered along the water.",
+            previous_notes=["Jogged the lake loop last week at dusk."],
+            entity_name="Lake Merritt",
+            entity_type="Place",
+            existing={},
+            attributes={"category": "park"},
+        ),
+        example(
+            episode_content="Checked in at Harbor House Clinic for the migraine shots.",
+            previous_notes=["Nurse Jamie said the clinic closes earlier on Fridays."],
+            entity_name="Harbor House Clinic",
+            entity_type="Place",
+            existing={"category": ""},
+            attributes={"category": "clinic"},
+        ),
+        example(
+            episode_content="River Labs asked me to review their mindfulness study protocol.",
+            previous_notes=["River Labs hosted the burnout workshop last month."],
+            entity_name="River Labs",
+            entity_type="Organization",
+            existing={},
+            attributes={"category": "research company"},
+        ),
+        example(
+            episode_content="Met with Mutual Aid Kitchen to portion out stews for the winter drive.",
+            previous_notes=["They run pop-up food shares every other Sunday."],
+            entity_name="Mutual Aid Kitchen",
+            entity_type="Organization",
+            existing={},
+            attributes={"category": "community group"},
+        ),
+        example(
+            episode_content="Sunrise yoga on the pier turned into laughter yoga when the speaker glitched.",
+            previous_notes=["I promised Nina I'd bring extra mats to sunrise yoga."],
+            entity_name="sunrise yoga",
+            entity_type="Activity",
+            existing={},
+            attributes={"activity_type": "wellness class"},
+        ),
+        example(
+            episode_content="Booked a calming dog walk with Scout; we circled the block slowly.",
+            previous_notes=["Scout's owner Jana said these short walks keep her grounded."],
+            entity_name="dog walk with Scout",
+            entity_type="Activity",
+            existing={},
+            attributes={"activity_type": "walk"},
         ),
     ]
 
-    trainset = all_examples[:6]
-    valset = all_examples[6:]
+    trainset = all_examples[:8]
+    valset = all_examples[8:]
     logger.info(
         "Built attribute trainset with %d examples, valset with %d examples",
         len(trainset),
@@ -132,22 +195,38 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
 
 
 def attribute_extraction_metric(example, prediction, trace=None) -> float:
-    """Return 1 when relationship_type matches (case-insensitive)."""
+    """Return average match rate across expected attributes."""
 
-    expected = example.attributes.get("relationship_type")
-    target = prediction or {}
-    if hasattr(target, "get"):
-        predicted_value = target.get("relationship_type")
+    expected: dict = example.attributes or {}
+    predicted = prediction or {}
+    if hasattr(predicted, "get"):
+        predicted_dict = predicted
     else:
-        predicted_value = getattr(target, "relationship_type", None)
+        predicted_dict = getattr(predicted, "attributes", {}) or {}
 
-    if expected is None:
+    if not expected:
         return 1.0
 
-    if not predicted_value:
-        return 0.0
+    matches = 0
+    for key, expected_value in expected.items():
+        predicted_value = predicted_dict.get(key)
+        if isinstance(expected_value, str) and isinstance(predicted_value, str):
+            if expected_value.strip().lower() == predicted_value.strip().lower():
+                matches += 1
+        elif isinstance(expected_value, (int, float)) and isinstance(
+            predicted_value, (int, float)
+        ):
+            if math.isclose(
+                float(predicted_value),
+                float(expected_value),
+                abs_tol=0.05,
+            ):
+                matches += 1
+        else:
+            if expected_value == predicted_value:
+                matches += 1
 
-    return 1.0 if expected.lower() == predicted_value.lower() else 0.0
+    return matches / len(expected)
 
 
 def optimize(trainset: list[dspy.Example]) -> AttributeExtractor:
@@ -157,9 +236,9 @@ def optimize(trainset: list[dspy.Example]) -> AttributeExtractor:
     optimizer = MIPROv2(
         metric=attribute_extraction_metric,
         auto=None,
-        num_candidates=4,
-        init_temperature=1.0,
-        metric_threshold=0.85,
+        num_candidates=3,
+        init_temperature=0.5,
+        metric_threshold=0.90,
     )
 
     student = AttributeExtractor()
@@ -167,7 +246,7 @@ def optimize(trainset: list[dspy.Example]) -> AttributeExtractor:
         student=student,
         trainset=trainset,
         num_trials=8,
-        max_bootstrapped_demos=2,
+        max_bootstrapped_demos=3,
         max_labeled_demos=3,
         minibatch_size=2,
         requires_permission_to_run=False,
@@ -188,7 +267,6 @@ def evaluate(module: AttributeExtractor, dataset: list[dspy.Example]) -> float:
             entity_name=example.entity_name,
             entity_type=example.entity_type,
             existing_attributes=example.existing_attributes,
-            response_model=example.response_model,
         )
         scores.append(attribute_extraction_metric(example, prediction))
 

@@ -84,27 +84,12 @@ class EntitySummary(BaseModel):
 
 
 class SummaryGenerationSignature(dspy.Signature):
-    """Generate concise entity summaries from journal entries.
+    """Generate concise entity summaries from journal context."""
 
-    Accepts a JSON context dict matching graphiti-core's extract_summary prompt:
-        {
-            "node": {
-                "name": ...,
-                "summary": "<existing summary (<=250 chars)>",
-                "entity_types": [...],
-                "attributes": {...}
-            },
-            "episode_content": "...",
-            "previous_episodes": ["...", "..."]
-        }
-    """
-
-    summary_context: str = dspy.InputField(
-        desc="JSON dictionary with keys: node, episode_content, previous_episodes"
-    )
+    summary_context: str = dspy.InputField(desc="entity and journal context")
 
     summary: EntitySummary = dspy.OutputField(
-        desc="Concise factual summary combining new information with existing summary. State facts directly in under 250 characters. No meta-commentary."
+        desc="concise summary of the entity"
     )
 
 

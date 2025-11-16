@@ -20,7 +20,14 @@ from graphiti_core.nodes import EntityNode, EpisodicNode, EpisodeType
 from graphiti_core.utils.bulk_utils import add_nodes_and_edges_bulk
 from graphiti_core.utils.datetime_utils import convert_datetimes_to_strings, utc_now
 
-from settings import DB_PATH, GRAPH_NAME
+from settings import (
+    DB_PATH,
+    GRAPH_NAME,
+    FALKORLITE_TCP_ENABLED_BY_DEFAULT,
+    FALKORLITE_TCP_HOST,
+    FALKORLITE_TCP_PASSWORD,
+    FALKORLITE_TCP_PORT,
+)
 
 try:  # Optional dependency in CI / unit tests
     from redislite.falkordb_client import FalkorDB
@@ -42,6 +49,76 @@ _db_unavailable = False
 # Ensure the embedded database directory exists before first use.
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
+_tcp_server = {
+    "enabled": FALKORLITE_TCP_ENABLED_BY_DEFAULT and FALKORLITE_TCP_PORT > 0,
+    "host": FALKORLITE_TCP_HOST,
+    "port": FALKORLITE_TCP_PORT,
+    "password": FALKORLITE_TCP_PASSWORD,
+}
+
+
+def _tcp_server_active() -> bool:
+    port = _tcp_server["port"]
+    return bool(_tcp_server["enabled"] and port and port > 0)
+
+
+def enable_tcp_server(
+    *,
+    host: str | None = None,
+    port: int | None = None,
+    password: str | None = None,
+) -> None:
+    """Expose FalkorDB Lite on a TCP port in addition to the default unix socket."""
+    global _tcp_server
+    if port is not None:
+        if port <= 0:
+            logger.warning("Ignoring TCP enable request with invalid port %s", port)
+            return
+        _tcp_server["port"] = port
+    if host:
+        _tcp_server["host"] = host
+    if password is not None:
+        _tcp_server["password"] = password or None
+
+    _tcp_server["enabled"] = bool(_tcp_server["port"])
+    if _db is not None:
+        logger.warning(
+            "FalkorDB Lite TCP configuration updated after initialisation; "
+            "restart the process to apply the change."
+        )
+
+
+def disable_tcp_server() -> None:
+    """Disable the TCP listener (unix socket access remains available)."""
+    _tcp_server["enabled"] = False
+
+
+def get_tcp_server_endpoint() -> tuple[str, int] | None:
+    """Return (host, port) if the TCP server is configured, otherwise None."""
+    if not _tcp_server_active():
+        return None
+    host = _tcp_server["host"] or "127.0.0.1"
+    return host, int(_tcp_server["port"])
+
+
+def get_tcp_server_password() -> str | None:
+    """Return the configured password for the TCP server (if any)."""
+    if not _tcp_server_active():
+        return None
+    return _tcp_server["password"]
+
+
+def _build_serverconfig() -> dict[str, str] | None:
+    if not _tcp_server_active():
+        return None
+
+    config: dict[str, str] = {"port": str(int(_tcp_server["port"]))}
+    if _tcp_server["host"]:
+        config["bind"] = _tcp_server["host"]
+    if _tcp_server["password"]:
+        config["requirepass"] = _tcp_server["password"]
+    return config
+
 
 def _ensure_graph():
     """Return a FalkorDB graph instance if available, otherwise None."""
@@ -60,8 +137,21 @@ def _ensure_graph():
         if _db_unavailable:
             return None
         try:
-            _db = FalkorDB(dbfilename=str(DB_PATH))
+            serverconfig = _build_serverconfig()
+            kwargs: dict[str, Any] = {}
+            if serverconfig:
+                kwargs["serverconfig"] = serverconfig
+            _db = FalkorDB(dbfilename=str(DB_PATH), **kwargs)
             _graph = _db.select_graph(GRAPH_NAME)
+            if serverconfig:
+                endpoint = get_tcp_server_endpoint()
+                if endpoint:
+                    host, port = endpoint
+                    logger.info(
+                        "FalkorDB Lite TCP debug endpoint exposed on %s:%d",
+                        host,
+                        port,
+                    )
         except Exception as exc:  # noqa: BLE001
             logger.warning("Failed to initialise FalkorDBLite: %s", exc)
             _db_unavailable = True
@@ -770,9 +860,13 @@ __all__ = [
     "FalkorLiteDriver",
     "FalkorLiteSession",
     "NullEmbedder",
+    "disable_tcp_server",
+    "enable_tcp_server",
     "fetch_entities_by_group",
     "fetch_entity_edges_by_group",
     "fetch_recent_episodes",
+    "get_tcp_server_endpoint",
+    "get_tcp_server_password",
     "get_db_stats",
     "get_falkordb_graph",
     "persist_episode_and_nodes",

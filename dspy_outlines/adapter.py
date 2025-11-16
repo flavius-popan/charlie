@@ -6,6 +6,7 @@ from typing import Any
 
 from dspy.adapters import ChatAdapter
 from dspy.adapters.types.tool import ToolCalls
+from dspy.adapters.utils import parse_value
 from dspy.clients.lm import LM
 from dspy.signatures.signature import Signature
 from dspy.utils.exceptions import AdapterParseError
@@ -97,6 +98,15 @@ class OutlinesAdapter(ChatAdapter):
             return result
 
         except Exception as e:
+            # Attempt a fast JSON rescue when ChatAdapter formatting is the only failure mode.
+            if isinstance(e, AdapterParseError) and outputs is not None:
+                rescued = self._attempt_json_rescue(signature, outputs)
+                if rescued is not None:
+                    self.metrics["chat_success"] += 1
+                    self.last_adapter_used = "chat"
+                    logger.info("Chat succeeded via JSON rescue")
+                    return rescued
+
             self.metrics["chat_failures"] += 1
 
             # Log the actual response for prompt optimization
@@ -164,6 +174,93 @@ class OutlinesAdapter(ChatAdapter):
         self.last_adapter_used = "outlines_json"
         logger.info("OutlinesJSON succeeded")
         return result
+
+    def _extract_completion_text(self, output: Any) -> str | None:
+        """Normalize LM output into a raw completion string."""
+        if output is None:
+            return None
+        if isinstance(output, str):
+            return output
+        if isinstance(output, dict):
+            if "text" in output:
+                return output["text"]
+            message = output.get("message")
+            if isinstance(message, dict) and "content" in message:
+                return message["content"]
+        # Fallback: string representation
+        return str(output)
+
+    def _strip_completed_marker(self, text: str) -> str:
+        """Remove trailing ChatAdapter markers if the LM emitted raw JSON."""
+        marker = "[[ ## completed ## ]]"
+        if marker in text:
+            return text.split(marker, 1)[0].strip()
+        return text.strip()
+
+    def _coerce_json_to_signature(
+        self, signature: type[Signature], parsed_json: Any
+    ) -> dict[str, Any] | None:
+        """Convert parsed JSON into signature-shaped dict."""
+        output_fields = signature.output_fields
+        if not output_fields:
+            return None
+
+        # If there is a single output field and the JSON is not wrapped, treat the whole object as that field.
+        if len(output_fields) == 1:
+            field_name = next(iter(output_fields))
+            field_info = output_fields[field_name]
+            if isinstance(parsed_json, dict) and field_name in parsed_json:
+                try:
+                    value = parse_value(parsed_json[field_name], field_info.annotation)
+                    return {field_name: value}
+                except Exception:
+                    return None
+            try:
+                value = parse_value(parsed_json, field_info.annotation)
+                return {field_name: value}
+            except Exception:
+                return None
+
+        if not isinstance(parsed_json, dict):
+            return None
+
+        coerced: dict[str, Any] = {}
+        for field_name, field_info in output_fields.items():
+            if field_name not in parsed_json:
+                return None
+            try:
+                coerced[field_name] = parse_value(
+                    parsed_json[field_name], field_info.annotation
+                )
+            except Exception:
+                return None
+
+        return coerced
+
+    def _attempt_json_rescue(
+        self, signature: type[Signature], outputs: list[dict[str, Any]] | list[str] | Any
+    ) -> list[dict[str, Any]] | None:
+        """If the LM already emitted valid JSON, parse it instead of falling back."""
+        normalized_outputs = outputs if isinstance(outputs, list) else [outputs]
+        rescued_results: list[dict[str, Any]] = []
+
+        for output in normalized_outputs:
+            completion_text = self._extract_completion_text(output)
+            if not completion_text:
+                return None
+
+            cleaned = self._strip_completed_marker(completion_text)
+            try:
+                parsed = json.loads(cleaned)
+            except json.JSONDecodeError:
+                return None
+
+            coerced = self._coerce_json_to_signature(signature, parsed)
+            if coerced is None:
+                return None
+            rescued_results.append(coerced)
+
+        return rescued_results
 
     def _extract_constraint(self, signature: type[Signature]) -> tuple[Any, str | None]:
         """Select a constraint annotation and its field name."""

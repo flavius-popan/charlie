@@ -9,6 +9,7 @@ Tests use real implementations to verify actual behavior, not mock behavior.
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -21,12 +22,71 @@ from graphiti_core.utils.datetime_utils import utc_now
 from pipeline.extract_edges import (
     ExtractEdges,
     ExtractEdgesOutput,
-    ExtractedRelationship,
-    ExtractedRelationships,
+    ExtractedEdge,
+    ExtractedEdges,
     _parse_temporal_field,
     build_entity_edges,
     normalize_edge_name,
 )
+from pipeline.entity_edge_models import (
+    edge_types as DEFAULT_EDGE_TYPES,
+    edge_type_map as DEFAULT_EDGE_TYPE_MAP,
+)
+
+
+class DeterministicEdgeExtractor:
+    """Rule-based extractor used to stabilize tests without real LLM calls."""
+
+    def __call__(
+        self,
+        episode_content: str,
+        entities_json: str,
+        reference_time: str,
+        edge_type_context: str,
+        previous_episodes_json: str,
+    ) -> ExtractedEdges:
+        entities = json.loads(entities_json)
+        text_lower = episode_content.lower()
+        relation = "RELATES_TO"
+        if "argued" in text_lower or "fight" in text_lower:
+            relation = "ConflictsWith"
+        elif "support" in text_lower or "comfort" in text_lower or "sponsor" in text_lower:
+            relation = "Supports"
+        elif "visit" in text_lower or "grounding" in text_lower:
+            relation = "Visits"
+        elif "knit" in text_lower or "session" in text_lower or "circle" in text_lower:
+            relation = "ParticipatesIn"
+        elif "introduce" in text_lower or "know" in text_lower or "buddy" in text_lower:
+            relation = "Knows"
+        elif "spent the afternoon" in text_lower or "together" in text_lower:
+            relation = "SpendsTimeWith"
+
+        edges: list[ExtractedEdge] = []
+        for source in entities:
+            source_name = source["name"].lower()
+            if source_name not in text_lower:
+                continue
+            for target in entities:
+                if source["id"] == target["id"]:
+                    continue
+                target_name = target["name"].lower()
+                if target_name not in text_lower:
+                    continue
+                edges.append(
+                    ExtractedEdge(
+                        source_entity_id=source["id"],
+                        target_entity_id=target["id"],
+                        relation_type=relation,
+                        fact=f"{source['name']} {relation} {target['name']} in this journal entry.",
+                    )
+                )
+
+        return ExtractedEdges(edges=edges)
+
+
+@pytest.fixture
+def deterministic_edge_extractor() -> DeterministicEdgeExtractor:
+    return DeterministicEdgeExtractor()
 
 
 # ========== Unit Tests: Pure Functions ==========
@@ -99,14 +159,14 @@ class TestBuildEntityEdges:
             group_id="test",
             created_at=utc_now(),
         )
-        entity_map = {"sarah": sarah, "stanford": stanford}
+        extracted_nodes = [sarah, stanford]
 
-        relationships = ExtractedRelationships(
-            relationships=[
-                ExtractedRelationship(
-                    source="Sarah",
-                    target="Stanford",
-                    relation="works at",
+        relationships = ExtractedEdges(
+            edges=[
+                ExtractedEdge(
+                    source_entity_id=0,
+                    target_entity_id=1,
+                    relation_type="works at",
                     fact="Sarah works at Stanford as a researcher.",
                 )
             ]
@@ -114,7 +174,7 @@ class TestBuildEntityEdges:
 
         edges = build_entity_edges(
             relationships,
-            entity_map,
+            extracted_nodes,
             episode_uuid="episode-123",
             group_id="test",
         )
@@ -134,21 +194,19 @@ class TestBuildEntityEdges:
             group_id="test",
             created_at=utc_now(),
         )
-        entity_map = {"target": target}
-
-        relationships = ExtractedRelationships(
-            relationships=[
-                ExtractedRelationship(
-                    source="MissingEntity",
-                    target="Target",
-                    relation="RELATES_TO",
+        relationships = ExtractedEdges(
+            edges=[
+                ExtractedEdge(
+                    source_entity_id=5,
+                    target_entity_id=0,
+                    relation_type="RELATES_TO",
                     fact="Some fact",
                 )
             ]
         )
 
         edges = build_entity_edges(
-            relationships, entity_map, "episode-123", "test"
+            relationships, [target], "episode-123", "test"
         )
 
         assert len(edges) == 0
@@ -160,21 +218,19 @@ class TestBuildEntityEdges:
             group_id="test",
             created_at=utc_now(),
         )
-        entity_map = {"source": source}
-
-        relationships = ExtractedRelationships(
-            relationships=[
-                ExtractedRelationship(
-                    source="Source",
-                    target="MissingEntity",
-                    relation="RELATES_TO",
+        relationships = ExtractedEdges(
+            edges=[
+                ExtractedEdge(
+                    source_entity_id=0,
+                    target_entity_id=9,
+                    relation_type="RELATES_TO",
                     fact="Some fact",
                 )
             ]
         )
 
         edges = build_entity_edges(
-            relationships, entity_map, "episode-123", "test"
+            relationships, [source], "episode-123", "test"
         )
 
         assert len(edges) == 0
@@ -186,14 +242,12 @@ class TestBuildEntityEdges:
         target = EntityNode(
             uuid="target-uuid", name="Target", group_id="test", created_at=utc_now()
         )
-        entity_map = {"source": source, "target": target}
-
-        relationships = ExtractedRelationships(
-            relationships=[
-                ExtractedRelationship(
-                    source="Source",
-                    target="Target",
-                    relation="EMPLOYED_AT",
+        relationships = ExtractedEdges(
+            edges=[
+                ExtractedEdge(
+                    source_entity_id=0,
+                    target_entity_id=1,
+                    relation_type="EMPLOYED_AT",
                     fact="Source worked at Target from 2020 to 2023.",
                     valid_at="2020-01-01T00:00:00Z",
                     invalid_at="2023-12-31T23:59:59Z",
@@ -202,7 +256,7 @@ class TestBuildEntityEdges:
         )
 
         edges = build_entity_edges(
-            relationships, entity_map, "episode-123", "test"
+            relationships, [source, target], "episode-123", "test"
         )
 
         assert len(edges) == 1
@@ -218,26 +272,62 @@ class TestBuildEntityEdges:
         target = EntityNode(
             uuid="target-uuid", name="Target", group_id="test", created_at=utc_now()
         )
-        entity_map = {"source": source, "target": target}
-
-        relationships = ExtractedRelationships(
-            relationships=[
-                ExtractedRelationship(
-                    source="Source",
-                    target="Target",
-                    relation="EMPLOYED_AT",
+        relationships = ExtractedEdges(
+            edges=[
+                ExtractedEdge(
+                    source_entity_id=0,
+                    target_entity_id=1,
+                    relation_type="EMPLOYED_AT",
                     fact="Invalid temporal range",
                     valid_at="2023-01-01T00:00:00Z",
-                    invalid_at="2020-01-01T00:00:00Z",  # invalid_at before valid_at
+                    invalid_at="2020-01-01T00:00:00Z",
                 )
             ]
         )
 
         edges = build_entity_edges(
-            relationships, entity_map, "episode-123", "test"
+            relationships, [source, target], "episode-123", "test"
         )
 
         assert len(edges) == 0
+
+    def test_disallowed_relation_falls_back_to_relates_to(self) -> None:
+        person = EntityNode(
+            uuid="person-uuid",
+            name="Avery",
+            labels=["Entity", "Person"],
+            group_id="test",
+            created_at=utc_now(),
+        )
+        org = EntityNode(
+            uuid="org-uuid",
+            name="Redwood Mutual Aid",
+            labels=["Entity", "Organization"],
+            group_id="test",
+            created_at=utc_now(),
+        )
+        relationships = ExtractedEdges(
+            edges=[
+                ExtractedEdge(
+                    source_entity_id=0,
+                    target_entity_id=1,
+                    relation_type="Supports",
+                    fact="Avery talked about Redwood Mutual Aid.",
+                )
+            ]
+        )
+
+        edges = build_entity_edges(
+            relationships,
+            [person, org],
+            episode_uuid="episode-1",
+            group_id="test",
+            edge_types=DEFAULT_EDGE_TYPES,
+            edge_type_map=DEFAULT_EDGE_TYPE_MAP,
+        )
+
+        assert len(edges) == 1
+        assert edges[0].name == "RELATES_TO"
 
 
 # ========== Integration Tests: ExtractEdges Orchestrator ==========
@@ -278,7 +368,9 @@ def seed_edge(isolated_graph) -> callable:
 
 
 @pytest.mark.asyncio
-async def test_extract_edges_basic_extraction(isolated_graph) -> None:
+async def test_extract_edges_basic_extraction(
+    isolated_graph, deterministic_edge_extractor
+) -> None:
     """Extract edges from episode content with real LLM call."""
     group_id = "edge-basic"
 
@@ -317,7 +409,11 @@ async def test_extract_edges_basic_extraction(isolated_graph) -> None:
     resolved_nodes = extracted_nodes
     uuid_map = {node.uuid: node.uuid for node in extracted_nodes}
 
-    extractor = ExtractEdges(group_id=group_id, dedupe_enabled=False)
+    extractor = ExtractEdges(
+        group_id=group_id,
+        dedupe_enabled=False,
+        edge_extractor=deterministic_edge_extractor,
+    )
     result = await extractor(
         episode=episode,
         extracted_nodes=extracted_nodes,
@@ -334,7 +430,9 @@ async def test_extract_edges_basic_extraction(isolated_graph) -> None:
 
 
 @pytest.mark.asyncio
-async def test_extract_edges_with_uuid_remapping(isolated_graph, seed_entity) -> None:
+async def test_extract_edges_with_uuid_remapping(
+    isolated_graph, seed_entity, deterministic_edge_extractor
+) -> None:
     """Edge pointers should be remapped from provisional to canonical UUIDs."""
     group_id = "edge-remap"
 
@@ -381,7 +479,11 @@ async def test_extract_edges_with_uuid_remapping(isolated_graph, seed_entity) ->
         "stanford-uuid": "stanford-uuid",
     }
 
-    extractor = ExtractEdges(group_id=group_id, dedupe_enabled=False)
+    extractor = ExtractEdges(
+        group_id=group_id,
+        dedupe_enabled=False,
+        edge_extractor=deterministic_edge_extractor,
+    )
     result = await extractor(
         episode=episode,
         extracted_nodes=extracted_nodes,
@@ -397,7 +499,7 @@ async def test_extract_edges_with_uuid_remapping(isolated_graph, seed_entity) ->
 
 @pytest.mark.asyncio
 async def test_extract_edges_deduplication(
-    isolated_graph, seed_entity, seed_edge
+    isolated_graph, seed_entity, seed_edge, deterministic_edge_extractor
 ) -> None:
     """Existing edges should be merged with new episode IDs, not duplicated."""
     group_id = "edge-dedupe"
@@ -437,7 +539,11 @@ async def test_extract_edges_deduplication(
     resolved_nodes = extracted_nodes
     uuid_map = {node.uuid: node.uuid for node in extracted_nodes}
 
-    extractor = ExtractEdges(group_id=group_id, dedupe_enabled=True)
+    extractor = ExtractEdges(
+        group_id=group_id,
+        dedupe_enabled=True,
+        edge_extractor=deterministic_edge_extractor,
+    )
     result = await extractor(
         episode=episode,
         extracted_nodes=extracted_nodes,
@@ -462,7 +568,9 @@ async def test_extract_edges_deduplication(
 
 
 @pytest.mark.asyncio
-async def test_extract_edges_with_dedupe_disabled(isolated_graph) -> None:
+async def test_extract_edges_with_dedupe_disabled(
+    isolated_graph, deterministic_edge_extractor
+) -> None:
     """Deduplication can be disabled for scenarios that need raw extraction."""
     group_id = "edge-no-dedupe"
 
@@ -489,7 +597,11 @@ async def test_extract_edges_with_dedupe_disabled(isolated_graph) -> None:
     resolved_nodes = extracted_nodes
     uuid_map = {node.uuid: node.uuid for node in extracted_nodes}
 
-    extractor = ExtractEdges(group_id=group_id, dedupe_enabled=False)
+    extractor = ExtractEdges(
+        group_id=group_id,
+        dedupe_enabled=False,
+        edge_extractor=deterministic_edge_extractor,
+    )
     result = await extractor(
         episode=episode,
         extracted_nodes=extracted_nodes,
@@ -503,7 +615,9 @@ async def test_extract_edges_with_dedupe_disabled(isolated_graph) -> None:
 
 
 @pytest.mark.asyncio
-async def test_extract_edges_metadata_counts(isolated_graph) -> None:
+async def test_extract_edges_metadata_counts(
+    isolated_graph, deterministic_edge_extractor
+) -> None:
     """Metadata should track extraction, building, and resolution statistics."""
     group_id = "edge-metadata"
 
@@ -536,7 +650,11 @@ async def test_extract_edges_metadata_counts(isolated_graph) -> None:
     resolved_nodes = extracted_nodes
     uuid_map = {node.uuid: node.uuid for node in extracted_nodes}
 
-    extractor = ExtractEdges(group_id=group_id, dedupe_enabled=False)
+    extractor = ExtractEdges(
+        group_id=group_id,
+        dedupe_enabled=False,
+        edge_extractor=deterministic_edge_extractor,
+    )
     result = await extractor(
         episode=episode,
         extracted_nodes=extracted_nodes,

@@ -102,9 +102,13 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
             entity_name="Kai",
             entity_type="Person",
             existing_summary="",
-            attributes={"relationship_type": "friend"},
-            summary_text="Kai biked the Embarcadero with me at dawn and is polishing his art school portfolio.",
-            key_phrases=["Embarcadero", "portfolio"],
+            attributes={
+                "relationship_type": "friend",
+                "closeness": 0.78,
+                "overall_valence": 0.6,
+            },
+            summary_text="Kai welcomed a sunrise bike ride down the Embarcadero with me, spilling anxious portfolio talk until he felt seen.",
+            key_phrases=["sunrise ride", "portfolio jitters"],
         ),
         example(
             episode_content=(
@@ -114,9 +118,13 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
             entity_name="Grandma Rosa",
             entity_type="Person",
             existing_summary="Recovering slowly from pneumonia.",
-            attributes={"relationship_type": "family"},
-            summary_text="Grandma Rosa prepared for tomorrow's surgery with Dr. Yates at St. Jude's.",
-            key_phrases=["Dr. Yates", "surgery"],
+            attributes={
+                "relationship_type": "family",
+                "closeness": 0.92,
+                "overall_valence": 0.1,
+            },
+            summary_text="Grandma Rosa sat with Dr. Yates at St. Jude's, steadying herself for surgery with me at her side.",
+            key_phrases=["St. Jude's", "surgery prep"],
         ),
         example(
             episode_content=(
@@ -126,9 +134,9 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
             entity_name="24th Street Community Garden",
             entity_type="Place",
             existing_summary="",
-            attributes={},
-            summary_text="24th Street Community Garden added raised beds and welcomed a crew of teen volunteers.",
-            key_phrases=["raised beds", "teen volunteers"],
+            attributes={"category": "community garden"},
+            summary_text="24th Street Community Garden felt alive as we built new raised beds with a trio of tender teen volunteers.",
+            key_phrases=["raised beds", "teen volunteers", "community"],
         ),
         example(
             episode_content=(
@@ -138,9 +146,9 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
             entity_name="Night swim",
             entity_type="Activity",
             existing_summary="",
-            attributes={},
-            summary_text="Night swim at Aquatic Park with Marco felt icy but settled my nerves.",
-            key_phrases=["Aquatic Park", "Marco"],
+            attributes={"activity_type": "night swim ritual"},
+            summary_text="Night swim at Aquatic Park with Marco shocked my system but melted the panic buzzing under my skin.",
+            key_phrases=["Aquatic Park", "night swim", "calming shock"],
         ),
         example(
             episode_content=(
@@ -150,21 +158,25 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
             entity_name="Ines",
             entity_type="Person",
             existing_summary="Working with me on grounding skills.",
-            attributes={"relationship_type": "therapist"},
-            summary_text="Therapist Ines guided slow breathing ladders and gave me a new journal prompt.",
-            key_phrases=["breathing", "journal"],
+            attributes={
+                "relationship_type": "therapist",
+                "closeness": 0.58,
+                "overall_valence": 0.45,
+            },
+            summary_text="Therapist Ines stretched session time for breathing ladders and left me with a gentle journal prompt.",
+            key_phrases=["breathing ladders", "journal prompt"],
         ),
         example(
             episode_content=(
                 "Been practicing patience while caring for Mom—slow paperwork, slow progress, just breathing through the delays."
             ),
             previous_episodes=["Patience theme keeps surfacing every time Mom's appointments slip."],
-            entity_name="Patience",
-            entity_type="Concept",
+            entity_name="Caregiving patience practice",
+            entity_type="Activity",
             existing_summary="",
-            attributes={},
-            summary_text="Patience means caring for Mom and breathing through constant delays in her paperwork.",
-            key_phrases=["Mom", "delays"],
+            attributes={"activity_type": "caregiving ritual"},
+            summary_text="Caregiving patience practice looked like breathing with Mom through slow paperwork and tiny wins.",
+            key_phrases=["caregiving", "patience", "Mom"],
         ),
         example(
             episode_content=(
@@ -174,9 +186,13 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
             entity_name="Priya",
             entity_type="Person",
             existing_summary="Keeps me motivated for races.",
-            attributes={"relationship_type": "friend"},
-            summary_text="Priya hosted a cozy potluck and mapped my training schedule with her colored pens.",
-            key_phrases=["potluck", "training schedule"],
+            attributes={
+                "relationship_type": "friend",
+                "closeness": 0.8,
+                "overall_valence": 0.7,
+            },
+            summary_text="Priya hosted a cozy potluck, covered the table in rainbow pens, and lovingly re-mapped my training plan.",
+            key_phrases=["potluck", "training plan", "colored pens"],
         ),
         example(
             episode_content=(
@@ -186,9 +202,9 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
             entity_name="Harbor Clinic",
             entity_type="Place",
             existing_summary="",
-            attributes={},
-            summary_text="Harbor Clinic felt calmer with mint tea in the waiting room while Ben reorganized the pamphlets.",
-            key_phrases=["mint tea", "pamphlets"],
+            attributes={"category": "clinic"},
+            summary_text="Harbor Clinic smelled like mint tea while Ben quietly reorganized pamphlets so anxious folks could find help faster.",
+            key_phrases=["mint tea", "waiting room care"],
         ),
     ]
 
@@ -241,9 +257,9 @@ def optimize(trainset: list[dspy.Example]) -> SummaryGenerator:
     optimizer = MIPROv2(
         metric=summary_generation_metric,
         auto=None,
-        num_candidates=4,
-        init_temperature=1.0,
-        metric_threshold=0.7,
+        num_candidates=3,
+        init_temperature=0.5,
+        metric_threshold=0.90,
     )
 
     student = SummaryGenerator()

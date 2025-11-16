@@ -9,22 +9,359 @@ Usage:
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from typing import Any
 import logging
 import dspy
 from dspy.teleprompt import MIPROv2
 
 from dspy_outlines import OutlinesAdapter, OutlinesLM
+from pipeline.entity_edge_models import (
+    edge_types as DEFAULT_EDGE_TYPES,
+    edge_type_map as DEFAULT_EDGE_TYPE_MAP,
+    edge_meta as DEFAULT_EDGE_META,
+)
 from pipeline.extract_edges import (
     EdgeExtractor,
-    ExtractedRelationship,
-    ExtractedRelationships,
+    ExtractedEdge,
+    ExtractedEdges,
+    _build_edge_type_context,
 )
 from settings import DEFAULT_MODEL_PATH, MODEL_CONFIG
 
 
 PROMPT_OUTPUT = Path(__file__).parent.parent / "prompts" / "extract_edges.json"
 logger = logging.getLogger(__name__)
+
+EDGE_TYPE_CONTEXT = _build_edge_type_context(
+    DEFAULT_EDGE_TYPES, DEFAULT_EDGE_TYPE_MAP, DEFAULT_EDGE_META
+)
+EMPTY_PREVIOUS_EPISODES = "[]"
+
+
+def _entities_json(entities: list[dict[str, Any]]) -> str:
+    payload = [
+        {
+            "id": idx,
+            "name": entity["name"],
+            "entity_types": entity.get("labels", ["Entity"]),
+        }
+        for idx, entity in enumerate(entities)
+    ]
+    return json.dumps(payload, ensure_ascii=False)
+
+
+def _build_edges_from_descriptions(
+    entities: list[dict[str, Any]],
+    relations: list[dict[str, str]],
+) -> ExtractedEdges:
+    edges: list[ExtractedEdge] = []
+    name_to_index = {entity["name"]: idx for idx, entity in enumerate(entities)}
+    for rel in relations:
+        try:
+            source_idx = name_to_index[rel["source"]]
+            target_idx = name_to_index[rel["target"]]
+        except KeyError:
+            continue
+
+        edges.append(
+            ExtractedEdge(
+                source_entity_id=source_idx,
+                target_entity_id=target_idx,
+                relation_type=rel["relation"],
+                fact=rel["fact"],
+                valid_at=rel.get("valid_at"),
+                invalid_at=rel.get("invalid_at"),
+            )
+        )
+
+    return ExtractedEdges(edges=edges)
+
+
+def _make_example(payload: dict[str, Any]) -> dspy.Example:
+    entities = payload["entities"]
+    entity_names = [entity["name"] for entity in entities]
+    example = dspy.Example(
+        episode_content=payload["episode_content"],
+        entities_json=_entities_json(entities),
+        entity_names=entity_names,
+        reference_time=payload["reference_time"],
+        edge_type_context=EDGE_TYPE_CONTEXT,
+        previous_episodes_json=EMPTY_PREVIOUS_EPISODES,
+        edges=_build_edges_from_descriptions(entities, payload["relationships"]),
+    )
+    return example.with_inputs(
+        "episode_content",
+        "entities_json",
+        "reference_time",
+        "edge_type_context",
+        "previous_episodes_json",
+    )
+
+
+RAW_EXAMPLES: list[dict[str, Any]] = [
+    {
+        "episode_content": (
+            "Mara and Tino coaxed me into a shivery sunrise plunge at Ocean Beach. "
+            "They kept cracking jokes until I breathed again."
+        ),
+        "entities": [
+            {"name": "Mara", "labels": ["Entity", "Person"]},
+            {"name": "Tino", "labels": ["Entity", "Person"]},
+            {"name": "Ocean Beach", "labels": ["Entity", "Place"]},
+            {"name": "sunrise plunge", "labels": ["Entity", "Activity"]},
+        ],
+        "reference_time": "2025-02-14T07:05:00Z",
+        "relationships": [
+            {
+                "source": "Mara",
+                "target": "Tino",
+                "relation": "SpendsTimeWith",
+                "fact": "Mara and Tino share sunrise plunges together.",
+            },
+            {
+                "source": "Mara",
+                "target": "sunrise plunge",
+                "relation": "ParticipatesIn",
+                "fact": "Mara joined the sunrise plunge ritual.",
+            },
+            {
+                "source": "sunrise plunge",
+                "target": "Ocean Beach",
+                "relation": "OccursAt",
+                "fact": "The sunrise plunge happens at Ocean Beach.",
+            },
+        ],
+    },
+    {
+        "episode_content": (
+            "Therapist Ines texted Avery after session to make sure she actually tried the body scan homework."
+        ),
+        "entities": [
+            {"name": "Ines", "labels": ["Entity", "Person"]},
+            {"name": "Avery", "labels": ["Entity", "Person"]},
+            {"name": "body scan homework", "labels": ["Entity", "Activity"]},
+        ],
+        "reference_time": "2025-02-10T18:30:00Z",
+        "relationships": [
+            {
+                "source": "Ines",
+                "target": "Avery",
+                "relation": "Supports",
+                "fact": "Ines checked in to support Avery between sessions.",
+            },
+            {
+                "source": "Avery",
+                "target": "body scan homework",
+                "relation": "ParticipatesIn",
+                "fact": "Avery committed to the body scan homework.",
+            },
+        ],
+    },
+    {
+        "episode_content": (
+            "Dylan and Sonia argued about whether our sunset hike plan felt safe in the fog."
+        ),
+        "entities": [
+            {"name": "Dylan", "labels": ["Entity", "Person"]},
+            {"name": "Sonia", "labels": ["Entity", "Person"]},
+            {"name": "sunset hike", "labels": ["Entity", "Activity"]},
+            {"name": "Redwood Ridge", "labels": ["Entity", "Place"]},
+        ],
+        "reference_time": "2025-01-22T20:10:00Z",
+        "relationships": [
+            {
+                "source": "Dylan",
+                "target": "Sonia",
+                "relation": "ConflictsWith",
+                "fact": "Dylan and Sonia argued about the plan.",
+            },
+            {
+                "source": "Dylan",
+                "target": "sunset hike",
+                "relation": "ParticipatesIn",
+                "fact": "Dylan still wanted to do the sunset hike.",
+            },
+            {
+                "source": "sunset hike",
+                "target": "Redwood Ridge",
+                "relation": "OccursAt",
+                "fact": "The hike happens at Redwood Ridge.",
+            },
+        ],
+    },
+    {
+        "episode_content": (
+            "Grandma Rosa keeps visiting the 24th Street Community Garden when she needs grounding."
+        ),
+        "entities": [
+            {"name": "Grandma Rosa", "labels": ["Entity", "Person"]},
+            {"name": "24th Street Community Garden", "labels": ["Entity", "Place"]},
+        ],
+        "reference_time": "2025-02-03T16:00:00Z",
+        "relationships": [
+            {
+                "source": "Grandma Rosa",
+                "target": "24th Street Community Garden",
+                "relation": "Visits",
+                "fact": "She visits the garden for grounding.",
+            }
+        ],
+    },
+    {
+        "episode_content": (
+            "I mentioned Redwood Mutual Aid to Theo during journaling club, but we still don't know exactly "
+            "how he'll plug in."
+        ),
+        "entities": [
+            {"name": "Theo", "labels": ["Entity", "Person"]},
+            {"name": "Redwood Mutual Aid", "labels": ["Entity", "Organization"]},
+        ],
+        "reference_time": "2025-02-06T19:00:00Z",
+        "relationships": [
+            {
+                "source": "Theo",
+                "target": "Redwood Mutual Aid",
+                "relation": "RELATES_TO",
+                "fact": "Theo referenced Redwood Mutual Aid without a clear role.",
+            }
+        ],
+    },
+    {
+        "episode_content": (
+            "Kai introduced me to his climbing buddy Lou at Touchstone, and we ended up doing a goofy "
+            "bouldering session together."
+        ),
+        "entities": [
+            {"name": "Kai", "labels": ["Entity", "Person"]},
+            {"name": "Lou", "labels": ["Entity", "Person"]},
+            {"name": "bouldering session", "labels": ["Entity", "Activity"]},
+            {"name": "Touchstone Climbing", "labels": ["Entity", "Place"]},
+        ],
+        "reference_time": "2025-02-09T11:45:00Z",
+        "relationships": [
+            {
+                "source": "Kai",
+                "target": "Lou",
+                "relation": "Knows",
+                "fact": "Kai already knew Lou from the gym.",
+            },
+            {
+                "source": "Lou",
+                "target": "bouldering session",
+                "relation": "ParticipatesIn",
+                "fact": "Lou led the bouldering session.",
+            },
+            {
+                "source": "bouldering session",
+                "target": "Touchstone Climbing",
+                "relation": "OccursAt",
+                "fact": "The session was at Touchstone Climbing.",
+            },
+        ],
+    },
+    {
+        "episode_content": (
+            "Neighbor Laila brought soup when Ana's migraine flared and sat with her until the meds kicked in."
+        ),
+        "entities": [
+            {"name": "Laila", "labels": ["Entity", "Person"]},
+            {"name": "Ana", "labels": ["Entity", "Person"]},
+            {"name": "third-floor apartment", "labels": ["Entity", "Place"]},
+        ],
+        "reference_time": "2025-01-25T21:40:00Z",
+        "relationships": [
+            {
+                "source": "Laila",
+                "target": "Ana",
+                "relation": "Supports",
+                "fact": "Laila comforted Ana during the migraine.",
+            },
+            {
+                "source": "Laila",
+                "target": "third-floor apartment",
+                "relation": "Visits",
+                "fact": "Laila stopped by Ana's apartment to help.",
+            },
+        ],
+    },
+    {
+        "episode_content": (
+            "Jenna hosted knit circle at Tender Hearts Center so we could prep blankets for Saturday's vigil."
+        ),
+        "entities": [
+            {"name": "Jenna", "labels": ["Entity", "Person"]},
+            {"name": "knit circle", "labels": ["Entity", "Activity"]},
+            {"name": "Tender Hearts Center", "labels": ["Entity", "Place"]},
+        ],
+        "reference_time": "2025-02-11T18:50:00Z",
+        "relationships": [
+            {
+                "source": "Jenna",
+                "target": "knit circle",
+                "relation": "ParticipatesIn",
+                "fact": "Jenna led the knit circle prep.",
+            },
+            {
+                "source": "knit circle",
+                "target": "Tender Hearts Center",
+                "relation": "OccursAt",
+                "fact": "Knit circle met at Tender Hearts Center.",
+            },
+        ],
+    },
+    {
+        "episode_content": (
+            "Yara and Mo spent the afternoon at the studio sketching plans for our community mural."
+        ),
+        "entities": [
+            {"name": "Yara", "labels": ["Entity", "Person"]},
+            {"name": "Mo", "labels": ["Entity", "Person"]},
+            {"name": "mural planning session", "labels": ["Entity", "Activity"]},
+        ],
+        "reference_time": "2025-02-12T15:10:00Z",
+        "relationships": [
+            {
+                "source": "Yara",
+                "target": "Mo",
+                "relation": "SpendsTimeWith",
+                "fact": "Yara and Mo designed the mural together.",
+            },
+            {
+                "source": "Yara",
+                "target": "mural planning session",
+                "relation": "ParticipatesIn",
+                "fact": "Yara sketched during the planning session.",
+            },
+        ],
+    },
+    {
+        "episode_content": (
+            "Casey stopped by Loom House to ask if the grief circle could host next week's gathering there."
+        ),
+        "entities": [
+            {"name": "Casey", "labels": ["Entity", "Person"]},
+            {"name": "Loom House", "labels": ["Entity", "Place"]},
+            {"name": "grief circle", "labels": ["Entity", "Activity"]},
+        ],
+        "reference_time": "2025-02-04T13:25:00Z",
+        "relationships": [
+            {
+                "source": "Casey",
+                "target": "Loom House",
+                "relation": "Visits",
+                "fact": "Casey visited Loom House to make the ask.",
+            },
+            {
+                "source": "grief circle",
+                "target": "Loom House",
+                "relation": "OccursAt",
+                "fact": "The grief circle plans to meet at Loom House.",
+            },
+        ],
+    },
+]
 
 
 def configure_dspy():
@@ -40,282 +377,11 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
     """Build relationship extraction examples rooted in personal journals."""
 
     all_examples: list[dspy.Example] = []
+    for payload in RAW_EXAMPLES:
+        all_examples.append(_make_example(payload))
 
-    all_examples.append(
-        dspy.Example(
-            episode_content=(
-                "Met Jonah at Dolores Park before sunrise yoga. "
-                "His sister Maya tagged along and reminded me about volunteering at "
-                "Tender Hearts shelter this weekend."
-            ),
-            entities=[
-                "Jonah",
-                "Maya",
-                "Dolores Park",
-                "sunrise yoga",
-                "Tender Hearts shelter",
-            ],
-            reference_time="2025-02-14T07:00:00Z",
-            relationships=ExtractedRelationships(
-                relationships=[
-                    ExtractedRelationship(
-                        source="Jonah",
-                        target="Dolores Park",
-                        relation="MEETS_AT",
-                        fact="Met Jonah at Dolores Park for sunrise yoga.",
-                    ),
-                    ExtractedRelationship(
-                        source="Jonah",
-                        target="sunrise yoga",
-                        relation="PARTICIPATES_IN",
-                        fact="Jonah joined me for sunrise yoga.",
-                    ),
-                    ExtractedRelationship(
-                        source="Maya",
-                        target="Tender Hearts shelter",
-                        relation="VOLUNTEERS_AT",
-                        fact="Maya reminded me about helping at Tender Hearts shelter.",
-                    ),
-                ]
-            ),
-        ).with_inputs("episode_content", "entities", "reference_time")
-    )
-
-    all_examples.append(
-        dspy.Example(
-            episode_content=(
-                "Spent the evening on video call with Dr. Perez at City Hospital "
-                "while he checked on Grandma Lila's breathing. "
-                "He promised to swing by her room again at dawn."
-            ),
-            entities=["Dr. Perez", "City Hospital", "Grandma Lila"],
-            reference_time="2025-01-28T22:15:00Z",
-            relationships=ExtractedRelationships(
-                relationships=[
-                    ExtractedRelationship(
-                        source="Dr. Perez",
-                        target="City Hospital",
-                        relation="WORKS_AT",
-                        fact="Dr. Perez called from City Hospital.",
-                    ),
-                    ExtractedRelationship(
-                        source="Dr. Perez",
-                        target="Grandma Lila",
-                        relation="TREATS",
-                        fact="He monitored Grandma Lila's breathing.",
-                    ),
-                ]
-            ),
-        ).with_inputs("episode_content", "entities", "reference_time")
-    )
-
-    all_examples.append(
-        dspy.Example(
-            episode_content=(
-                "Tasha and I road-tripped to Big Basin Trailhead where Ranger Eli "
-                "handed us fog maps and told us to stick to the ridge."
-            ),
-            entities=["Tasha", "Big Basin Trailhead", "Ranger Eli"],
-            reference_time="2025-01-12T15:45:00Z",
-            relationships=ExtractedRelationships(
-                relationships=[
-                    ExtractedRelationship(
-                        source="Tasha",
-                        target="Big Basin Trailhead",
-                        relation="VISITS",
-                        fact="Tasha rode with me to Big Basin Trailhead.",
-                    ),
-                    ExtractedRelationship(
-                        source="Ranger Eli",
-                        target="Big Basin Trailhead",
-                        relation="WORKS_AT",
-                        fact="Ranger Eli staffed the trailhead kiosk.",
-                    ),
-                    ExtractedRelationship(
-                        source="Ranger Eli",
-                        target="Tasha",
-                        relation="GUIDES",
-                        fact="He handed us maps and gave fog warnings.",
-                    ),
-                ]
-            ),
-        ).with_inputs("episode_content", "entities", "reference_time")
-    )
-
-    all_examples.append(
-        dspy.Example(
-            episode_content=(
-                "Celebrated Amina's new gig at River Labs over noodles at Golden Lotus "
-                "Cafe. She asked if I'd consult on their mindfulness study next month."
-            ),
-            entities=["Amina", "River Labs", "Golden Lotus Cafe", "mindfulness study"],
-            reference_time="2025-02-01T18:20:00Z",
-            relationships=ExtractedRelationships(
-                relationships=[
-                    ExtractedRelationship(
-                        source="Amina",
-                        target="Golden Lotus Cafe",
-                        relation="MEETS_AT",
-                        fact="We celebrated Amina at Golden Lotus Cafe.",
-                    ),
-                    ExtractedRelationship(
-                        source="Amina",
-                        target="River Labs",
-                        relation="WORKS_AT",
-                        fact="Amina just joined River Labs.",
-                    ),
-                    ExtractedRelationship(
-                        source="River Labs",
-                        target="mindfulness study",
-                        relation="RUNS",
-                        fact="River Labs is launching a mindfulness study.",
-                    ),
-                ]
-            ),
-        ).with_inputs("episode_content", "entities", "reference_time")
-    )
-
-    all_examples.append(
-        dspy.Example(
-            episode_content=(
-                "Met Arturo and Carmen at the public library for counseling certification "
-                "prep. Carmen organized the study group and Arturo kept drilling me on "
-                "crisis flashcards."
-            ),
-            entities=[
-                "Arturo",
-                "Carmen",
-                "public library",
-                "study group",
-                "counseling certification prep",
-            ],
-            reference_time="2025-02-08T10:30:00Z",
-            relationships=ExtractedRelationships(
-                relationships=[
-                    ExtractedRelationship(
-                        source="Arturo",
-                        target="public library",
-                        relation="MEETS_AT",
-                        fact="Arturo met me at the public library.",
-                    ),
-                    ExtractedRelationship(
-                        source="Carmen",
-                        target="study group",
-                        relation="LEADS",
-                        fact="Carmen organized the study group.",
-                    ),
-                    ExtractedRelationship(
-                        source="study group",
-                        target="counseling certification prep",
-                        relation="FOCUSES_ON",
-                        fact="Our study group focused on the counseling exam.",
-                    ),
-                ]
-            ),
-        ).with_inputs("episode_content", "entities", "reference_time")
-    )
-
-    all_examples.append(
-        dspy.Example(
-            episode_content=(
-                "Hosted our tiny sobriety check-in tonight. Joy facilitated the circle "
-                "while Marcus admitted leaning hard on his sponsor Rita every day."
-            ),
-            entities=["Joy", "Marcus", "Rita", "sobriety check-in"],
-            reference_time="2025-01-30T21:05:00Z",
-            relationships=ExtractedRelationships(
-                relationships=[
-                    ExtractedRelationship(
-                        source="Joy",
-                        target="sobriety check-in",
-                        relation="FACILITATES",
-                        fact="Joy facilitated the sobriety check-in.",
-                    ),
-                    ExtractedRelationship(
-                        source="Marcus",
-                        target="sobriety check-in",
-                        relation="PARTICIPATES_IN",
-                        fact="Marcus attended the check-in.",
-                    ),
-                    ExtractedRelationship(
-                        source="Marcus",
-                        target="Rita",
-                        relation="SUPPORTED_BY",
-                        fact="Marcus leans on his sponsor Rita.",
-                    ),
-                ]
-            ),
-        ).with_inputs("episode_content", "entities", "reference_time")
-    )
-
-    all_examples.append(
-        dspy.Example(
-            episode_content=(
-                "After running club practice, Priya and Leo came over for dinner. "
-                "Priya coaches with Mission Milers and asked Leo to pace me Saturday."
-            ),
-            entities=["Priya", "Leo", "Mission Milers", "running club dinner"],
-            reference_time="2025-02-05T19:40:00Z",
-            relationships=ExtractedRelationships(
-                relationships=[
-                    ExtractedRelationship(
-                        source="Priya",
-                        target="Mission Milers",
-                        relation="COACHES_FOR",
-                        fact="Priya coaches with Mission Milers.",
-                    ),
-                    ExtractedRelationship(
-                        source="Priya",
-                        target="Leo",
-                        relation="TRAINS_WITH",
-                        fact="Priya asked Leo to pace me.",
-                    ),
-                    ExtractedRelationship(
-                        source="Leo",
-                        target="running club dinner",
-                        relation="ATTENDS",
-                        fact="Leo came over for the running club dinner.",
-                    ),
-                ]
-            ),
-        ).with_inputs("episode_content", "entities", "reference_time")
-    )
-
-    all_examples.append(
-        dspy.Example(
-            episode_content=(
-                "Camped out at Harbor Clinic this afternoon. Nurse Tami introduced me to "
-                "social worker Ben so we can finally tackle mom's paperwork."
-            ),
-            entities=["Harbor Clinic", "Nurse Tami", "Ben", "mom's paperwork"],
-            reference_time="2025-02-02T16:10:00Z",
-            relationships=ExtractedRelationships(
-                relationships=[
-                    ExtractedRelationship(
-                        source="Nurse Tami",
-                        target="Harbor Clinic",
-                        relation="WORKS_AT",
-                        fact="Nurse Tami works out of Harbor Clinic.",
-                    ),
-                    ExtractedRelationship(
-                        source="Nurse Tami",
-                        target="Ben",
-                        relation="INTRODUCES",
-                        fact="She introduced me to Ben.",
-                    ),
-                    ExtractedRelationship(
-                        source="Ben",
-                        target="mom's paperwork",
-                        relation="ASSISTS_WITH",
-                        fact="Ben is helping with mom's paperwork.",
-                    ),
-                ]
-            ),
-        ).with_inputs("episode_content", "entities", "reference_time")
-    )
-
-    trainset = all_examples[:6]
-    valset = all_examples[6:]
+    trainset = all_examples[:8]
+    valset = all_examples[8:]
     logger.info(
         "Built relationship trainset with %d examples, valset with %d examples",
         len(trainset),
@@ -324,30 +390,48 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
     return trainset, valset
 
 
-def _relationship_set(relations: ExtractedRelationships | list | dict | None) -> set[tuple[str, str, str]]:
+def _relationship_set(
+    relations: ExtractedEdges | list | dict | None,
+    entity_names: list[str],
+) -> set[tuple[str, str, str]]:
     """Normalize adapter outputs into comparable tuples."""
 
     if relations is None:
         return set()
 
-    if isinstance(relations, ExtractedRelationships):
-        rel_list = relations.relationships
-    elif isinstance(relations, dict) and "relationships" in relations:
-        rel_list = relations["relationships"]
+    if isinstance(relations, ExtractedEdges):
+        rel_list = relations.edges
+    elif isinstance(relations, dict) and "edges" in relations:
+        rel_list = relations["edges"]
     else:
         rel_list = relations
 
     normalized: set[tuple[str, str, str]] = set()
+
+    def _name_from_index(index: int | None) -> str:
+        if index is None:
+            return ""
+        if 0 <= index < len(entity_names):
+            return entity_names[index].lower()
+        return str(index)
+
     for rel in rel_list or []:
         try:
-            if isinstance(rel, ExtractedRelationship):
-                source = rel.source.lower()
-                target = rel.target.lower()
-                relation = rel.relation.upper()
+            if isinstance(rel, ExtractedEdge):
+                source = _name_from_index(rel.source_entity_id)
+                target = _name_from_index(rel.target_entity_id)
+                relation = rel.relation_type.upper()
             else:
-                source = rel["source"].lower()
-                target = rel["target"].lower()
-                relation = rel["relation"].upper()
+                if "source_entity_id" in rel:
+                    source = _name_from_index(rel["source_entity_id"])
+                else:
+                    source = rel["source"].lower()
+                if "target_entity_id" in rel:
+                    target = _name_from_index(rel["target_entity_id"])
+                else:
+                    target = rel["target"].lower()
+                relation = rel.get("relation_type") or rel.get("relation")
+                relation = (relation or "").upper()
             normalized.add((source, target, relation))
         except (KeyError, AttributeError):
             continue
@@ -358,8 +442,9 @@ def _relationship_set(relations: ExtractedRelationships | list | dict | None) ->
 def relationship_extraction_metric(example, prediction, trace=None) -> float:
     """Compute F1 over (source, target, relation) tuples."""
 
-    expected = _relationship_set(example.relationships)
-    predicted = _relationship_set(getattr(prediction, "relationships", prediction))
+    expected = _relationship_set(example.edges, example.entity_names)
+    predicted_source = getattr(prediction, "edges", prediction)
+    predicted = _relationship_set(predicted_source, example.entity_names)
 
     if not expected:
         return 1.0 if not predicted else 0.0
@@ -383,9 +468,9 @@ def optimize(trainset: list[dspy.Example]) -> EdgeExtractor:
     optimizer = MIPROv2(
         metric=relationship_extraction_metric,
         auto=None,
-        num_candidates=5,
-        init_temperature=1.0,
-        metric_threshold=0.8,
+        num_candidates=3,
+        init_temperature=0.5,
+        metric_threshold=0.90,
     )
 
     student = EdgeExtractor()
@@ -410,8 +495,10 @@ def evaluate(module: EdgeExtractor, dataset: list[dspy.Example]) -> float:
     for example in dataset:
         prediction = module(
             episode_content=example.episode_content,
-            entities=example.entities,
+            entities_json=example.entities_json,
             reference_time=example.reference_time,
+            edge_type_context=example.edge_type_context,
+            previous_episodes_json=example.previous_episodes_json,
         )
         score = relationship_extraction_metric(example, prediction)
         scores.append(score)

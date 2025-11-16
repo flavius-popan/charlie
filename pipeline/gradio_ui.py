@@ -7,14 +7,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import threading
-import time
 from datetime import datetime
-from typing import Any
 
 import gradio as gr
 import dspy
-from distilbert_ner import predict_entities
 from dspy_outlines import OutlinesAdapter, OutlinesLM
 from graphiti_core.nodes import EpisodicNode, EpisodeType
 from graphiti_core.utils.datetime_utils import ensure_utc, utc_now
@@ -26,15 +22,30 @@ from pipeline import (
     GenerateSummaries,
 )
 from pipeline.falkordblite_driver import (
+    enable_tcp_server,
     fetch_entities_by_group,
     fetch_recent_episodes,
     get_db_stats,
+    get_tcp_server_endpoint,
+    get_tcp_server_password,
     persist_episode_and_nodes,
     reset_database,
 )
-from pipeline.entity_edge_models import entity_types
-from pipeline.ner_type_overrides import map_ner_label_to_entity_type
-from settings import DB_PATH, GROUP_ID, MODEL_CONFIG, DEFAULT_MODEL_PATH
+from pipeline.entity_edge_models import (
+    entity_types,
+    edge_types as DEFAULT_EDGE_TYPES,
+    edge_type_map as DEFAULT_EDGE_TYPE_MAP,
+    edge_meta as DEFAULT_EDGE_META,
+)
+from settings import (
+    DB_PATH,
+    DEFAULT_MODEL_PATH,
+    FALKORLITE_TCP_HOST,
+    FALKORLITE_TCP_PASSWORD,
+    FALKORLITE_TCP_PORT,
+    GROUP_ID,
+    MODEL_CONFIG,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -47,14 +58,33 @@ logger.info("Database: %s", DB_PATH)
 logger.info("Model: %s", DEFAULT_MODEL_PATH)
 logger.info("Model config: %s", MODEL_CONFIG)
 
+enable_tcp_server(
+    host=FALKORLITE_TCP_HOST,
+    port=FALKORLITE_TCP_PORT,
+    password=FALKORLITE_TCP_PASSWORD,
+)
+tcp_endpoint = get_tcp_server_endpoint()
+if tcp_endpoint:
+    host, port = tcp_endpoint
+    password = get_tcp_server_password()
+    if password:
+        logger.info(
+            "FalkorDB Lite TCP debug endpoint listening on %s:%d (password required)",
+            host,
+            port,
+        )
+    else:
+        logger.info(
+            "FalkorDB Lite TCP debug endpoint listening on %s:%d (no password)",
+            host,
+            port,
+        )
+
 lm = OutlinesLM(model_path=DEFAULT_MODEL_PATH, generation_config=MODEL_CONFIG)
 adapter = OutlinesAdapter()
 dspy.configure(lm=lm, adapter=adapter)
 
 logger.info("DSPy configured with OutlinesLM")
-
-_ner_preview_lock = threading.Lock()
-_ner_preview_last_ts = 0.0
 
 
 def _format_entity_list(nodes) -> str:
@@ -78,144 +108,6 @@ Resolved: {metadata.get('resolved_count', 0)} entities
 Exact matches: {metadata.get('exact_matches', 0)}
 Fuzzy matches: {metadata.get('fuzzy_matches', 0)}
 New entities: {metadata.get('new_entities', 0)}"""
-
-
-def _format_live_ner_preview(
-    ner_entities: list[dict] | None,
-    use_ner_extractor: bool,
-) -> str:
-    status = "ENABLED" if use_ner_extractor else "DISABLED"
-    lines = [f"DistilBERT preview (NER mode {status})"]
-
-    if not ner_entities:
-        lines.append("Type in the journal box to preview detected entities.")
-        return "\n".join(lines)
-
-    lines.append(f"Entities detected: {len(ner_entities)}")
-    for entry in ner_entities:
-        name = entry.get("name") or entry.get("text") or "(unnamed)"
-        label = entry.get("ner_label") or entry.get("label")
-        mapped = entry.get("mapped_type")
-        confidence = entry.get("confidence")
-
-        details: list[str] = []
-        if label:
-            details.append(label)
-        if mapped and mapped != "Entity":
-            details.append(f"→{mapped}")
-        if isinstance(confidence, (int, float)):
-            details.append(f"{int(confidence * 100)}%")
-
-        suffix = f" [{' | '.join(details)}]" if details else ""
-        lines.append(f"- {name}{suffix}")
-
-    return "\n".join(lines)
-
-
-def _debounced_ner_preview(
-    text: str,
-    use_ner_extractor: bool,
-) -> tuple[Any, Any]:
-    """Run DistilBERT NER with a 1-second debounce window."""
-    global _ner_preview_last_ts
-
-    if not text or not text.strip():
-        return (
-            "Type in the journal box to preview DistilBERT entities.",
-            [],
-        )
-
-    with _ner_preview_lock:
-        started_at = time.time()
-        _ner_preview_last_ts = started_at
-
-    time.sleep(1.0)
-
-    with _ner_preview_lock:
-        if _ner_preview_last_ts > started_at:
-            return gr.update(), gr.update()
-
-    try:
-        predictions = predict_entities(text)
-    except Exception as exc:
-        logger.exception("DistilBERT preview failed")
-        return (f"DistilBERT preview error: {exc}", [])
-
-    formatted_entities: list[dict] = []
-    for prediction in predictions:
-        name = (prediction.get("text") or "").strip()
-        label = prediction.get("label", "")
-        mapped_type = map_ner_label_to_entity_type(label, name, entity_types.keys())
-        formatted_entities.append(
-            {
-                "name": name,
-                "ner_label": label,
-                "mapped_type": mapped_type,
-                "confidence": prediction.get("confidence"),
-            }
-        )
-
-    preview_text = _format_live_ner_preview(formatted_entities, use_ner_extractor)
-    return preview_text, formatted_entities
-
-
-def _refresh_ner_preview_status(
-    use_ner_extractor: bool,
-    ner_entities: list[dict] | None,
-) -> tuple[Any, Any]:
-    if ner_entities is None:
-        return (
-            "Type in the journal box to preview DistilBERT entities.",
-            None,
-        )
-
-    preview_text = _format_live_ner_preview(ner_entities, use_ner_extractor)
-    return preview_text, ner_entities
-
-
-def _format_ner_details(metadata: dict | None) -> str:
-    """Format DistilBERT + Reflexion diagnostics when enabled."""
-    if not metadata or metadata.get("extractor") != "distilbert":
-        return "DistilBERT extractor disabled (DSPy entity module in use). Enable the checkbox above to view NER details."
-
-    ner_entities = metadata.get("ner_entities") or []
-    reflexion_added = metadata.get("reflexion_added", 0)
-    reflexion_iterations = metadata.get("reflexion_iterations", 0)
-    reflexion_entities = metadata.get("reflexion_entities") or []
-
-    lines = [
-        "Mode: DistilBERT + Reflexion",
-        f"DistilBERT entities: {len(ner_entities)}",
-        f"Reflexion iterations: {reflexion_iterations} (added {reflexion_added})",
-    ]
-
-    if reflexion_entities:
-        lines.append("Reflexion additions:")
-        for name in reflexion_entities:
-            lines.append(f"  • {name}")
-
-    if ner_entities:
-        lines.append("")
-        lines.append("DistilBERT pass:")
-        for entry in ner_entities:
-            name = entry.get("name") or "(unnamed)"
-            details: list[str] = []
-            label = entry.get("ner_label")
-            mapped = entry.get("mapped_type")
-            confidence = entry.get("confidence")
-            if label:
-                details.append(label)
-            if mapped and mapped != "Entity":
-                details.append(f"→{mapped}")
-            if isinstance(confidence, (int, float)):
-                details.append(f"{int(confidence * 100)}%")
-
-            detail_str = f" [{' | '.join(details)}]" if details else ""
-            lines.append(f"- {name}{detail_str}")
-    else:
-        lines.append("(NER pass returned no entities)")
-
-    return "\n".join(lines)
 
 
 def _format_uuid_map(uuid_map: dict, nodes) -> str:
@@ -351,13 +243,12 @@ Source: {episode.source.value}
 Content: {content_preview}"""
 
 
-def on_extract(content: str, use_ner_extractor: bool):
+def on_extract(content: str):
     """Extract entities and relationships from journal entry text with progressive updates."""
     if not content or not content.strip():
         empty_result = (
             "(enter journal text to extract entities)",
             "(no statistics)",
-            "DistilBERT extractor disabled (DSPy entity module in use). Enable the checkbox above to view NER details.",
             "(no UUID map)",
             "(no episode)",
             "(no edges extracted)",
@@ -394,15 +285,8 @@ def on_extract(content: str, use_ner_extractor: bool):
             fetch_recent_episodes(GROUP_ID, reference_time, limit=5)
         )
 
-        logger.info(
-            "Starting Stage 1: Extract Nodes (mode=%s)",
-            "DistilBERT+Reflexion" if use_ner_extractor else "DSPy",
-        )
-        extractor = ExtractNodes(
-            group_id=GROUP_ID,
-            dedupe_enabled=True,
-            use_ner_extractor=use_ner_extractor,
-        )
+        logger.info("Starting Stage 1: Extract Nodes")
+        extractor = ExtractNodes(group_id=GROUP_ID, dedupe_enabled=True)
         extract_result = asyncio.run(
             extractor(
                 content=content,
@@ -413,7 +297,6 @@ def on_extract(content: str, use_ner_extractor: bool):
 
         entity_list = _format_entity_list(extract_result.nodes)
         stats = _format_stats(extract_result.metadata)
-        ner_details = _format_ner_details(extract_result.metadata)
         uuid_map = _format_uuid_map(extract_result.uuid_map, extract_result.nodes)
         episode_details = _format_episode(extract_result.episode)
 
@@ -422,7 +305,6 @@ def on_extract(content: str, use_ner_extractor: bool):
         yield (
             entity_list,
             stats,
-            ner_details,
             uuid_map,
             episode_details,
             "(stage 2 running...)",
@@ -437,7 +319,13 @@ def on_extract(content: str, use_ner_extractor: bool):
         )
 
         logger.info("Starting Stage 2: Extract Edges")
-        edge_extractor = ExtractEdges(group_id=GROUP_ID, dedupe_enabled=True)
+        edge_extractor = ExtractEdges(
+            group_id=GROUP_ID,
+            dedupe_enabled=True,
+            edge_types=DEFAULT_EDGE_TYPES,
+            edge_type_map=DEFAULT_EDGE_TYPE_MAP,
+            edge_meta=DEFAULT_EDGE_META,
+        )
         edges_result = asyncio.run(
             edge_extractor(
                 episode=extract_result.episode,
@@ -457,7 +345,6 @@ def on_extract(content: str, use_ner_extractor: bool):
         yield (
             entity_list,
             stats,
-            ner_details,
             uuid_map,
             episode_details,
             edge_list,
@@ -490,7 +377,6 @@ def on_extract(content: str, use_ner_extractor: bool):
         yield (
             entity_list,
             stats,
-            ner_details,
             uuid_map,
             episode_details,
             edge_list,
@@ -522,7 +408,6 @@ def on_extract(content: str, use_ner_extractor: bool):
         yield (
             entity_list,
             stats,
-            ner_details,
             uuid_map,
             episode_details,
             edge_list,
@@ -542,7 +427,6 @@ def on_extract(content: str, use_ner_extractor: bool):
         logger.exception("Pipeline failed")
         error_msg = f"ERROR: {exc}"
         yield (
-            error_msg,
             error_msg,
             error_msg,
             error_msg,
@@ -635,10 +519,6 @@ Test the complete knowledge graph extraction pipeline with progressive stage upd
         placeholder="Enter journal entry text here...",
         lines=10,
     )
-    use_ner_checkbox = gr.Checkbox(
-        label="Use DistilBERT + Reflexion for entity extraction (Stage 1)",
-        value=False,
-    )
 
     extract_btn = gr.Button("Extract Entities & Relationships", variant="primary", size="lg")
 
@@ -656,18 +536,6 @@ Test the complete knowledge graph extraction pipeline with progressive stage upd
             label="Extraction Statistics",
             interactive=False,
             lines=8,
-        )
-    with gr.Row():
-        ner_preview_output = gr.Textbox(
-            label="DistilBERT Preview (live)",
-            interactive=False,
-            lines=6,
-            value="Type in the journal box to preview DistilBERT entities.",
-        )
-        ner_details_output = gr.Textbox(
-            label="Stage 1 Extraction Details",
-            interactive=False,
-            lines=6,
         )
 
     gr.Markdown("### Stage 2: Relationship Extraction")
@@ -747,33 +615,16 @@ Test the complete knowledge graph extraction pipeline with progressive stage upd
         lines=6,
     )
 
-    ner_preview_state = gr.State(None)
     episode_state = gr.State(None)
     nodes_state = gr.State(None)
     uuid_map_state = gr.State(None)
 
-    content_input.change(
-        fn=_debounced_ner_preview,
-        inputs=[content_input, use_ner_checkbox],
-        outputs=[ner_preview_output, ner_preview_state],
-        trigger_mode="always_last",
-        show_progress="hidden",
-    )
-
-    use_ner_checkbox.change(
-        fn=_refresh_ner_preview_status,
-        inputs=[use_ner_checkbox, ner_preview_state],
-        outputs=[ner_preview_output, ner_preview_state],
-        show_progress="hidden",
-    )
-
     extract_btn.click(
         on_extract,
-        inputs=[content_input, use_ner_checkbox],
+        inputs=[content_input],
         outputs=[
             entity_list_output,
             stats_output,
-            ner_details_output,
             uuid_map_output,
             episode_output,
             edge_list_output,

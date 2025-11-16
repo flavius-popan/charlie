@@ -1,7 +1,7 @@
 """Optimizer for pipeline/extract_nodes.py using DSPy's BootstrapFewShot.
 
 This script optimizes the EntityExtractor module's prompts using a training set
-of personal journal entries extracting Person, Place, Organization, Concept, and Activity entities.
+of personal journal entries extracting Person, Place, Organization, and Activity entities.
 
 Usage:
     python -m pipeline.optimizers.extract_nodes_optimizer
@@ -39,7 +39,7 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
     """Build training and validation examples for entity extraction optimization.
 
     Creates 10 realistic personal journal entries covering:
-    - Entity types: Person, Place, Organization, Concept, Activity
+    - Entity types: Person, Place, Organization, Activity
     - Contexts: hanging out with friends, family time, going places, doing hobbies, appointments, life reflections
     - Tone: casual, authentic, human (not robotic business language)
 
@@ -52,34 +52,30 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
             {
                 "entity_type_id": 0,
                 "entity_type_name": "Entity",
-                "entity_type_description": "fallback for significant entities",
+                "entity_type_description": "fallback for significant entities that do not fit custom types",
             },
             {
                 "entity_type_id": 1,
                 "entity_type_name": "Person",
-                "entity_type_description": "individuals mentioned in the journal. Extract individuals mentioned: friends, family, colleagues, romantic partners, professionals (therapists/doctors), acquaintances.",
+                "entity_type_description": "people mentioned in the journal: friends, family, coworkers, crushes, therapists, mentors, neighbors, etc.",
             },
             {
                 "entity_type_id": 2,
                 "entity_type_name": "Place",
-                "entity_type_description": "specific locations and venues. Extract specific places visited or mentioned: coffee shops, parks, restaurants, cities, neighborhoods, venues, landmarks.",
+                "entity_type_description": "specific locations or restorative spaces such as homes, parks, studios, cafes, clinics, or travel stops.",
             },
             {
                 "entity_type_id": 3,
                 "entity_type_name": "Organization",
-                "entity_type_description": "companies, institutions, groups. Extract organizations engaged with: workplaces, schools, clubs, community groups, institutions, companies.",
+                "entity_type_description": "communities, teams, companies, collectives, or groups the author interacts with.",
             },
             {
                 "entity_type_id": 4,
-                "entity_type_name": "Concept",
-                "entity_type_description": "abstract topics and life themes. Extract life themes and topics reflected on: personal growth, relationships, mental health, career, identity, values, beliefs.",
-            },
-            {
-                "entity_type_id": 5,
                 "entity_type_name": "Activity",
-                "entity_type_description": "events, activities, and experiences. Extract specific activities and events: appointments, outings, hobbies, social gatherings, daily routines, significant moments.",
+                "entity_type_description": "events, rituals, or routines (therapy session, sunrise swim, volunteer shift, study group, etc.).",
             },
-        ]
+        ],
+        ensure_ascii=False,
     )
 
     all_examples = []
@@ -93,7 +89,6 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
                 extracted_entities=[
                     ExtractedEntity(name="Sarah", entity_type_id=1),
                     ExtractedEntity(name="Blue Bottle Coffee", entity_type_id=2),
-                    ExtractedEntity(name="career goals", entity_type_id=4),
                 ]
             ),
         ).with_inputs("episode_content", "entity_types")
@@ -107,8 +102,7 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
             extracted_entities=ExtractedEntities(
                 extracted_entities=[
                     ExtractedEntity(name="Dr. Martinez", entity_type_id=1),
-                    ExtractedEntity(name="therapy session", entity_type_id=5),
-                    ExtractedEntity(name="relationship patterns", entity_type_id=4),
+                    ExtractedEntity(name="therapy session", entity_type_id=4),
                 ]
             ),
         ).with_inputs("episode_content", "entity_types")
@@ -123,8 +117,7 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
                 extracted_entities=[
                     ExtractedEntity(name="Mindful Movement", entity_type_id=3),
                     ExtractedEntity(name="Emma", entity_type_id=1),
-                    ExtractedEntity(name="yoga class", entity_type_id=5),
-                    ExtractedEntity(name="self-care", entity_type_id=4),
+                    ExtractedEntity(name="yoga class", entity_type_id=4),
                 ]
             ),
         ).with_inputs("episode_content", "entity_types")
@@ -139,7 +132,7 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
                 extracted_entities=[
                     ExtractedEntity(name="TechCorp", entity_type_id=3),
                     ExtractedEntity(name="Lisa", entity_type_id=1),
-                    ExtractedEntity(name="product launch", entity_type_id=5),
+                    ExtractedEntity(name="product launch", entity_type_id=4),
                 ]
             ),
         ).with_inputs("episode_content", "entity_types")
@@ -155,8 +148,7 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
                     ExtractedEntity(name="Mount Tam", entity_type_id=2),
                     ExtractedEntity(name="Jake", entity_type_id=1),
                     ExtractedEntity(name="Priya", entity_type_id=1),
-                    ExtractedEntity(name="hiking", entity_type_id=5),
-                    ExtractedEntity(name="mental health", entity_type_id=4),
+                    ExtractedEntity(name="hiking", entity_type_id=4),
                 ]
             ),
         ).with_inputs("episode_content", "entity_types")
@@ -170,8 +162,7 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
             extracted_entities=ExtractedEntities(
                 extracted_entities=[
                     ExtractedEntity(name="Dr. Chen", entity_type_id=1),
-                    ExtractedEntity(name="doctor appointment", entity_type_id=5),
-                    ExtractedEntity(name="anxiety", entity_type_id=4),
+                    ExtractedEntity(name="doctor appointment", entity_type_id=4),
                 ]
             ),
         ).with_inputs("episode_content", "entity_types")
@@ -186,8 +177,7 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
                 extracted_entities=[
                     ExtractedEntity(name="Food For All", entity_type_id=3),
                     ExtractedEntity(name="Rosa", entity_type_id=1),
-                    ExtractedEntity(name="volunteering", entity_type_id=5),
-                    ExtractedEntity(name="gratitude", entity_type_id=4),
+                    ExtractedEntity(name="volunteering", entity_type_id=4),
                 ]
             ),
         ).with_inputs("episode_content", "entity_types")
@@ -202,8 +192,87 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
                 extracted_entities=[
                     ExtractedEntity(name="DataFlow Inc", entity_type_id=3),
                     ExtractedEntity(name="Miguel", entity_type_id=1),
-                    ExtractedEntity(name="first day", entity_type_id=5),
-                    ExtractedEntity(name="imposter syndrome", entity_type_id=4),
+                    ExtractedEntity(name="first day", entity_type_id=4),
+                ]
+            ),
+        ).with_inputs("episode_content", "entity_types")
+    )
+
+    # Example 9: Sunrise lap with friend and dog
+    all_examples.append(
+        dspy.Example(
+            episode_content="Met Nina and her rescue pup Scout for a slow, misty lap around Lake Merritt. Nina noticed how anxious I was and kept cueing the breathwork my therapist suggested until my shoulders finally dropped.",
+            entity_types=entity_types_json,
+            extracted_entities=ExtractedEntities(
+                extracted_entities=[
+                    ExtractedEntity(name="Nina", entity_type_id=1),
+                    ExtractedEntity(name="Scout", entity_type_id=1),
+                    ExtractedEntity(name="Lake Merritt", entity_type_id=2),
+                    ExtractedEntity(name="breathwork routine", entity_type_id=4),
+                ]
+            ),
+        ).with_inputs("episode_content", "entity_types")
+    )
+
+    # Example 10: Pantry volunteering
+    all_examples.append(
+        dspy.Example(
+            episode_content="Volunteered at Community Roots Pantry again. Malik had us assemble produce boxes while he explained next month's food distribution schedule.",
+            entity_types=entity_types_json,
+            extracted_entities=ExtractedEntities(
+                extracted_entities=[
+                    ExtractedEntity(name="Community Roots Pantry", entity_type_id=3),
+                    ExtractedEntity(name="Malik", entity_type_id=1),
+                    ExtractedEntity(name="produce box shift", entity_type_id=4),
+                ]
+            ),
+        ).with_inputs("episode_content", "entity_types")
+    )
+
+    # Example 11: Family planning call
+    all_examples.append(
+        dspy.Example(
+            episode_content="Hopped on a call with Aunt Rosa about the Diaz Family Fund and scribbled 'gratitude mantra' on a sticky note so I remember to breathe this week.",
+            entity_types=entity_types_json,
+            extracted_entities=ExtractedEntities(
+                extracted_entities=[
+                    ExtractedEntity(name="Aunt Rosa", entity_type_id=1),
+                    ExtractedEntity(name="Diaz Family Fund", entity_type_id=3),
+                    ExtractedEntity(name="gratitude mantra", entity_type_id=0),
+                ]
+            ),
+        ).with_inputs("episode_content", "entity_types")
+    )
+
+    # Example 12: Mission Works sprint
+    all_examples.append(
+        dspy.Example(
+            episode_content="Camped out at Mission Works Lab with the Redwood AI crew to finish our sprint. Priya kept pairing with me on the bug bash while Jordan ordered Thai.",
+            entity_types=entity_types_json,
+            extracted_entities=ExtractedEntities(
+                extracted_entities=[
+                    ExtractedEntity(name="Mission Works Lab", entity_type_id=2),
+                    ExtractedEntity(name="Redwood AI", entity_type_id=3),
+                    ExtractedEntity(name="Priya", entity_type_id=1),
+                    ExtractedEntity(name="bug bash sprint", entity_type_id=4),
+                ]
+            ),
+        ).with_inputs("episode_content", "entity_types")
+    )
+
+    # Example 13: Support circle discussion
+    all_examples.append(
+        dspy.Example(
+            episode_content='Spent the evening at Haven House support circle naming the burnout spiral out loud. Jenna held space for all our messy feelings and had us write a "north star" intention for how we want to feel this week.',
+            entity_types=entity_types_json,
+            extracted_entities=ExtractedEntities(
+                extracted_entities=[
+                    ExtractedEntity(
+                        name="Haven House support circle", entity_type_id=4
+                    ),
+                    ExtractedEntity(name="Jenna", entity_type_id=1),
+                    ExtractedEntity(name="burnout spiral", entity_type_id=0),
+                    ExtractedEntity(name="north star intention", entity_type_id=0),
                 ]
             ),
         ).with_inputs("episode_content", "entity_types")
@@ -217,9 +286,7 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
             extracted_entities=ExtractedEntities(
                 extracted_entities=[
                     ExtractedEntity(name="Marcus", entity_type_id=1),
-                    ExtractedEntity(name="book club", entity_type_id=5),
-                    ExtractedEntity(name="regret", entity_type_id=4),
-                    ExtractedEntity(name="second chances", entity_type_id=4),
+                    ExtractedEntity(name="book club", entity_type_id=4),
                 ]
             ),
         ).with_inputs("episode_content", "entity_types")
@@ -235,17 +302,20 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
                     ExtractedEntity(name="Emma", entity_type_id=1),
                     ExtractedEntity(name="Devon", entity_type_id=1),
                     ExtractedEntity(name="Kai", entity_type_id=1),
-                    ExtractedEntity(name="game night", entity_type_id=5),
-                    ExtractedEntity(name="chosen family", entity_type_id=4),
+                    ExtractedEntity(name="game night", entity_type_id=4),
                 ]
             ),
         ).with_inputs("episode_content", "entity_types")
     )
 
-    trainset = all_examples[:8]
-    valset = all_examples[8:]
+    trainset = all_examples[:10]
+    valset = all_examples[10:]
 
-    logger.info("Built trainset with %d examples, valset with %d examples", len(trainset), len(valset))
+    logger.info(
+        "Built trainset with %d examples, valset with %d examples",
+        len(trainset),
+        len(valset),
+    )
     return trainset, valset
 
 
@@ -350,9 +420,9 @@ def optimize(trainset: list[dspy.Example]) -> EntityExtractor:
     optimizer = MIPROv2(
         metric=entity_extraction_metric,
         auto=None,
-        num_candidates=5,
-        init_temperature=1.0,
-        metric_threshold=0.85,
+        num_candidates=3,
+        init_temperature=0.5,
+        metric_threshold=0.90,
     )
 
     student = EntityExtractor()
@@ -408,7 +478,11 @@ def main():
     configure_dspy()
 
     trainset, valset = build_trainset()
-    logger.info("Built trainset with %d examples, valset with %d examples", len(trainset), len(valset))
+    logger.info(
+        "Built trainset with %d examples, valset with %d examples",
+        len(trainset),
+        len(valset),
+    )
 
     # Baseline evaluation on validation set
     baseline_module = EntityExtractor()
