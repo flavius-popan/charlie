@@ -51,9 +51,16 @@ from pipeline import add_journal
 
 result = await add_journal(
     content="Journal entry text...",
-    group_id="user_123",  # Optional, defaults to FalkorDB default '\\_'
-    entity_types=None,     # Optional custom entity schemas
-    excluded_entity_types=None  # Optional types to exclude
+    group_id="user_123",           # Optional, defaults to FalkorDB default '\\_'
+    reference_time=None,           # Optional, when entry was written (defaults to now)
+    name=None,                     # Optional episode identifier
+    source_description="Journal entry",  # Entry source description
+    entity_types=None,             # Optional custom entity schemas
+    excluded_entity_types=None,    # Optional types to exclude
+    edge_types=None,               # Optional custom edge type schemas
+    edge_type_map=None,            # Optional edge type mappings
+    edge_meta=None,                # Optional edge metadata
+    persist=True,                  # Whether to write to database
 )
 # Returns: AddJournalResults(episode, nodes, edges, episodic_edges, uuid_map, metadata)
 ```
@@ -64,13 +71,14 @@ Based on verified graphiti-core implementation (`graphiti.py:611-813`):
 
 ### Previous Episodes Context
 
-**Fetched ONCE** at the start of add_journal() and reused by all stages:
+**Fetched in Stage 1** (ExtractNodes) and passed to subsequent stages:
 ```python
 previous_episodes = await fetch_recent_episodes(
     group_id,
     reference_time,
     limit=5  # RELEVANT_SCHEMA_LIMIT in graphiti-core
 )
+# Included in ExtractNodesOutput.previous_episodes and reused by Stages 2-4
 ```
 
 ### Stage 1: Extract Nodes
@@ -83,8 +91,9 @@ class ExtractNodesOutput:
     extracted_nodes: list[EntityNode]  # Nodes with original UUIDs (for Stage 2 edge extraction)
     nodes: list[EntityNode]            # RESOLVED entities (canonical UUIDs)
     uuid_map: dict[str, str]           # provisional_uuid → canonical_uuid
-    duplicate_pairs: list[tuple]       # For DUPLICATE_OF edges (Stage 5)
-    metadata: dict[str, Any]           # Statistics: extracted_count, exact_matches, fuzzy_matches, new_entities
+    duplicate_pairs: list[tuple[EntityNode, EntityNode]]  # For DUPLICATE_OF edges (Stage 5)
+    previous_episodes: list[EpisodicNode]  # Context for Stages 2-4
+    metadata: dict[str, Any]           # Statistics: extracted_count, resolved_count, exact_matches, fuzzy_matches, new_entities
 ```
 
 **Extractor**
@@ -128,12 +137,12 @@ async def extract_attributes_from_nodes(
 - Episode and previous episodes (reused)
 - Entity type schemas
 
-**Note:** Creates embeddings internally. Returns nodes with attributes, summaries, and embeddings populated.
+**Note:** Embeddings are currently deferred (empty vectors). Returns nodes with attributes populated.
 
 ## Pipeline Stages
 
 ```
-Journal Text → add_journal() → ExtractNodes → ExtractEdges → ExtractAttributes → GenerateSummaries → [Future: Database]
+Journal Text → add_journal() → ExtractNodes → ExtractEdges → ExtractAttributes → GenerateSummaries → Database Persistence
 ```
 
 ### Stage 1: Extract Nodes
@@ -227,7 +236,7 @@ result = await extractor(...)
 
 3. **Exact Match Deduplication**: Edges keyed by `(source_uuid, target_uuid, edge_name)`. If match exists, merge episode IDs. No fuzzy matching.
 
-4. **Temporal Metadata**: LLM extracts `valid_at` and `invalid_at` as ISO 8601 strings. Simple datetime parsing only (no dateparser validation).
+4. **Temporal Metadata**: LLM extracts `valid_at` and `invalid_at` as ISO 8601 strings. Parsed with UTC normalization and temporal range validation (invalid_at must be > valid_at).
 
 5. **Facts Inline**: Relationships and facts extracted in single LLM call.
 
@@ -252,7 +261,7 @@ result = await extractor(...)
 
 **Design**:
 - For each resolved entity from Stage 1, extract type-specific attributes:
-  - **Person**: `relationship_type` (e.g., "friend", "colleague", "family")
+  - **Person**: `relationship_type` (e.g., "friend", "colleague", "family"), `closeness` (0-1 float), `overall_valence` (-1 to 1 float)
   - **Activity**: `activity_type` (e.g., "walk", "therapy session")
   - **Place**: `category` (e.g., "park", "clinic")
   - **Organization**: `category` (e.g., "company", "nonprofit")
@@ -307,7 +316,11 @@ Stage 3 enriches with type-specific attributes:
 EntityNode(
     name="Sarah",
     labels=["Entity", "Person"],
-    attributes={"relationship_type": "friend"}  # Extracted from "my friend Sarah"
+    attributes={
+        "relationship_type": "friend",  # Extracted from "my friend Sarah"
+        "closeness": 0.8,               # Emotional closeness
+        "overall_valence": 0.7          # Positive sentiment
+    }
 )
 
 # Activity entity enriched:
@@ -418,7 +431,11 @@ result = await generator(...)
 
 **Important Implementation Details**:
 
-1. **Summary Guidelines**: Embedded directly in DSPy signature from graphiti-core's snippets.py
+1. **Summary Guidelines**: Uses DSPy few-shot learning with demonstration examples. The optimized prompts teach the model to:
+   - Output only factual content (no meta-commentary)
+   - State facts directly in under 250 characters
+   - Combine new info with existing summary
+   - Avoid phrases like "This is the only..." or "Based on the messages..."
 
 2. **Truncation**: Double truncation approach:
    - Truncate existing_summary on input (for context)
@@ -446,7 +463,7 @@ Persistence is enabled by default (`persist=True`). Passing `persist=False` keep
 
 ## Optimization
 
-Each pipeline stage can be optimized using DSPy's BootstrapFewShot optimizer to improve prompt quality.
+Each pipeline stage can be optimized using DSPy's MIPROv2 optimizer to improve prompt quality and instructions.
 
 ### Pattern
 
@@ -455,7 +472,7 @@ All optimizers follow this structure:
 1. **Location**: `pipeline/optimizers/<stage_name>_optimizer.py`
 2. **Prompts**: Saved to `pipeline/prompts/<stage_name>.json`
 3. **Auto-loading**: Stage modules automatically load optimized prompts if present
-4. **Template**: 8-section functional template (no shared utilities)
+4. **Template**: 6-section functional template (no shared utilities)
 
 ### Running Optimizers
 
@@ -468,9 +485,9 @@ python -m pipeline.optimizers.extract_nodes_optimizer
 ```
 
 **What happens:**
-1. Baseline evaluation on training set
-2. BootstrapFewShot optimization (5 demos)
-3. Optimized evaluation
+1. Baseline evaluation on validation set
+2. MIPROv2 optimization (2-3 bootstrapped demos, 3 labeled demos, instruction tuning)
+3. Optimized evaluation on validation set
 4. Prompts saved to `pipeline/prompts/<stage>.json`
 5. Stage auto-loads optimized prompts on next run
 
@@ -479,9 +496,9 @@ python -m pipeline.optimizers.extract_nodes_optimizer
 Each optimizer script contains:
 
 1. **configure_dspy()** - Setup LM and adapter
-2. **build_trainset()** - 15-25 training examples
+2. **build_trainset()** - 6-10 training examples (varies by stage complexity)
 3. **<stage>_metric()** - Stage-specific evaluation metric (e.g., F1 for entities)
-4. **optimize()** - Run BootstrapFewShot
+4. **optimize()** - Run MIPROv2
 5. **evaluate()** - Measure quality
 6. **main()** - Orchestrate: baseline → optimize → evaluate → save
 
@@ -505,17 +522,23 @@ python -m pipeline.gradio_ui
 ```
 
 **Features:**
-- Extract entities from journal text
-- Toggle deduplication on/off
-- View extraction statistics (exact/fuzzy matches, new entities)
-- Inspect UUID mappings (provisional → resolved)
+- Run complete 4-stage pipeline (entities, edges, attributes, summaries)
+- Progressive updates showing results after each stage
+- View statistics for all stages:
+  - Stage 1: Entity extraction (exact/fuzzy matches, new entities, UUID mappings)
+  - Stage 2: Edge extraction (extracted, built, resolved, merged counts)
+  - Stage 3: Attribute extraction (by entity type)
+  - Stage 4: Summary generation (avg length, truncated count)
 - Write results to database
 - Reset database for clean testing
+- View database statistics (episode count, entity count)
 
 **Use cases:**
-- Validate entity extraction accuracy
-- Test deduplication behavior with/without existing graph data
-- Inspect DSPy signature outputs before committing to database
+- Validate complete pipeline accuracy across all 4 stages
+- Test deduplication behavior with existing graph data
+- Inspect intermediate outputs (entities, edges, attributes, summaries)
+- Debug attribute extraction for different entity types
+- Review generated summaries before database persistence
 
 ## Debugging
 
