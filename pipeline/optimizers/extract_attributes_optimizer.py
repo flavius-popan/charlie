@@ -1,6 +1,8 @@
 """Optimizer for pipeline/extract_attributes.py using DSPy's BootstrapFewShot.
 
 Focuses on Person attributes so relationship labels stay human and grounded.
+Includes explicit `Self` entity cases to teach the extractor how the author
+describes their own relationship to themselves.
 
 Usage:
     python -m pipeline.optimizers.extract_attributes_optimizer
@@ -135,6 +137,22 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
             },
         ),
         example(
+            episode_content="I talked gently to myself in the mirror before work so I wouldn't skip breakfast again.",
+            previous_notes=["I promised Ines I'd practice kinder self-talk every morning."],
+            entity_name="Self",
+            entity_type="Person",
+            existing={
+                "relationship_type": "author",
+                "closeness": 0.75,
+                "overall_valence": 0.1,
+            },
+            attributes={
+                "relationship_type": "author",
+                "closeness": 0.8,
+                "overall_valence": 0.35,
+            },
+        ),
+        example(
             episode_content="Lake Merritt felt calm tonight; the walking path lights flickered along the water.",
             previous_notes=["Jogged the lake loop last week at dusk."],
             entity_name="Lake Merritt",
@@ -182,10 +200,42 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
             existing={},
             attributes={"activity_type": "walk"},
         ),
+        example(
+            episode_content="I spiraled tonight and had to write myself a letter reminding me I deserve rest.",
+            previous_notes=["I keep slipping into old burnout stories whenever deadlines stack up."],
+            entity_name="Self",
+            entity_type="Person",
+            existing={
+                "relationship_type": "author",
+                "closeness": 0.65,
+                "overall_valence": -0.1,
+            },
+            attributes={
+                "relationship_type": "author",
+                "closeness": 0.55,
+                "overall_valence": -0.35,
+            },
+        ),
+        example(
+            episode_content="I let myself nap after therapy and woke up tender but proud of that tiny kindness.",
+            previous_notes=["Rest still feels illegal unless someone else insists."],
+            entity_name="Self",
+            entity_type="Person",
+            existing={
+                "relationship_type": "author",
+                "closeness": 0.6,
+                "overall_valence": 0.0,
+            },
+            attributes={
+                "relationship_type": "author",
+                "closeness": 0.72,
+                "overall_valence": 0.25,
+            },
+        ),
     ]
 
-    trainset = all_examples[:8]
-    valset = all_examples[8:]
+    valset = all_examples[-4:]
+    trainset = all_examples[:-4]
     logger.info(
         "Built attribute trainset with %d examples, valset with %d examples",
         len(trainset),

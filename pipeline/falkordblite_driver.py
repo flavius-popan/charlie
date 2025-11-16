@@ -16,9 +16,13 @@ from typing import Any, Iterable
 from graphiti_core.driver.driver import GraphDriver, GraphDriverSession, GraphProvider
 from graphiti_core.edges import EntityEdge, EpisodicEdge
 from graphiti_core.embedder.client import EmbedderClient
+from graphiti_core.helpers import get_default_group_id
 from graphiti_core.nodes import EntityNode, EpisodicNode, EpisodeType
 from graphiti_core.utils.bulk_utils import add_nodes_and_edges_bulk
 from graphiti_core.utils.datetime_utils import convert_datetimes_to_strings, utc_now
+from graphiti_core.utils.maintenance.graph_data_operations import (
+    build_indices_and_constraints,
+)
 
 from settings import (
     DB_PATH,
@@ -27,6 +31,12 @@ from settings import (
     FALKORLITE_TCP_HOST,
     FALKORLITE_TCP_PASSWORD,
     FALKORLITE_TCP_PORT,
+    GROUP_ID,
+)
+from pipeline.self_reference import (
+    SELF_ENTITY_LABELS,
+    SELF_ENTITY_NAME,
+    SELF_ENTITY_UUID,
 )
 
 try:  # Optional dependency in CI / unit tests
@@ -55,6 +65,11 @@ _tcp_server = {
     "port": FALKORLITE_TCP_PORT,
     "password": FALKORLITE_TCP_PASSWORD,
 }
+
+_graph_initialized = False
+_graph_init_lock: asyncio.Lock | None = None
+_self_seed_lock: asyncio.Lock | None = None
+_seeded_self_groups: set[str] = set()
 
 
 def _tcp_server_active() -> bool:
@@ -108,6 +123,53 @@ def get_tcp_server_password() -> str | None:
     return _tcp_server["password"]
 
 
+async def ensure_graph_ready(*, delete_existing: bool = False) -> None:
+    """Build Graphiti indices/constraints once per process."""
+    global _graph_initialized, _graph_init_lock, _seeded_self_groups
+    if delete_existing:
+        _graph_initialized = False
+        _seeded_self_groups.clear()
+
+    if _graph_initialized and not delete_existing:
+        return
+
+    if _graph_init_lock is None:
+        _graph_init_lock = asyncio.Lock()
+
+    async with _graph_init_lock:
+        if _graph_initialized and not delete_existing:
+            return
+        driver = _get_driver()
+        try:
+            await build_indices_and_constraints(
+                driver,
+                delete_existing=delete_existing,
+            )
+        except ImportError as exc:  # pragma: no cover - falkordb optional
+            logger.warning(
+                "Skipping Falkor index bootstrap because dependencies are missing: %s",
+                exc,
+            )
+        _graph_initialized = True
+
+
+async def ensure_self_entity(group_id: str, name: str = SELF_ENTITY_NAME) -> None:
+    """Seed the deterministic SELF entity for journaling if it's missing."""
+    normalized_group = group_id or DEFAULT_SELF_GROUP
+    if normalized_group in _seeded_self_groups:
+        return
+
+    global _self_seed_lock
+    if _self_seed_lock is None:
+        _self_seed_lock = asyncio.Lock()
+
+    async with _self_seed_lock:
+        if normalized_group in _seeded_self_groups:
+            return
+        await asyncio.to_thread(_merge_self_entity_sync, normalized_group, name)
+        _seeded_self_groups.add(normalized_group)
+
+
 def _build_serverconfig() -> dict[str, str] | None:
     if not _tcp_server_active():
         return None
@@ -158,6 +220,40 @@ def _ensure_graph():
             return None
 
     return _graph
+
+
+def _merge_self_entity_sync(group_id: str, name: str) -> None:
+    graph = _ensure_graph()
+    if graph is None:
+        return
+
+    now_literal = to_cypher_literal(utc_now().isoformat())
+    summary_literal = to_cypher_literal(
+        "Represents the journal author for first-person perspective anchoring."
+    )
+    labels_literal = to_cypher_literal(json.dumps(SELF_ENTITY_LABELS))
+    attributes_literal = to_cypher_literal(json.dumps({}))
+
+    query = f"""
+    MERGE (self:Entity:Person {{uuid: {SELF_UUID_LITERAL}}})
+    SET self.name = {to_cypher_literal(name)},
+        self.group_id = COALESCE(self.group_id, {to_cypher_literal(group_id)}),
+        self.labels = {labels_literal},
+        self.summary = CASE
+            WHEN self.summary = '' OR self.summary IS NULL THEN {summary_literal}
+            ELSE self.summary
+        END,
+        self.attributes = CASE
+            WHEN self.attributes = '' OR self.attributes IS NULL THEN {attributes_literal}
+            ELSE self.attributes
+        END,
+        self.created_at = COALESCE(self.created_at, {now_literal})
+    RETURN self.uuid
+    """
+    try:
+        graph.query(query)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Failed to seed SELF entity: %s", exc)
 
 
 def _pid_exists(pid: int) -> bool:
@@ -296,6 +392,10 @@ def to_cypher_literal(value: Any) -> str:
     return json.dumps(value)
 
 
+SELF_UUID_LITERAL = to_cypher_literal(str(SELF_ENTITY_UUID))
+DEFAULT_SELF_GROUP = GROUP_ID or get_default_group_id(GraphProvider.FALKORDB)
+
+
 def _decode_value(value: Any) -> Any:
     """Decode FalkorDB result cells to Python primitives."""
     if isinstance(value, bytes):
@@ -430,6 +530,7 @@ async def fetch_recent_episodes(
     limit: int,
 ) -> list[EpisodicNode]:
     """Fetch the most recent episodes for a group."""
+    await ensure_graph_ready()
     return await asyncio.to_thread(
         _fetch_recent_episodes_sync,
         group_id,
@@ -446,7 +547,7 @@ def _fetch_entities_by_group_sync(group_id: str) -> dict[str, EntityNode]:
     group_literal = to_cypher_literal(group_id)
     query = f"""
     MATCH (n:Entity)
-    WHERE n.group_id = {group_literal}
+    WHERE n.group_id = {group_literal} OR n.uuid = {SELF_UUID_LITERAL}
     RETURN n.uuid, n.name, n.summary, n.labels, n.attributes, n.created_at
     """
 
@@ -479,7 +580,49 @@ def _fetch_entities_by_group_sync(group_id: str) -> dict[str, EntityNode]:
 
 async def fetch_entities_by_group(group_id: str) -> dict[str, EntityNode]:
     """Fetch all entities in the given group keyed by UUID."""
+    await ensure_graph_ready()
+    await ensure_self_entity(group_id)
     return await asyncio.to_thread(_fetch_entities_by_group_sync, group_id)
+
+
+def _fetch_self_entity_sync() -> EntityNode | None:
+    graph = _ensure_graph()
+    if graph is None:
+        return None
+
+    query = f"""
+    MATCH (n:Entity {{uuid: {SELF_UUID_LITERAL}}})
+    RETURN n.uuid, n.name, n.summary, n.labels, n.attributes, n.created_at, n.group_id
+    LIMIT 1
+    """
+
+    try:
+        result = graph.query(query)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("FalkorDB query failed (fetch_self_entity): %s", exc)
+        return None
+
+    rows = list(_iter_statistics_rows(result))
+    if not rows:
+        return None
+
+    uuid, name, summary, labels, attributes, created_at, group_id = rows[0]
+    return EntityNode(
+        uuid=str(uuid or ""),
+        name=str(name or ""),
+        summary=str(summary or ""),
+        labels=_normalize_string_list(_decode_json(labels, ["Entity"])),
+        attributes=_decode_json(attributes, {}),
+        created_at=_parse_datetime(created_at) or utc_now(),
+        group_id=str(group_id or ""),
+    )
+
+
+async def fetch_self_entity(group_id: str | None = None) -> EntityNode | None:
+    """Return the canonical SELF entity for cloning in extraction stages."""
+    await ensure_graph_ready()
+    await ensure_self_entity(group_id or DEFAULT_SELF_GROUP)
+    return await asyncio.to_thread(_fetch_self_entity_sync)
 
 
 def _fetch_entity_edges_by_group_sync(group_id: str) -> dict[str, EntityEdge]:
@@ -550,6 +693,7 @@ async def fetch_entity_edges_by_group(group_id: str) -> dict[str, EntityEdge]:
     Returns:
         Dict mapping edge_uuid -> EntityEdge
     """
+    await ensure_graph_ready()
     return await asyncio.to_thread(_fetch_entity_edges_by_group_sync, group_id)
 
 
@@ -582,6 +726,7 @@ def _get_db_stats_sync() -> dict[str, int]:
 
 async def get_db_stats() -> dict[str, int]:
     """Get database statistics (episode and entity counts)."""
+    await ensure_graph_ready()
     return await asyncio.to_thread(_get_db_stats_sync)
 
 
@@ -601,7 +746,10 @@ def _reset_database_sync() -> str:
 
 async def reset_database() -> str:
     """Clear all graph data (DESTRUCTIVE)."""
-    return await asyncio.to_thread(_reset_database_sync)
+    result = await asyncio.to_thread(_reset_database_sync)
+    await ensure_graph_ready(delete_existing=True)
+    await ensure_self_entity(GROUP_ID)
+    return result
 
 
 def _prepare_dicts(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -820,6 +968,8 @@ async def persist_episode_and_nodes(
     episodic_edges: list[EpisodicEdge] | None = None,
 ) -> dict[str, Any]:
     """Persist pipeline outputs using graphiti-core's bulk writer."""
+    await ensure_graph_ready()
+    await ensure_self_entity(episode.group_id or GROUP_ID)
     edges = edges or []
     episodic_edges = episodic_edges or []
 
@@ -861,6 +1011,9 @@ __all__ = [
     "FalkorLiteSession",
     "NullEmbedder",
     "disable_tcp_server",
+    "ensure_graph_ready",
+    "ensure_self_entity",
+    "fetch_self_entity",
     "enable_tcp_server",
     "fetch_entities_by_group",
     "fetch_entity_edges_by_group",

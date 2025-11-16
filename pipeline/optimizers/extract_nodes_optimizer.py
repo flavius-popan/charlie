@@ -2,6 +2,8 @@
 
 This script optimizes the EntityExtractor module's prompts using a training set
 of personal journal entries extracting Person, Place, Organization, and Activity entities.
+Author voice matters: several examples explicitly include the canonical `Self`
+entity so first-person entries stay anchored to the writer.
 
 Usage:
     python -m pipeline.optimizers.extract_nodes_optimizer
@@ -118,6 +120,52 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
                     ExtractedEntity(name="Mindful Movement", entity_type_id=3),
                     ExtractedEntity(name="Emma", entity_type_id=1),
                     ExtractedEntity(name="yoga class", entity_type_id=4),
+                ]
+            ),
+        ).with_inputs("episode_content", "entity_types")
+    )
+
+    # Example 4: Sunrise ride to regulate nerves
+    all_examples.append(
+        dspy.Example(
+            episode_content="I biked the Embarcadero alone before sunrise to calm my nerves. The cold air finally slowed my racing thoughts.",
+            entity_types=entity_types_json,
+            extracted_entities=ExtractedEntities(
+                extracted_entities=[
+                    ExtractedEntity(name="Self", entity_type_id=1),
+                    ExtractedEntity(name="the Embarcadero", entity_type_id=2),
+                    ExtractedEntity(name="solo sunrise ride", entity_type_id=4),
+                ]
+            ),
+        ).with_inputs("episode_content", "entity_types")
+    )
+
+    # Example 5: Meeting a friend for grounding
+    all_examples.append(
+        dspy.Example(
+            episode_content="I met Priya at Dolores Park after lunch so I wouldn't spiral alone. We stretched on a blanket and I finally exhaled.",
+            entity_types=entity_types_json,
+            extracted_entities=ExtractedEntities(
+                extracted_entities=[
+                    ExtractedEntity(name="Self", entity_type_id=1),
+                    ExtractedEntity(name="Priya", entity_type_id=1),
+                    ExtractedEntity(name="Dolores Park", entity_type_id=2),
+                    ExtractedEntity(name="park hangout", entity_type_id=4),
+                ]
+            ),
+        ).with_inputs("episode_content", "entity_types")
+    )
+
+    # Example 6: Solo journaling ritual
+    all_examples.append(
+        dspy.Example(
+            episode_content="I stayed home tonight, brewed chamomile, and journaled about why I'm afraid to rest. No outside voices, just me and the page.",
+            entity_types=entity_types_json,
+            extracted_entities=ExtractedEntities(
+                extracted_entities=[
+                    ExtractedEntity(name="Self", entity_type_id=1),
+                    ExtractedEntity(name="home", entity_type_id=2),
+                    ExtractedEntity(name="chamomile journaling ritual", entity_type_id=4),
                 ]
             ),
         ).with_inputs("episode_content", "entity_types")
@@ -308,8 +356,23 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
         ).with_inputs("episode_content", "entity_types")
     )
 
-    trainset = all_examples[:10]
-    valset = all_examples[10:]
+    # Validation Example 3: Late-night self-reflection
+    all_examples.append(
+        dspy.Example(
+            episode_content="I walked circles around the block at midnight, whispering my mantra to keep panic at bay.",
+            entity_types=entity_types_json,
+            extracted_entities=ExtractedEntities(
+                extracted_entities=[
+                    ExtractedEntity(name="Self", entity_type_id=1),
+                    ExtractedEntity(name="midnight mantra walk", entity_type_id=4),
+                    ExtractedEntity(name="the block", entity_type_id=2),
+                ]
+            ),
+        ).with_inputs("episode_content", "entity_types")
+    )
+
+    valset = all_examples[-3:]
+    trainset = all_examples[:-3]
 
     logger.info(
         "Built trainset with %d examples, valset with %d examples",

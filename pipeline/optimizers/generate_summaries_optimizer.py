@@ -1,6 +1,8 @@
-"""Optimizer for pipeline/generate_summaries.py using DSPy's BootstrapFewShot.
+"""Optimizer for pipeline/generate_summaries.py using DSPy's MIPROv2.
 
 Keeps summaries short, human, and factual for journal-centric entities.
+All summaries now model first-person narration (including explicit `Self`
+examples) because the author reads these reflections directly.
 
 Usage:
     python -m pipeline.optimizers.generate_summaries_optimizer
@@ -98,7 +100,9 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
                 "Kai and I biked the Embarcadero at dawn. "
                 "He vented about finishing his art school portfolio."
             ),
-            previous_episodes=["Kai stayed over last weekend to prep his art school interviews."],
+            previous_episodes=[
+                "Kai stayed over last weekend to prep his art school interviews."
+            ],
             entity_name="Kai",
             entity_type="Person",
             existing_summary="",
@@ -107,14 +111,16 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
                 "closeness": 0.78,
                 "overall_valence": 0.6,
             },
-            summary_text="Kai welcomed a sunrise bike ride down the Embarcadero with me, spilling anxious portfolio talk until he felt seen.",
+            summary_text="I biked the Embarcadero at dawn with Kai and let him spill every anxious portfolio thought until he finally exhaled.",
             key_phrases=["sunrise ride", "portfolio jitters"],
         ),
         example(
             episode_content=(
                 "Sat with Grandma Rosa at St. Jude's while Dr. Yates walked her through tomorrow's surgery."
             ),
-            previous_episodes=["Grandma Rosa is still regaining strength after pneumonia."],
+            previous_episodes=[
+                "Grandma Rosa is still regaining strength after pneumonia."
+            ],
             entity_name="Grandma Rosa",
             entity_type="Person",
             existing_summary="Recovering slowly from pneumonia.",
@@ -123,7 +129,7 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
                 "closeness": 0.92,
                 "overall_valence": 0.1,
             },
-            summary_text="Grandma Rosa sat with Dr. Yates at St. Jude's, steadying herself for surgery with me at her side.",
+            summary_text="I sat beside Grandma Rosa at St. Jude's while Dr. Yates explained tomorrow's surgery and tried to keep both our breaths steady.",
             key_phrases=["St. Jude's", "surgery prep"],
         ),
         example(
@@ -135,19 +141,21 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
             entity_type="Place",
             existing_summary="",
             attributes={"category": "community garden"},
-            summary_text="24th Street Community Garden felt alive as we built new raised beds with a trio of tender teen volunteers.",
+            summary_text="I spent the morning at 24th Street Community Garden building raised beds with three tender teen volunteers and soaked up the buzz of community.",
             key_phrases=["raised beds", "teen volunteers", "community"],
         ),
         example(
             episode_content=(
                 "Snuck out for a night swim at Aquatic Park with Marco; the cold shock actually calmed me down."
             ),
-            previous_episodes=["Last week night's swim ended early because of lightning."],
+            previous_episodes=[
+                "Last week night's swim ended early because of lightning."
+            ],
             entity_name="Night swim",
             entity_type="Activity",
             existing_summary="",
             attributes={"activity_type": "night swim ritual"},
-            summary_text="Night swim at Aquatic Park with Marco shocked my system but melted the panic buzzing under my skin.",
+            summary_text="I snuck into Aquatic Park for a night swim with Marco, let the cold shock hit, and felt the panic buzzing under my skin finally melt.",
             key_phrases=["Aquatic Park", "night swim", "calming shock"],
         ),
         example(
@@ -163,26 +171,30 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
                 "closeness": 0.58,
                 "overall_valence": 0.45,
             },
-            summary_text="Therapist Ines stretched session time for breathing ladders and left me with a gentle journal prompt.",
+            summary_text="I stretched session time with therapist Ines so we could climb slow breathing ladders and she left me holding a gentle journal prompt.",
             key_phrases=["breathing ladders", "journal prompt"],
         ),
         example(
             episode_content=(
                 "Been practicing patience while caring for Mom—slow paperwork, slow progress, just breathing through the delays."
             ),
-            previous_episodes=["Patience theme keeps surfacing every time Mom's appointments slip."],
+            previous_episodes=[
+                "Patience theme keeps surfacing every time Mom's appointments slip."
+            ],
             entity_name="Caregiving patience practice",
             entity_type="Activity",
             existing_summary="",
             attributes={"activity_type": "caregiving ritual"},
-            summary_text="Caregiving patience practice looked like breathing with Mom through slow paperwork and tiny wins.",
+            summary_text="I practiced caregiving patience by breathing with Mom through slow paperwork, tiny wins, and the urge to rush.",
             key_phrases=["caregiving", "patience", "Mom"],
         ),
         example(
             episode_content=(
                 "Priya hosted a cozy potluck tonight and spread out her colored pens to map my training schedule."
             ),
-            previous_episodes=["She loves turning my training plans into rainbow timelines."],
+            previous_episodes=[
+                "She loves turning my training plans into rainbow timelines."
+            ],
             entity_name="Priya",
             entity_type="Person",
             existing_summary="Keeps me motivated for races.",
@@ -191,7 +203,7 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
                 "closeness": 0.8,
                 "overall_valence": 0.7,
             },
-            summary_text="Priya hosted a cozy potluck, covered the table in rainbow pens, and lovingly re-mapped my training plan.",
+            summary_text="I felt completely seen when Priya hosted a cozy potluck, covered the table in rainbow pens, and re-mapped my training plan with me.",
             key_phrases=["potluck", "training plan", "colored pens"],
         ),
         example(
@@ -203,13 +215,53 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
             entity_type="Place",
             existing_summary="",
             attributes={"category": "clinic"},
-            summary_text="Harbor Clinic smelled like mint tea while Ben quietly reorganized pamphlets so anxious folks could find help faster.",
+            summary_text="I noticed Harbor Clinic smelling like mint tea while Ben quietly reorganized pamphlets so anxious folks like me could grab resources faster.",
             key_phrases=["mint tea", "waiting room care"],
+        ),
+        example(
+            episode_content="I biked slow loops near Crissy Field after therapy just to feel the fog on my face.",
+            previous_episodes=[
+                "Crissy Field night rides used to be my go-to regulation trick."
+            ],
+            entity_name="Self",
+            entity_type="Person",
+            existing_summary="",
+            attributes={
+                "relationship_type": "author",
+                "closeness": 0.75,
+                "overall_valence": 0.2,
+            },
+            summary_text="I biked lazy loops at Crissy Field after therapy so the wind could rinse off the leftover dread.",
+            key_phrases=["Crissy Field", "therapy decompression"],
+        ),
+        example(
+            episode_content="I staffed Mutual Aid Kitchen again and my hands smelled like cilantro for hours.",
+            previous_episodes=[
+                "That volunteer crew keeps me accountable when I want to hide."
+            ],
+            entity_name="Mutual Aid Kitchen",
+            entity_type="Organization",
+            existing_summary="",
+            attributes={"category": "community kitchen"},
+            summary_text="I felt grounded at Mutual Aid Kitchen, chopping cilantro with the crew that refuses to let me disappear.",
+            key_phrases=["Mutual Aid Kitchen", "cilantro", "grounded"],
+        ),
+        example(
+            episode_content="I curled up in the window seat at Studio Norte and journaled through a monsoon of feelings.",
+            previous_episodes=[
+                "Studio Norte is my creative co-op when I miss having coworkers."
+            ],
+            entity_name="Studio Norte",
+            entity_type="Place",
+            existing_summary="",
+            attributes={"category": "creative studio"},
+            summary_text="I tucked into Studio Norte's window seat and journaled through the monsoon in my chest while rain hammered the glass.",
+            key_phrases=["Studio Norte", "window seat", "journaling"],
         ),
     ]
 
-    trainset = all_examples[:6]
-    valset = all_examples[6:]
+    valset = all_examples[-3:]
+    trainset = all_examples[:-3]
     logger.info(
         "Built summary trainset with %d examples, valset with %d examples",
         len(trainset),

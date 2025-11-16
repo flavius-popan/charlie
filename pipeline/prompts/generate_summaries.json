@@ -4,16 +4,19 @@
     "train": [],
     "demos": [
       {
-        "augmented": true,
         "summary_context": "{\"node\": {\"name\": \"Grandma Rosa\", \"summary\": \"Recovering slowly from pneumonia.\", \"entity_types\": [\"Entity\", \"Person\"], \"attributes\": {\"relationship_type\": \"family\", \"closeness\": 0.92, \"overall_valence\": 0.1}}, \"episode_content\": \"Sat with Grandma Rosa at St. Jude's while Dr. Yates walked her through tomorrow's surgery.\", \"previous_episodes\": [\"Grandma Rosa is still regaining strength after pneumonia.\"]}",
         "summary": {
-          "summary": "Grandma Rosa is recovering from pneumonia and preparing for surgery, with Dr. Yates guiding her through the process while we sat together at St. Jude's."
-        }
+          "summary": "I sat beside Grandma Rosa at St. Jude's while Dr. Yates explained tomorrow's surgery and tried to keep both our breaths steady."
+        },
+        "key_phrases": [
+          "St. Jude's",
+          "surgery prep"
+        ]
       },
       {
         "summary_context": "{\"node\": {\"name\": \"Kai\", \"summary\": \"\", \"entity_types\": [\"Entity\", \"Person\"], \"attributes\": {\"relationship_type\": \"friend\", \"closeness\": 0.78, \"overall_valence\": 0.6}}, \"episode_content\": \"Kai and I biked the Embarcadero at dawn. He vented about finishing his art school portfolio.\", \"previous_episodes\": [\"Kai stayed over last weekend to prep his art school interviews.\"]}",
         "summary": {
-          "summary": "Kai welcomed a sunrise bike ride down the Embarcadero with me, spilling anxious portfolio talk until he felt seen."
+          "summary": "I biked the Embarcadero at dawn with Kai and let him spill every anxious portfolio thought until he finally exhaled."
         },
         "key_phrases": [
           "sunrise ride",

@@ -28,6 +28,7 @@ from pipeline.extract_edges import (
     ExtractedEdges,
     _build_edge_type_context,
 )
+from pipeline.self_reference import SELF_PROMPT_NOTE
 from settings import DEFAULT_MODEL_PATH, MODEL_CONFIG
 
 
@@ -41,14 +42,19 @@ EMPTY_PREVIOUS_EPISODES = "[]"
 
 
 def _entities_json(entities: list[dict[str, Any]]) -> str:
-    payload = [
-        {
+    payload = []
+    for idx, entity in enumerate(entities):
+        entry = {
             "id": idx,
             "name": entity["name"],
             "entity_types": entity.get("labels", ["Entity"]),
         }
-        for idx, entity in enumerate(entities)
-    ]
+        if entity.get("is_author") or entity["name"] == "Self":
+            entry["is_author"] = True
+            entry["notes"] = entity.get("notes") or SELF_PROMPT_NOTE
+        elif entity.get("notes"):
+            entry["notes"] = entity["notes"]
+        payload.append(entry)
     return json.dumps(payload, ensure_ascii=False)
 
 
@@ -101,6 +107,113 @@ def _make_example(payload: dict[str, Any]) -> dspy.Example:
 
 
 RAW_EXAMPLES: list[dict[str, Any]] = [
+    {
+        "episode_content": (
+            "I met Priya at Dolores Park so she could walk me through a breathing check-in. "
+            "We hugged under the palms while her dog Ziggy kept circling us."
+        ),
+        "entities": [
+            {
+                "name": "Self",
+                "labels": ["Entity", "Person"],
+                "is_author": True,
+                "notes": SELF_PROMPT_NOTE,
+            },
+            {"name": "Priya", "labels": ["Entity", "Person"]},
+            {"name": "Ziggy", "labels": ["Entity", "Person"]},
+            {"name": "Dolores Park", "labels": ["Entity", "Place"]},
+            {"name": "breathing check-in", "labels": ["Entity", "Activity"]},
+        ],
+        "reference_time": "2025-02-20T19:30:00Z",
+        "relationships": [
+            {
+                "source": "Self",
+                "target": "Priya",
+                "relation": "SpendsTimeWith",
+                "fact": "I spent time with Priya in person at Dolores Park.",
+            },
+            {
+                "source": "Self",
+                "target": "breathing check-in",
+                "relation": "ParticipatesIn",
+                "fact": "I practiced the breathing check-in Priya modeled.",
+            },
+            {
+                "source": "breathing check-in",
+                "target": "Dolores Park",
+                "relation": "OccursAt",
+                "fact": "We did the breathing check-in right at Dolores Park.",
+            },
+        ],
+    },
+    {
+        "episode_content": (
+            "I walked solo laps around Lake Merritt after therapy and whispered reminders that I'm safe."
+        ),
+        "entities": [
+            {
+                "name": "Self",
+                "labels": ["Entity", "Person"],
+                "is_author": True,
+                "notes": SELF_PROMPT_NOTE,
+            },
+            {"name": "Lake Merritt", "labels": ["Entity", "Place"]},
+            {"name": "solo laps", "labels": ["Entity", "Activity"]},
+            {"name": "therapy session", "labels": ["Entity", "Activity"]},
+        ],
+        "reference_time": "2025-02-18T06:40:00Z",
+        "relationships": [
+            {
+                "source": "Self",
+                "target": "solo laps",
+                "relation": "ParticipatesIn",
+                "fact": "I took solo laps to ground after therapy.",
+            },
+            {
+                "source": "solo laps",
+                "target": "Lake Merritt",
+                "relation": "OccursAt",
+                "fact": "Those laps happened at Lake Merritt.",
+            },
+        ],
+    },
+    {
+        "episode_content": (
+            "I called Mom right after my panic spike, and Dr. Chen texted later checking whether I actually took my meds."
+        ),
+        "entities": [
+            {
+                "name": "Self",
+                "labels": ["Entity", "Person"],
+                "is_author": True,
+                "notes": SELF_PROMPT_NOTE,
+            },
+            {"name": "Mom", "labels": ["Entity", "Person"]},
+            {"name": "Dr. Chen", "labels": ["Entity", "Person"]},
+            {"name": "panic spike call", "labels": ["Entity", "Activity"]},
+        ],
+        "reference_time": "2025-02-16T22:15:00Z",
+        "relationships": [
+            {
+                "source": "Self",
+                "target": "Mom",
+                "relation": "Supports",
+                "fact": "I reached out to Mom for support after the panic spike.",
+            },
+            {
+                "source": "Dr. Chen",
+                "target": "Self",
+                "relation": "Supports",
+                "fact": "Dr. Chen checked on me about my medication."
+            },
+            {
+                "source": "Self",
+                "target": "panic spike call",
+                "relation": "ParticipatesIn",
+                "fact": "I initiated the panic spike call ritual to ground myself.",
+            },
+        ],
+    },
     {
         "episode_content": (
             "Mara and Tino coaxed me into a shivery sunrise plunge at Ocean Beach. "

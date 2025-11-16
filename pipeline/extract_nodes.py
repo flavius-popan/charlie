@@ -35,6 +35,7 @@ import json
 import logging
 from pathlib import Path
 from typing import Any
+import copy
 
 import dspy
 from graphiti_core.nodes import EntityNode, EpisodeType, EpisodicNode
@@ -48,8 +49,17 @@ from graphiti_core.utils.maintenance.dedup_helpers import (
 from graphiti_core.utils.ontology_utils.entity_types_utils import validate_entity_types
 from pydantic import BaseModel, Field, model_validator
 
-from pipeline.falkordblite_driver import fetch_entities_by_group, fetch_recent_episodes
+from pipeline.falkordblite_driver import (
+    fetch_entities_by_group,
+    fetch_recent_episodes,
+    fetch_self_entity,
+)
 from pipeline.entity_edge_models import entity_types
+from pipeline.self_reference import (
+    build_provisional_self_node,
+    contains_first_person_reference,
+    is_self_entity_name,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -238,10 +248,21 @@ class ExtractNodes:
         )
 
         # Stage 1: Extract provisional entities via pure DSPy module
+        pronoun_detected = contains_first_person_reference(episode.content)
+        canonical_self = None
+        if pronoun_detected:
+            canonical_self = await fetch_self_entity(self.group_id)
+
         provisional_nodes = self._extract_entities(
             episode, previous_episodes, entity_types
         )
         logger.info("Extracted %d provisional entities", len(provisional_nodes))
+
+        first_person_detected, self_injected = self._handle_self_reference(
+            provisional_nodes, pronoun_detected, canonical_self
+        )
+        if self_injected:
+            logger.debug("Injected SELF placeholder for group %s", self.group_id)
 
         # Stage 2: Resolve against existing graph (async DB + sync resolution)
         existing_entities = await fetch_entities_by_group(self.group_id)
@@ -266,6 +287,8 @@ class ExtractNodes:
                 [p for p in duplicate_pairs if p[0].name.lower() != p[1].name.lower()]
             ),
             "new_entities": new_entities,
+            "first_person_detected": first_person_detected,
+            "self_node_injected": self_injected,
         }
 
         logger.info(
@@ -322,6 +345,35 @@ class ExtractNodes:
             nodes.append(node)
 
         return nodes
+
+    def _handle_self_reference(
+        self,
+        nodes: list[EntityNode],
+        pronoun_detected: bool,
+        canonical_self: EntityNode | None,
+    ) -> tuple[bool, bool]:
+        """Normalize how SELF is represented based on pronoun usage."""
+        has_llm_self = any(is_self_entity_name(node.name) for node in nodes)
+        if has_llm_self and canonical_self is not None:
+            for idx, node in enumerate(list(nodes)):
+                if is_self_entity_name(node.name):
+                    nodes[idx] = copy.deepcopy(canonical_self)
+
+        if not pronoun_detected and has_llm_self:
+            nodes[:] = [node for node in nodes if not is_self_entity_name(node.name)]
+            has_llm_self = False
+
+        injected = False
+        if pronoun_detected and not has_llm_self:
+            if canonical_self is not None:
+                nodes.append(copy.deepcopy(canonical_self))
+            else:
+                nodes.append(build_provisional_self_node(self.group_id))
+            has_llm_self = True
+            injected = True
+
+        first_person_detected = pronoun_detected or has_llm_self
+        return first_person_detected, injected
 
     def _resolve_entities(
         self,

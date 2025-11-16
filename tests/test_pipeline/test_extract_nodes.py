@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 import pytest
 
 from pipeline.extract_nodes import ExtractNodes, ExtractNodesOutput
+from pipeline.self_reference import SELF_ENTITY_NAME
 
 
 @pytest.mark.asyncio
@@ -63,3 +64,31 @@ async def test_extract_nodes_resolves_against_existing_entities(
 
     assert result.metadata["resolved_count"] >= 1
     assert existing_uuid in result.uuid_map.values()
+
+
+@pytest.mark.asyncio
+async def test_extract_nodes_injects_self_on_pronoun(isolated_graph) -> None:
+    """First-person journals should always include the deterministic SELF entity."""
+    group_id = "self-inject"
+    extractor = ExtractNodes(group_id=group_id)
+    result = await extractor(
+        content="I visited the memorial garden after work.",
+        reference_time=datetime(2024, 4, 2, 12, 30, tzinfo=timezone.utc),
+    )
+
+    assert result.metadata["first_person_detected"] is True
+    assert any(node.name == SELF_ENTITY_NAME for node in result.nodes)
+
+
+@pytest.mark.asyncio
+async def test_extract_nodes_omits_self_when_not_referenced(isolated_graph) -> None:
+    """Entries without first-person pronouns should not include the author node."""
+    group_id = "self-omit"
+    extractor = ExtractNodes(group_id=group_id)
+    result = await extractor(
+        content="Dana and Lee reviewed the rollout plan together.",
+        reference_time=datetime(2024, 4, 3, 9, 0, tzinfo=timezone.utc),
+    )
+
+    assert result.metadata["first_person_detected"] is False
+    assert all(node.name != SELF_ENTITY_NAME for node in result.nodes)

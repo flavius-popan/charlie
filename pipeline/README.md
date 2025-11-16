@@ -170,6 +170,8 @@ result = await extractor(content="...")
 
 **Important**: Stage 1 extracts entity names and types ONLY. Custom attributes (e.g., Person.relationship_type, Activity.activity_type) are extracted in Stage 3, following graphiti-core's separation of concerns.
 
+**Author anchoring**: When the current journal entry contains first-person pronouns, Stage 1 automatically injects a deterministic SELF entity (UUID `11111111-1111-1111-1111-111111111111`, name `Self`, labels `["Entity", "Person"]`). This ensures the author is always available for edge extraction without hallucinating when entries are third-person only.
+
 **Pattern for Future Stages**: Repeat this two-layer design. Create a pure `dspy.Module` for each LLM operation, inject into orchestrator.
 
 ### Stage 2: Extract Edges
@@ -460,6 +462,8 @@ result = await generator(...)
 3. Persist everything with `pipeline.falkordblite_driver.persist_episode_and_nodes()`, which wraps graphiti-core's `add_nodes_and_edges_bulk()` using the embedded FalkorDB-Lite `GraphDriver` so we stay API-compatible with upstream helpers (embeddings default to empty vectors until a local embedder lands).
 
 Persistence is enabled by default (`persist=True`). Passing `persist=False` keeps the run in-memory and tags `metadata["persistence"] = {"status": "skipped"}` for downstream consumers.
+
+The Falkor Lite driver now bootstraps Graphiti's indices/constraints exactly once per process (and after every reset) via `build_indices_and_constraints()`. It also seeds the deterministic SELF Person node immediately after resets so Stage 1 resolution always has an author anchor to merge against.
 
 ## Optimization
 

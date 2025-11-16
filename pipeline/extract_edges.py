@@ -32,6 +32,7 @@ from graphiti_core.utils.bulk_utils import resolve_edge_pointers
 from graphiti_core.utils.datetime_utils import ensure_utc, utc_now
 from graphiti_core.utils.maintenance.edge_operations import DEFAULT_EDGE_NAME
 from pipeline.entity_edge_models import EdgeMeta
+from pipeline.self_reference import SELF_PROMPT_NOTE, is_self_entity_name
 from pydantic import BaseModel, Field, model_validator
 
 from pipeline.falkordblite_driver import fetch_entity_edges_by_group
@@ -69,7 +70,7 @@ class RelationshipExtractionSignature(dspy.Signature):
 
     episode_content: str = dspy.InputField(desc="journal entry text")
     entities_json: str = dspy.InputField(
-        desc="JSON array describing entities with id, name, and entity_types"
+        desc="JSON array describing entities with id, name, entity_types, and optional is_author flag when the entity represents the journal author"
     )
     reference_time: str = dspy.InputField(desc="ISO 8601 timestamp for date resolution")
     edge_type_context: str = dspy.InputField(
@@ -206,14 +207,18 @@ def _get_node_by_index(nodes: list[EntityNode], index: int) -> EntityNode | None
 
 
 def _format_entities_for_prompt(nodes: list[EntityNode]) -> list[dict[str, Any]]:
-    return [
-        {
+    formatted: list[dict[str, Any]] = []
+    for idx, node in enumerate(nodes):
+        entry = {
             "id": idx,
             "name": node.name,
             "entity_types": node.labels,
         }
-        for idx, node in enumerate(nodes)
-    ]
+        if is_self_entity_name(node.name):
+            entry["is_author"] = True
+            entry["notes"] = SELF_PROMPT_NOTE
+        formatted.append(entry)
+    return formatted
 
 
 def _format_previous_episodes_for_prompt(
