@@ -51,18 +51,17 @@ from graphiti_core.utils.maintenance.edge_operations import filter_existing_dupl
 from graphiti_core.utils.ontology_utils.entity_types_utils import validate_entity_types
 from pydantic import BaseModel, Field, model_validator
 
-from pipeline.falkordblite_driver import (
-    fetch_entities_by_group,
-    fetch_recent_episodes,
-    fetch_self_entity,
-)
+# NOTE: Database imports are intentionally NOT at module level.
+# EntityExtractor is a pure DSPy module with no database dependencies.
+# Database functions are imported locally in ExtractNodes (orchestrator) only.
+# DO NOT move these imports to module level - breaks DSPy contract.
+
 from pipeline.entity_edge_models import entity_types
 from pipeline.self_reference import (
     build_provisional_self_node,
     contains_first_person_reference,
     is_self_entity_name,
 )
-from pipeline.falkordblite_driver import get_driver
 
 
 logger = logging.getLogger(__name__)
@@ -225,6 +224,13 @@ class ExtractNodes:
         Returns:
             ExtractNodesOutput with episode, resolved nodes, and UUID mappings
         """
+        # Import database functions locally to maintain EntityExtractor's purity for DSPy optimization
+        from pipeline.falkordblite_driver import (  # noqa: PLC0415
+            fetch_entities_by_group,
+            fetch_recent_episodes,
+            fetch_self_entity,
+        )
+
         # Validate entity types using graphiti-core validator
         validate_entity_types(entity_types)
         # Create episode (follows graphiti-core convention)
@@ -389,6 +395,9 @@ class ExtractNodes:
         entity_types: dict | None,
     ) -> tuple[list[EntityNode], dict[str, str], list[tuple[EntityNode, EntityNode]]]:
         """Resolve provisional nodes using graphiti-core's deterministic + LLM passes."""
+        # Import database driver locally to maintain EntityExtractor's purity for DSPy optimization
+        from pipeline.falkordblite_driver import get_driver  # noqa: PLC0415
+
         if not self.dedupe_enabled:
             uuid_map = {node.uuid: node.uuid for node in provisional_nodes}
             return provisional_nodes, uuid_map, []
@@ -496,6 +505,9 @@ class ExtractNodes:
 
     async def _collect_candidates_with_embeddings(self, provisional_nodes, group_id):
         """TODO: Hybrid search (embedding + text) when Qwen embedder lands."""
+        # Import database function locally to maintain EntityExtractor's purity for DSPy optimization
+        from pipeline.falkordblite_driver import fetch_entities_by_group  # noqa: PLC0415
+
         return await fetch_entities_by_group(group_id)
 
     async def _disambiguate_with_llm(self, unresolved, candidates, episode):

@@ -37,7 +37,10 @@ from .entity_edge_models import (
     edge_type_map as DEFAULT_EDGE_TYPE_MAP,
     edge_meta as DEFAULT_EDGE_META,
 )
-from .falkordblite_driver import persist_episode_and_nodes
+
+# NOTE: Database imports intentionally NOT at module level to avoid loading
+# falkordblite_driver when importing pure DSPy modules for optimization.
+# DO NOT move persist_episode_and_nodes to module level - breaks DSPy contract.
 
 logger = logging.getLogger(__name__)
 
@@ -191,6 +194,9 @@ async def add_journal(
 
     persistence_result: dict[str, Any]
     if persist:
+        # Import database function locally to avoid loading driver during DSPy optimization
+        from .falkordblite_driver import persist_episode_and_nodes  # noqa: PLC0415
+
         persistence_result = await persist_episode_and_nodes(
             episode=extract_result.episode,
             nodes=summaries_result.nodes,

@@ -46,7 +46,9 @@ MODEL_CONFIG = {
 # GEPA Reflection Model Configuration
 REFLECTION_MODEL = os.getenv("REFLECTION_MODEL", "gpt-5-nano")
 REFLECTION_TEMPERATURE = float(os.getenv("REFLECTION_TEMPERATURE", "1.0"))
-REFLECTION_MAX_TOKENS = int(os.getenv("REFLECTION_MAX_TOKENS", "16000"))  # gpt-5-nano requires >= 16000
+REFLECTION_MAX_TOKENS = int(
+    os.getenv("REFLECTION_MAX_TOKENS", "16000")
+)  # gpt-5-nano requires >= 16000
 
 # GEPA Budget Configuration
 _VALID_BUDGETS = {"light", "medium", "heavy"}

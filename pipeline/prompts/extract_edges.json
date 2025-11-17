@@ -4,7 +4,7 @@
     "train": [],
     "demos": [],
     "signature": {
-      "instructions": "Extract graph edges between indexed entities from the journal entry.",
+      "instructions": "Find relationships between people, places, and things in this journal entry.",
       "fields": [
         {
           "prefix": "Episode Content:",
@@ -32,7 +32,7 @@
         },
         {
           "prefix": "Edges:",
-          "description": "relationships referencing entity IDs"
+          "description": "list of relationships with source_entity_id, target_entity_id, relation_type, and fact for each"
         }
       ]
     },

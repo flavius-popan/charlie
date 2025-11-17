@@ -1,7 +1,7 @@
-"""Optimizer for pipeline/extract_edges.py using DSPy's BootstrapFewShot.
+"""Optimizer for pipeline/extract_edges.py using DSPy's GEPA.
 
-This script tunes the EdgeExtractor prompts so relationship extraction stays
-grounded in people-focused journal entries without slowing the full pipeline.
+Uses LLM-as-judge (gpt-5-nano) to provide rich textual feedback for optimizing
+relationship extraction prompts. Focuses on accurate edge detection and typing.
 
 Usage:
     python -m pipeline.optimizers.extract_edges_optimizer
@@ -10,11 +10,13 @@ Usage:
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 import logging
 import dspy
-from dspy.teleprompt import MIPROv2
+from dspy.teleprompt import GEPA
+from dspy import Prediction
 
 from mlx_runtime import MLXDspyLM
 from pipeline.entity_edge_models import (
@@ -29,7 +31,15 @@ from pipeline.extract_edges import (
     _build_edge_type_context,
 )
 from pipeline.self_reference import SELF_PROMPT_NOTE
-from settings import DEFAULT_MODEL_PATH, MODEL_CONFIG
+from settings import (
+    DEFAULT_MODEL_PATH,
+    MODEL_CONFIG,
+    REFLECTION_MODEL,
+    REFLECTION_TEMPERATURE,
+    REFLECTION_MAX_TOKENS,
+    GEPA_BUDGET,
+    GEPA_REFLECTION_MINIBATCH_SIZE,
+)
 
 
 PROMPT_OUTPUT = Path(__file__).parent.parent / "prompts" / "extract_edges.json"
@@ -552,12 +562,11 @@ def _relationship_set(
     return normalized
 
 
-def relationship_extraction_metric(example, prediction, trace=None) -> float:
+def calculate_relationship_score(
+    expected: set[tuple[str, str, str]],
+    predicted: set[tuple[str, str, str]]
+) -> float:
     """Compute F1 over (source, target, relation) tuples."""
-
-    expected = _relationship_set(example.edges, example.entity_names)
-    predicted_source = getattr(prediction, "edges", prediction)
-    predicted = _relationship_set(predicted_source, example.entity_names)
 
     if not expected:
         return 1.0 if not predicted else 0.0
@@ -574,31 +583,57 @@ def relationship_extraction_metric(example, prediction, trace=None) -> float:
     return 2 * (precision * recall) / (precision + recall)
 
 
-def optimize(trainset: list[dspy.Example]) -> EdgeExtractor:
-    """Run MIPROv2 optimization for EdgeExtractor."""
+def generate_feedback(
+    expected_rels: set[tuple[str, str, str]],
+    predicted_rels: set[tuple[str, str, str]],
+    score: float,
+    judge_lm: dspy.LM
+) -> str:
+    """Use judge LM to generate actionable feedback."""
 
-    logger.info("Starting edge optimization with %d examples", len(trainset))
-    optimizer = MIPROv2(
-        metric=relationship_extraction_metric,
-        auto=None,
-        num_candidates=3,
-        init_temperature=0.5,
-        metric_threshold=0.90,
-    )
+    missing = expected_rels - predicted_rels
+    extra = predicted_rels - expected_rels
+    correct = expected_rels & predicted_rels
 
-    student = EdgeExtractor()
-    optimized = optimizer.compile(
-        student=student,
-        trainset=trainset,
-        num_trials=10,
-        max_bootstrapped_demos=2,
-        max_labeled_demos=3,
-        minibatch_size=2,
-        requires_permission_to_run=False,
-    )
+    feedback_prompt = f"""Evaluate this relationship extraction and provide specific feedback:
 
-    logger.info("Edge optimization completed")
-    return optimized
+Expected relationships: {sorted(expected_rels)}
+Predicted relationships: {sorted(predicted_rels)}
+F1 Score: {score:.2f}
+
+Correct: {sorted(correct)}
+Missing: {sorted(missing)}
+Extra (hallucinated): {sorted(extra)}
+
+Provide feedback on:
+1. Accuracy: Are the relationship types correct?
+2. Completeness: Are all important relationships captured?
+3. Precision: Are there any hallucinated relationships?
+
+Be specific and actionable."""
+
+    logger.info("=" * 80)
+    logger.info("JUDGE EVALUATION REQUEST")
+    logger.info(f"Score: {score:.2f}")
+    logger.info(f"Correct: {len(correct)}, Missing: {len(missing)}, Extra: {len(extra)}")
+
+    feedback = judge_lm(feedback_prompt)[0]
+
+    logger.info("JUDGE FEEDBACK:")
+    logger.info(feedback)
+    logger.info("=" * 80)
+
+    return feedback
+
+
+def relationship_extraction_metric(example, prediction, trace=None) -> float:
+    """Compute F1 over (source, target, relation) tuples."""
+
+    expected = _relationship_set(example.edges, example.entity_names)
+    predicted_source = getattr(prediction, "edges", prediction)
+    predicted = _relationship_set(predicted_source, example.entity_names)
+
+    return calculate_relationship_score(expected, predicted)
 
 
 def evaluate(module: EdgeExtractor, dataset: list[dspy.Example]) -> float:
@@ -620,22 +655,107 @@ def evaluate(module: EdgeExtractor, dataset: list[dspy.Example]) -> float:
 
 
 def main():
-    """Full optimization workflow for edge extraction."""
+    """Full optimization workflow for edge extraction using GEPA."""
 
     logging.basicConfig(level=logging.INFO)
+
+    # Configure task LM
     configure_dspy()
 
+    # Validate OPENAI_API_KEY for judge LM
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise ValueError(
+            "OPENAI_API_KEY environment variable must be set for GEPA reflection model. "
+            f"The reflection model ({REFLECTION_MODEL}) requires OpenAI API access."
+        )
+
+    # Create judge LM
+    judge_lm = dspy.LM(
+        model=REFLECTION_MODEL,
+        api_key=api_key,
+        temperature=REFLECTION_TEMPERATURE,
+        max_tokens=REFLECTION_MAX_TOKENS
+    )
+    logger.info(
+        "Configured judge LM: %s (temp=%.1f, max_tokens=%d)",
+        REFLECTION_MODEL,
+        REFLECTION_TEMPERATURE,
+        REFLECTION_MAX_TOKENS
+    )
+
+    # Build datasets
     trainset, valset = build_trainset()
-    baseline_module = EdgeExtractor()
-    baseline_score = evaluate(baseline_module, valset)
+
+    # Create GEPA-compatible metric with judge_lm bound via closure
+    def gepa_relationship_metric(gold, pred, trace=None, pred_name=None, pred_trace=None) -> Prediction:
+        """GEPA-compatible metric that returns ScoreWithFeedback.
+
+        Note: Only calls expensive judge LM during GEPA reflection phase (pred_name != None).
+        Regular evaluations use simple feedback to save costs and time.
+        """
+
+        expected = _relationship_set(gold.edges, gold.entity_names)
+        predicted_source = getattr(pred, "edges", pred)
+        predicted = _relationship_set(predicted_source, gold.entity_names)
+        score = calculate_relationship_score(expected, predicted)
+
+        # Only call expensive judge LM during GEPA reflection phase (when pred_name provided)
+        if pred_name:
+            logger.info("-" * 80)
+            logger.info(f"EVALUATING PREDICTOR: {pred_name}")
+
+            feedback = generate_feedback(
+                expected_rels=expected,
+                predicted_rels=predicted,
+                score=score,
+                judge_lm=judge_lm
+            )
+
+            logger.info(f"METRIC SCORE: {score:.2f}")
+            logger.info("-" * 80)
+        else:
+            # Simple feedback for regular evaluations (no expensive LLM call)
+            missing = len(expected - predicted)
+            extra = len(predicted - expected)
+            feedback = f"Score: {score:.2f}. Missing {missing}, Extra {extra} relationships."
+
+        return Prediction(score=score, feedback=feedback)
+
+    # Evaluate baseline
+    baseline = EdgeExtractor()
+    baseline_score = evaluate(baseline, valset)
     logger.info("Baseline score (valset): %.3f", baseline_score)
 
-    optimized_module = optimize(trainset)
-    optimized_score = evaluate(optimized_module, valset)
+    # Create log directory for GEPA artifacts
+    log_dir = Path("debug") / "gepa_edges"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    logger.info("GEPA logs will be saved to: %s", log_dir)
+
+    # Instantiate and run GEPA
+    logger.info("Starting GEPA optimization with max_full_evals=3")
+    gepa = GEPA(
+        metric=gepa_relationship_metric,
+        max_full_evals=3,
+        reflection_lm=judge_lm,
+        reflection_minibatch_size=GEPA_REFLECTION_MINIBATCH_SIZE,
+        track_stats=True,
+        log_dir=str(log_dir)
+    )
+
+    optimized = gepa.compile(
+        student=baseline,
+        trainset=trainset,
+        valset=valset
+    )
+
+    # Evaluate optimized
+    optimized_score = evaluate(optimized, valset)
     logger.info("Optimized score (valset): %.3f", optimized_score)
 
+    # Save optimized prompts
     PROMPT_OUTPUT.parent.mkdir(parents=True, exist_ok=True)
-    optimized_module.save(str(PROMPT_OUTPUT))
+    optimized.save(str(PROMPT_OUTPUT))
     logger.info("Saved optimized prompts to %s", PROMPT_OUTPUT)
     logger.info(
         "Improvement: %.3f → %.3f (+%.3f)",

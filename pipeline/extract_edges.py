@@ -34,24 +34,27 @@ from pipeline.entity_edge_models import EdgeMeta
 from pipeline.self_reference import SELF_PROMPT_NOTE, is_self_entity_name
 from pydantic import BaseModel, Field, model_validator
 
-from pipeline.falkordblite_driver import fetch_entity_edges_by_group
+# NOTE: Database imports are intentionally NOT at module level.
+# EdgeExtractor is a pure DSPy module with no database dependencies.
+# Database functions are imported locally in ExtractEdges (orchestrator) only.
+# DO NOT move fetch_entity_edges_by_group to module level - it breaks DSPy contract.
 
 logger = logging.getLogger(__name__)
 
 
 class ExtractedEdge(BaseModel):
-    """Relationship between indexed entities with supporting fact."""
+    """One relationship between two entities. Example: entity 0 SpendsTimeWith entity 1."""
 
-    source_entity_id: int = Field(description="Index of source entity from ENTITIES list")
-    target_entity_id: int = Field(description="Index of target entity from ENTITIES list")
-    relation_type: str = Field(description="Relationship label in SCREAMING_SNAKE_CASE")
-    fact: str = Field(description="Description of the relationship")
-    valid_at: str | None = Field(None, description="When relationship started")
-    invalid_at: str | None = Field(None, description="When relationship ended")
+    source_entity_id: int = Field(description="ID number of first entity (the one doing the action)")
+    target_entity_id: int = Field(description="ID number of second entity (the one receiving the action)")
+    relation_type: str = Field(description="Relationship type like SpendsTimeWith, ParticipatesIn, Supports, Knows, or Visits")
+    fact: str = Field(description="Single sentence describing this specific relationship")
+    valid_at: str | None = Field(None, description="ISO date when this started (optional)")
+    invalid_at: str | None = Field(None, description="ISO date when this ended (optional)")
 
 
 class ExtractedEdges(BaseModel):
-    """Collection of indexed relationships extracted from an episode."""
+    """Output format: must have an 'edges' field containing a list of relationships."""
 
     edges: list[ExtractedEdge]
 
@@ -65,7 +68,7 @@ class ExtractedEdges(BaseModel):
 
 
 class RelationshipExtractionSignature(dspy.Signature):
-    """Extract graph edges between indexed entities from the journal entry."""
+    """Find relationships between people, places, and things in this journal entry."""
 
     episode_content: str = dspy.InputField(desc="journal entry text")
     entities_json: str = dspy.InputField(
@@ -79,7 +82,9 @@ class RelationshipExtractionSignature(dspy.Signature):
         desc="JSON array of previous episode snippets for context"
     )
 
-    edges: ExtractedEdges = dspy.OutputField(desc="relationships referencing entity IDs")
+    edges: ExtractedEdges = dspy.OutputField(
+        desc="list of relationships with source_entity_id, target_entity_id, relation_type, and fact for each"
+    )
 
 
 class EdgeExtractor(dspy.Module):
@@ -519,6 +524,9 @@ class ExtractEdges:
         entity_edges = resolve_edge_pointers(entity_edges, uuid_map)
 
         if self.dedupe_enabled:
+            # Import database function locally to maintain EdgeExtractor's purity for DSPy optimization
+            from pipeline.falkordblite_driver import fetch_entity_edges_by_group  # noqa: PLC0415
+
             existing_edges = await fetch_entity_edges_by_group(self.group_id)
             logger.info("Resolving against %d existing edges", len(existing_edges))
 
