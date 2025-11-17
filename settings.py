@@ -42,3 +42,18 @@ MODEL_CONFIG = {
     "min_p": 0.0,
     "max_tokens": 2048,
 }
+
+# GEPA Reflection Model Configuration
+REFLECTION_MODEL = os.getenv("REFLECTION_MODEL", "gpt-5-nano")
+REFLECTION_TEMPERATURE = float(os.getenv("REFLECTION_TEMPERATURE", "1.0"))
+REFLECTION_MAX_TOKENS = int(os.getenv("REFLECTION_MAX_TOKENS", "16000"))  # gpt-5-nano requires >= 16000
+
+# GEPA Budget Configuration
+_VALID_BUDGETS = {"light", "medium", "heavy"}
+GEPA_BUDGET = os.getenv("GEPA_BUDGET", "light")
+if GEPA_BUDGET not in _VALID_BUDGETS:
+    raise ValueError(
+        f"Invalid GEPA_BUDGET='{GEPA_BUDGET}'. Must be one of {_VALID_BUDGETS}"
+    )
+
+GEPA_REFLECTION_MINIBATCH_SIZE = 3  # Number of examples per reflection iteration
