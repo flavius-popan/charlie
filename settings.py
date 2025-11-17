@@ -56,4 +56,4 @@ REFLECTION_MAX_TOKENS = int(
 GEPA_REFLECTION_MINIBATCH_SIZE = 3  # Number of examples per reflection iteration
 
 # GEPA Optimization Configuration
-GEPA_MAX_FULL_EVALS = 1  # Single iteration to prevent over-complication
+GEPA_MAX_FULL_EVALS = 3  # Standard tutorial value - enough budget for demo selection
