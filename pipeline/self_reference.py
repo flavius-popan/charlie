@@ -20,7 +20,7 @@ SELF_PROMPT_NOTE = (
 _FIRST_PERSON_PATTERN = re.compile(
     r"\b(i|me|my|mine|myself)\b", re.IGNORECASE | re.MULTILINE
 )
-_SELF_ALIASES = {"self", "i", "me", "my", "mine", "myself"}
+_SELF_ALIASES = {"i", "me", "my", "mine", "myself"}
 
 
 def contains_first_person_reference(text: str | None) -> bool:
@@ -50,4 +50,3 @@ def build_provisional_self_node(group_id: str) -> EntityNode:
         summary="",
         created_at=utc_now(),
     )
-

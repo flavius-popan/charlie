@@ -17,7 +17,7 @@ import logging
 import dspy
 from dspy.teleprompt import MIPROv2
 
-from dspy_outlines import OutlinesAdapter, OutlinesLM
+from mlx_runtime import MLXDspyLM
 from pipeline.extract_attributes import AttributeExtractor
 from pipeline.entity_edge_models import Activity, Organization, Person, Place
 from settings import DEFAULT_MODEL_PATH, MODEL_CONFIG
@@ -30,10 +30,10 @@ logger = logging.getLogger(__name__)
 def configure_dspy():
     """Match runtime LM + adapter configuration."""
 
-    lm = OutlinesLM(model_path=DEFAULT_MODEL_PATH, generation_config=MODEL_CONFIG)
-    adapter = OutlinesAdapter()
+    lm = MLXDspyLM(model_path=DEFAULT_MODEL_PATH, generation_config=MODEL_CONFIG)
+    adapter = dspy.ChatAdapter()
     dspy.configure(lm=lm, adapter=adapter)
-    logger.info("Configured DSPy with OutlinesLM (model: %s)", DEFAULT_MODEL_PATH)
+    logger.info("Configured DSPy with MLXDspyLM (model: %s)", DEFAULT_MODEL_PATH)
 
 
 def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:

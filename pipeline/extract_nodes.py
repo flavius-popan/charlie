@@ -68,7 +68,7 @@ from pipeline.falkordblite_driver import get_driver
 logger = logging.getLogger(__name__)
 
 
-# Pydantic models for structured output via Outlines
+# Pydantic models for structured DSPy outputs
 class ExtractedEntity(BaseModel):
     """Entity with name and type classification.
 

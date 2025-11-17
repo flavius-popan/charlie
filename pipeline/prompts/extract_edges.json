@@ -2,81 +2,7 @@
   "extractor.predict": {
     "traces": [],
     "train": [],
-    "demos": [
-      {
-        "episode_content": "Therapist Ines texted Avery after session to make sure she actually tried the body scan homework.",
-        "entities_json": "[{\"id\": 0, \"name\": \"Ines\", \"entity_types\": [\"Entity\", \"Person\"]}, {\"id\": 1, \"name\": \"Avery\", \"entity_types\": [\"Entity\", \"Person\"]}, {\"id\": 2, \"name\": \"body scan homework\", \"entity_types\": [\"Entity\", \"Activity\"]}]",
-        "entity_names": [
-          "Ines",
-          "Avery",
-          "body scan homework"
-        ],
-        "reference_time": "2025-02-10T18:30:00Z",
-        "edge_type_context": "{\"edge_types\": [{\"name\": \"Knows\", \"description\": \"Two people know each other in some ongoing way.\", \"source_types\": [\"Person\"], \"target_types\": [\"Person\"], \"symmetric\": true}, {\"name\": \"SpendsTimeWith\", \"description\": \"Two people regularly spend meaningful time together.\", \"source_types\": [\"Person\"], \"target_types\": [\"Person\"], \"symmetric\": true}, {\"name\": \"Supports\", \"description\": \"One person offers support (emotional or practical) to another.\", \"source_types\": [\"Person\"], \"target_types\": [\"Person\"], \"symmetric\": false}, {\"name\": \"ConflictsWith\", \"description\": \"There is notable conflict, tension, or friction between two people.\", \"source_types\": [\"Person\"], \"target_types\": [\"Person\"], \"symmetric\": true}, {\"name\": \"ParticipatesIn\", \"description\": \"A person participates in or does an activity.\", \"source_types\": [\"Person\"], \"target_types\": [\"Activity\"], \"symmetric\": false}, {\"name\": \"OccursAt\", \"description\": \"An activity typically occurs at or is associated with a place.\", \"source_types\": [\"Activity\"], \"target_types\": [\"Place\"], \"symmetric\": false}, {\"name\": \"Visits\", \"description\": \"A person visits or frequently spends time at a place.\", \"source_types\": [\"Person\"], \"target_types\": [\"Place\"], \"symmetric\": false}, {\"name\": \"RELATES_TO\", \"description\": \"Generic relationship between any two entities.\", \"source_types\": [\"Entity\"], \"target_types\": [\"Entity\"], \"symmetric\": true}], \"edge_type_map\": [{\"source_type\": \"Person\", \"target_type\": \"Person\", \"allowed_relations\": [\"Knows\", \"SpendsTimeWith\", \"Supports\", \"ConflictsWith\"]}, {\"source_type\": \"Person\", \"target_type\": \"Activity\", \"allowed_relations\": [\"ParticipatesIn\"]}, {\"source_type\": \"Activity\", \"target_type\": \"Place\", \"allowed_relations\": [\"OccursAt\"]}, {\"source_type\": \"Person\", \"target_type\": \"Place\", \"allowed_relations\": [\"Visits\"]}, {\"source_type\": \"Entity\", \"target_type\": \"Entity\", \"allowed_relations\": [\"RELATES_TO\"]}]}",
-        "previous_episodes_json": "[]",
-        "edges": {
-          "edges": [
-            {
-              "source_entity_id": 0,
-              "target_entity_id": 1,
-              "relation_type": "Supports",
-              "fact": "Ines checked in to support Avery between sessions.",
-              "valid_at": null,
-              "invalid_at": null
-            },
-            {
-              "source_entity_id": 1,
-              "target_entity_id": 2,
-              "relation_type": "ParticipatesIn",
-              "fact": "Avery committed to the body scan homework.",
-              "valid_at": null,
-              "invalid_at": null
-            }
-          ]
-        }
-      },
-      {
-        "episode_content": "Mara and Tino coaxed me into a shivery sunrise plunge at Ocean Beach. They kept cracking jokes until I breathed again.",
-        "entities_json": "[{\"id\": 0, \"name\": \"Mara\", \"entity_types\": [\"Entity\", \"Person\"]}, {\"id\": 1, \"name\": \"Tino\", \"entity_types\": [\"Entity\", \"Person\"]}, {\"id\": 2, \"name\": \"Ocean Beach\", \"entity_types\": [\"Entity\", \"Place\"]}, {\"id\": 3, \"name\": \"sunrise plunge\", \"entity_types\": [\"Entity\", \"Activity\"]}]",
-        "entity_names": [
-          "Mara",
-          "Tino",
-          "Ocean Beach",
-          "sunrise plunge"
-        ],
-        "reference_time": "2025-02-14T07:05:00Z",
-        "edge_type_context": "{\"edge_types\": [{\"name\": \"Knows\", \"description\": \"Two people know each other in some ongoing way.\", \"source_types\": [\"Person\"], \"target_types\": [\"Person\"], \"symmetric\": true}, {\"name\": \"SpendsTimeWith\", \"description\": \"Two people regularly spend meaningful time together.\", \"source_types\": [\"Person\"], \"target_types\": [\"Person\"], \"symmetric\": true}, {\"name\": \"Supports\", \"description\": \"One person offers support (emotional or practical) to another.\", \"source_types\": [\"Person\"], \"target_types\": [\"Person\"], \"symmetric\": false}, {\"name\": \"ConflictsWith\", \"description\": \"There is notable conflict, tension, or friction between two people.\", \"source_types\": [\"Person\"], \"target_types\": [\"Person\"], \"symmetric\": true}, {\"name\": \"ParticipatesIn\", \"description\": \"A person participates in or does an activity.\", \"source_types\": [\"Person\"], \"target_types\": [\"Activity\"], \"symmetric\": false}, {\"name\": \"OccursAt\", \"description\": \"An activity typically occurs at or is associated with a place.\", \"source_types\": [\"Activity\"], \"target_types\": [\"Place\"], \"symmetric\": false}, {\"name\": \"Visits\", \"description\": \"A person visits or frequently spends time at a place.\", \"source_types\": [\"Person\"], \"target_types\": [\"Place\"], \"symmetric\": false}, {\"name\": \"RELATES_TO\", \"description\": \"Generic relationship between any two entities.\", \"source_types\": [\"Entity\"], \"target_types\": [\"Entity\"], \"symmetric\": true}], \"edge_type_map\": [{\"source_type\": \"Person\", \"target_type\": \"Person\", \"allowed_relations\": [\"Knows\", \"SpendsTimeWith\", \"Supports\", \"ConflictsWith\"]}, {\"source_type\": \"Person\", \"target_type\": \"Activity\", \"allowed_relations\": [\"ParticipatesIn\"]}, {\"source_type\": \"Activity\", \"target_type\": \"Place\", \"allowed_relations\": [\"OccursAt\"]}, {\"source_type\": \"Person\", \"target_type\": \"Place\", \"allowed_relations\": [\"Visits\"]}, {\"source_type\": \"Entity\", \"target_type\": \"Entity\", \"allowed_relations\": [\"RELATES_TO\"]}]}",
-        "previous_episodes_json": "[]",
-        "edges": {
-          "edges": [
-            {
-              "source_entity_id": 0,
-              "target_entity_id": 1,
-              "relation_type": "SpendsTimeWith",
-              "fact": "Mara and Tino share sunrise plunges together.",
-              "valid_at": null,
-              "invalid_at": null
-            },
-            {
-              "source_entity_id": 0,
-              "target_entity_id": 3,
-              "relation_type": "ParticipatesIn",
-              "fact": "Mara joined the sunrise plunge ritual.",
-              "valid_at": null,
-              "invalid_at": null
-            },
-            {
-              "source_entity_id": 3,
-              "target_entity_id": 2,
-              "relation_type": "OccursAt",
-              "fact": "The sunrise plunge happens at Ocean Beach.",
-              "valid_at": null,
-              "invalid_at": null
-            }
-          ]
-        }
-      }
-    ],
+    "demos": [],
     "signature": {
       "instructions": "Extract graph edges between indexed entities from the journal entry.",
       "fields": [
@@ -86,7 +12,7 @@
         },
         {
           "prefix": "Entities Json:",
-          "description": "JSON array describing entities with id, name, and entity_types"
+          "description": "JSON array describing entities with id, name, entity_types, and optional is_author flag when the entity represents the journal author"
         },
         {
           "prefix": "Reference Time:",
@@ -115,7 +41,7 @@
   "metadata": {
     "dependency_versions": {
       "python": "3.13",
-      "dspy": "3.0.3",
+      "dspy": "3.0.4",
       "cloudpickle": "3.1"
     }
   }

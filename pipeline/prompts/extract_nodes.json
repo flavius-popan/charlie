@@ -7,7 +7,7 @@
         "augmented": true,
         "episode_content": "Met Sarah at Blue Bottle Coffee this morning. We talked about our career goals and how we're both feeling stuck. It's nice to have someone who gets it.",
         "entity_types": "[{\"entity_type_id\": 0, \"entity_type_name\": \"Entity\", \"entity_type_description\": \"fallback for significant entities that do not fit custom types\"}, {\"entity_type_id\": 1, \"entity_type_name\": \"Person\", \"entity_type_description\": \"people mentioned in the journal: friends, family, coworkers, crushes, therapists, mentors, neighbors, etc.\"}, {\"entity_type_id\": 2, \"entity_type_name\": \"Place\", \"entity_type_description\": \"specific locations or restorative spaces such as homes, parks, studios, cafes, clinics, or travel stops.\"}, {\"entity_type_id\": 3, \"entity_type_name\": \"Organization\", \"entity_type_description\": \"communities, teams, companies, collectives, or groups the author interacts with.\"}, {\"entity_type_id\": 4, \"entity_type_name\": \"Activity\", \"entity_type_description\": \"events, rituals, or routines (therapy session, sunrise swim, volunteer shift, study group, etc.).\"}]",
-        "reasoning": "The journal entry mentions \"Sarah,\" who is clearly a person the author is interacting with, fitting the \"Person\" entity type. \"Blue Bottle Coffee\" is a specific coffee shop location, which qualifies as a \"Place.\" The interaction described—meeting and talking about career goals—is an informal meeting or conversation, which can be categorized as an \"Activity.\" No organizations or broader concepts are explicitly named. All entities are clearly identifiable and match the provided entity types.",
+        "reasoning": "The journal entry mentions Sarah, a person, and Blue Bottle Coffee, a specific location. The interaction described is a meeting, which qualifies as an activity. The phrase \"we talked about our career goals\" refers to a discussion, which is part of the activity. No organizations are explicitly named, and no broader groups or institutions are referenced. Therefore, the entities are identified as Sarah (Person), Blue Bottle Coffee (Place), and the meeting (Activity).",
         "extracted_entities": {
           "extracted_entities": [
             {
@@ -29,7 +29,7 @@
         "augmented": true,
         "episode_content": "Had my session with Dr. Martinez today. We talked about my relationship patterns and why I keep pushing people away. Heavy stuff but necessary.",
         "entity_types": "[{\"entity_type_id\": 0, \"entity_type_name\": \"Entity\", \"entity_type_description\": \"fallback for significant entities that do not fit custom types\"}, {\"entity_type_id\": 1, \"entity_type_name\": \"Person\", \"entity_type_description\": \"people mentioned in the journal: friends, family, coworkers, crushes, therapists, mentors, neighbors, etc.\"}, {\"entity_type_id\": 2, \"entity_type_name\": \"Place\", \"entity_type_description\": \"specific locations or restorative spaces such as homes, parks, studios, cafes, clinics, or travel stops.\"}, {\"entity_type_id\": 3, \"entity_type_name\": \"Organization\", \"entity_type_description\": \"communities, teams, companies, collectives, or groups the author interacts with.\"}, {\"entity_type_id\": 4, \"entity_type_name\": \"Activity\", \"entity_type_description\": \"events, rituals, or routines (therapy session, sunrise swim, volunteer shift, study group, etc.).\"}]",
-        "reasoning": "The journal entry mentions \"Dr. Martinez,\" who is clearly a person involved in a therapeutic interaction, fitting the \"Person\" entity type. The session described is a therapy session, which is a specific type of activity. Although the location is not explicitly named, the context implies a clinical setting, but no specific place is named. Therefore, only the person and the activity are directly identifiable and significant. \"Relationship patterns\" is a concept, but it is not a named entity. Thus, only the person and the activity are extracted as named entities.",
+        "reasoning": "The journal entry mentions a session with Dr. Martinez, indicating a person involved in therapy. The relationship patterns and emotional themes discussed suggest a therapeutic activity. \"Dr. Martinez\" is clearly a person, and the session is a specific type of activity. The location is not explicitly named, so no place is extracted. No organization is mentioned. Therefore, the entities are: Dr. Martinez (Person), and the therapy session (Activity).",
         "extracted_entities": {
           "extracted_entities": [
             {
@@ -42,10 +42,30 @@
             }
           ]
         }
+      },
+      {
+        "episode_content": "I biked the Embarcadero alone before sunrise to calm my nerves. The cold air finally slowed my racing thoughts.",
+        "entity_types": "[{\"entity_type_id\": 0, \"entity_type_name\": \"Entity\", \"entity_type_description\": \"fallback for significant entities that do not fit custom types\"}, {\"entity_type_id\": 1, \"entity_type_name\": \"Person\", \"entity_type_description\": \"people mentioned in the journal: friends, family, coworkers, crushes, therapists, mentors, neighbors, etc.\"}, {\"entity_type_id\": 2, \"entity_type_name\": \"Place\", \"entity_type_description\": \"specific locations or restorative spaces such as homes, parks, studios, cafes, clinics, or travel stops.\"}, {\"entity_type_id\": 3, \"entity_type_name\": \"Organization\", \"entity_type_description\": \"communities, teams, companies, collectives, or groups the author interacts with.\"}, {\"entity_type_id\": 4, \"entity_type_name\": \"Activity\", \"entity_type_description\": \"events, rituals, or routines (therapy session, sunrise swim, volunteer shift, study group, etc.).\"}]",
+        "extracted_entities": {
+          "extracted_entities": [
+            {
+              "name": "Self",
+              "entity_type_id": 1
+            },
+            {
+              "name": "the Embarcadero",
+              "entity_type_id": 2
+            },
+            {
+              "name": "solo sunrise ride",
+              "entity_type_id": 4
+            }
+          ]
+        }
       }
     ],
     "signature": {
-      "instructions": "Extract significant named entities from a personal journal entry, including people, places, organizations, activities, and concepts. For each entity, provide a clear and step-by-step reasoning that justifies its inclusion based on context and relevance, then return only the named entities with their corresponding entity type IDs (Person, Place, Organization, Activity, or Concept). Use the provided entity types as a guide and avoid including vague or abstract references without clear identification.",
+      "instructions": "Extract significant entities from personal journal entries: people, places, organizations, concepts, and activities.",
       "fields": [
         {
           "prefix": "Episode Content:",
@@ -70,7 +90,7 @@
   "metadata": {
     "dependency_versions": {
       "python": "3.13",
-      "dspy": "3.0.3",
+      "dspy": "3.0.4",
       "cloudpickle": "3.1"
     }
   }

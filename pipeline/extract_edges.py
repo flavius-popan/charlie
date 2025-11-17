@@ -24,7 +24,6 @@ from datetime import datetime
 import logging
 from pathlib import Path
 from typing import Any
-
 import dspy
 from graphiti_core.edges import EntityEdge
 from graphiti_core.nodes import EntityNode, EpisodicNode

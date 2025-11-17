@@ -16,7 +16,7 @@ import json
 import dspy
 from dspy.teleprompt import MIPROv2
 
-from dspy_outlines import OutlinesAdapter, OutlinesLM
+from mlx_runtime import MLXDspyLM
 from pipeline.extract_nodes import EntityExtractor
 from pipeline.extract_nodes import ExtractedEntity, ExtractedEntities
 from settings import DEFAULT_MODEL_PATH, MODEL_CONFIG
@@ -27,14 +27,12 @@ logger = logging.getLogger(__name__)
 
 
 def configure_dspy():
-    """Configure DSPy with OutlinesLM and OutlinesAdapter.
+    """Configure DSPy with the MLX-backed LM used in production."""
 
-    Uses the same configuration as the main pipeline to ensure compatibility.
-    """
-    lm = OutlinesLM(model_path=DEFAULT_MODEL_PATH, generation_config=MODEL_CONFIG)
-    adapter = OutlinesAdapter()
+    lm = MLXDspyLM(model_path=DEFAULT_MODEL_PATH, generation_config=MODEL_CONFIG)
+    adapter = dspy.ChatAdapter()
     dspy.configure(lm=lm, adapter=adapter)
-    logger.info("Configured DSPy with OutlinesLM (model: %s)", DEFAULT_MODEL_PATH)
+    logger.info("Configured DSPy with MLXDspyLM (model: %s)", DEFAULT_MODEL_PATH)
 
 
 def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
@@ -462,7 +460,7 @@ def entity_extraction_metric(example, prediction, trace=None) -> float:
 
 
 def optimize(trainset: list[dspy.Example]) -> EntityExtractor:
-    """Run MIPROv2 optimization with deepcopy-compatible OutlinesLM.
+    """Run MIPROv2 optimization with the MLX-backed LM used in production.
 
     MIPROv2 optimizes both instructions and few-shot examples:
     - init_temperature=1.0: Standard temperature for instruction diversity
@@ -529,7 +527,7 @@ def evaluate(module: EntityExtractor, dataset: list[dspy.Example]) -> float:
 def main():
     """Main optimization workflow with MIPROv2.
 
-    1. Configure DSPy with OutlinesLM (temp=0.0 for inference, temp=1.0 for optimization)
+    1. Configure DSPy with MLXDspyLM (temp=0.0 for inference, temp=1.0 for optimization)
     2. Build training and validation sets (8 train, 2 val)
     3. Evaluate baseline on validation set
     4. Optimize with MIPROv2 (instruction + demo tuning, deepcopy-compatible)

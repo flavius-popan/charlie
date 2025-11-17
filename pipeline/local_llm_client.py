@@ -11,8 +11,7 @@ from mlx_lm.sample_utils import make_sampler
 from graphiti_core.llm_client import LLMClient, LLMConfig
 from graphiti_core.prompts.models import Message as GraphitiMessage
 
-from dspy_outlines.lm import MLX_LOCK
-from dspy_outlines.mlx_loader import load_mlx_model
+from mlx_runtime import MLX_LOCK, load_mlx_model
 
 from settings import DEFAULT_MODEL_PATH, MODEL_CONFIG
 

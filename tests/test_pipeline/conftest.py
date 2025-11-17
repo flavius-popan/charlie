@@ -9,7 +9,7 @@ from typing import Callable, Iterator
 import pytest
 import dspy
 
-from dspy_outlines import OutlinesAdapter, OutlinesLM
+from mlx_runtime import MLXDspyLM
 
 import pipeline.falkordblite_driver as db_utils
 import settings
@@ -18,13 +18,13 @@ import settings
 @pytest.fixture(scope="session", autouse=True)
 def configure_dspy_for_pipeline(request: pytest.FixtureRequest) -> Iterator[None]:
     """
-    Configure DSPy once per test session with the Outlines+MLX backend.
+    Configure DSPy once per test session with the MLX backend.
 
     Uses deterministic sampling so integration assertions stay stable.
     """
     model_path = request.config.getoption("--model")
-    adapter = OutlinesAdapter()
-    lm = OutlinesLM(model_path=model_path, generation_config={"temp": 0.0})
+    adapter = dspy.ChatAdapter()
+    lm = MLXDspyLM(model_path=model_path, generation_config={"temp": 0.0})
     dspy.configure(lm=lm, adapter=adapter)
     yield
 

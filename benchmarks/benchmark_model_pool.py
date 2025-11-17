@@ -25,7 +25,7 @@ from typing import List
 import dspy
 from pydantic import BaseModel, Field
 
-from dspy_outlines import OutlinesLM, OutlinesAdapter
+from mlx_runtime import MLXDspyLM
 
 # Disable tokenizers parallelism warning (we're using multiprocessing, not threading)
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -114,8 +114,8 @@ def worker_process(process_id: int, prompts: List[str], result_queue: mp.Queue):
         start_time = time.time()  # Start timing BEFORE model load
 
         # Each process loads its own model (separate 4GB instance)
-        lm = OutlinesLM()
-        dspy.configure(lm=lm, adapter=OutlinesAdapter())
+        lm = MLXDspyLM()
+        dspy.configure(lm=lm, adapter=dspy.ChatAdapter())
         predictor = dspy.Predict(ClassifySentiment)
 
         results = []
@@ -162,8 +162,8 @@ def benchmark_serial(prompts: List[str]) -> dict:
     """
     start_time = time.time()  # Start timing BEFORE model load
 
-    lm = OutlinesLM()
-    dspy.configure(lm=lm, adapter=OutlinesAdapter())
+    lm = MLXDspyLM()
+    dspy.configure(lm=lm, adapter=dspy.ChatAdapter())
     predictor = dspy.Predict(ClassifySentiment)
 
     results = []
@@ -244,8 +244,8 @@ def benchmark_parallel(num_total_processes: int, prompts_per_process: int) -> di
 
     # Main process loads model and processes its chunk
     main_start = time.time()
-    lm = OutlinesLM()
-    dspy.configure(lm=lm, adapter=OutlinesAdapter())
+    lm = MLXDspyLM()
+    dspy.configure(lm=lm, adapter=dspy.ChatAdapter())
     predictor = dspy.Predict(ClassifySentiment)
 
     for i, prompt in enumerate(main_prompts):

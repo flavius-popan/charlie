@@ -90,8 +90,8 @@ class SummaryGenerationSignature(dspy.Signature):
 
     summary_context: str = dspy.InputField(desc="entity and journal context")
 
-    summary: EntitySummary = dspy.OutputField(
-        desc="concise summary of the entity"
+    summary: str = dspy.OutputField(
+        desc="concise summary of the entity (<=250 chars, first-person optional)"
     )
 
 
@@ -153,7 +153,10 @@ class SummaryGenerator(dspy.Module):
             summary_context=summary_context,
         )
 
-        return result.summary
+        summary_text = result.summary
+        if isinstance(summary_text, dict):
+            summary_text = summary_text.get("summary", "")
+        return EntitySummary(summary=summary_text)
 
 
 class GenerateSummaries:

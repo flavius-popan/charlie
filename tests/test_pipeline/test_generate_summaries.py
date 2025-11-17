@@ -64,9 +64,7 @@ def test_build_summary_context_matches_graphiti_core_shape() -> None:
 
     assert context["node"] is node_payload
     assert context["episode_content"] == "Coffee with Kai at Pier 39."
-    assert context["previous_episodes"] == [
-        "Met Kai last week about art portfolio."
-    ]
+    assert context["previous_episodes"] == ["Met Kai last week about art portfolio."]
 
 
 # ========== Integration Tests: GenerateSummaries Orchestrator ==========
@@ -209,7 +207,9 @@ async def test_generate_summaries_truncates_long_summaries(isolated_graph) -> No
 
 
 @pytest.mark.asyncio
-async def test_generate_summaries_handles_empty_existing_summary(isolated_graph) -> None:
+async def test_generate_summaries_handles_empty_existing_summary(
+    isolated_graph,
+) -> None:
     """Entity with empty summary should generate summary from scratch."""
     group_id = "summary-empty"
 

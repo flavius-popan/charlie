@@ -2,38 +2,9 @@
   "_predictors['Person'].predict": {
     "traces": [],
     "train": [],
-    "demos": [
-      {
-        "augmented": true,
-        "episode_content": "Lena made blueberry pancakes and reminded me we've been friends since college.",
-        "previous_episodes": "[\"Lena texted last week about missing our Sunday breakfast ritual.\"]",
-        "entity_name": "Lena",
-        "entity_type": "Person",
-        "existing_attributes": "{\"relationship_type\": \"acquaintance\"}",
-        "reasoning": "The journal entry states that Lena made blueberry pancakes and reminded the author about their shared history of being friends since college, indicating a strong personal and long-standing connection. The previous episode mentions a Sunday breakfast ritual, reinforcing the continuity of their friendship. Given this context, the relationship type should be updated from \"acquaintance\" to \"friend\" to better reflect the depth of their bond. The overall valence is positive due to the nostalgic and warm tone of the interaction. Closeness is inferred as moderate to high, as the shared history and ritual suggest a meaningful connection, though not explicitly quantified. Therefore, I assign a closeness value of 0.6 and an overall valence of 0.7.",
-        "attributes": {
-          "relationship_type": "friend",
-          "closeness": 0.6,
-          "overall_valence": 0.7
-        }
-      },
-      {
-        "augmented": true,
-        "episode_content": "Coach Ray met me for hill repeats and tweaked my stride.",
-        "previous_episodes": "[\"Ray has been writing my running plans all winter.\"]",
-        "entity_name": "Ray",
-        "entity_type": "Person",
-        "existing_attributes": "{}",
-        "reasoning": "The episode content indicates that Coach Ray met the author for hill repeats and tweaked their stride, suggesting a structured and supportive relationship focused on physical training. The previous episode notes that Ray has been writing running plans all winter, indicating a consistent and ongoing professional relationship. This implies a strong, positive, and active relationship centered around fitness and guidance. The interaction shows a high level of closeness and positive emotional tone, consistent with a coach-athlete dynamic. Based on the context, the relationship type is clearly defined as \"coach\", and the overall valence is positive. Closeness is inferred as high due to repeated interaction and specific training involvement.",
-        "attributes": {
-          "relationship_type": "coach",
-          "closeness": 0.9,
-          "overall_valence": 0.75
-        }
-      }
-    ],
+    "demos": [],
     "signature": {
-      "instructions": "Analyze the journal entry and historical context to extract and update the attributes of a specific entity (Person, Place, Organization, or Activity) with detailed reasoning. Consider the emotional tone, shared history, and dynamic interactions to infer relationship type, closeness (on a scale from 0 to 1), and overall valence (on a scale from 0 to 1). Use the previous episodes to detect patterns and continuity in the relationship. Ensure that only information explicitly supported by the text is included in the final attributes. Structure your response with a clear step-by-step reasoning process that justifies each attribute, and present the final attributes in a consistent, structured format (e.g., relationship_type, closeness, overall_valence). Be precise, context-aware, and avoid assumptions not directly supported by the narrative.",
+      "instructions": "Extract Person attributes from journal entries.",
       "fields": [
         {
           "prefix": "Episode Content:",
@@ -72,7 +43,7 @@
     "train": [],
     "demos": [],
     "signature": {
-      "instructions": "Analyze the current journal entry and all previous journal entries to extract only the explicitly mentioned attributes of the specified place. Begin by carefully reading the text to identify any direct references to the place, such as its name, location, activities, or emotional or contextual associations. Use the full context of the journal entries—including prior interactions—to determine if the place has changed or developed over time. For each attribute, ensure it is directly supported by the text and avoid making assumptions or inferences. Provide a clear, step-by-step reasoning that justifies each attribute extraction, and then output a structured set of attributes that conforms to the Place schema. Only include attributes that are explicitly mentioned in the journal entries, and do not add any information not present in the text.",
+      "instructions": "Extract Place attributes from journal entries.",
       "fields": [
         {
           "prefix": "Episode Content:",
@@ -109,32 +80,7 @@
   "_predictors['Organization'].predict": {
     "traces": [],
     "train": [],
-    "demos": [
-      {
-        "episode_content": "Coach Ray met me for hill repeats and tweaked my stride.",
-        "previous_episodes": "[\"Ray has been writing my running plans all winter.\"]",
-        "entity_name": "Ray",
-        "entity_type": "Person",
-        "existing_attributes": "{}",
-        "attributes": {
-          "relationship_type": "coach",
-          "closeness": 0.4,
-          "overall_valence": 0.2
-        }
-      },
-      {
-        "episode_content": "Lena made blueberry pancakes and reminded me we've been friends since college.",
-        "previous_episodes": "[\"Lena texted last week about missing our Sunday breakfast ritual.\"]",
-        "entity_name": "Lena",
-        "entity_type": "Person",
-        "existing_attributes": "{\"relationship_type\": \"acquaintance\"}",
-        "attributes": {
-          "relationship_type": "friend",
-          "closeness": 0.82,
-          "overall_valence": 0.65
-        }
-      }
-    ],
+    "demos": [],
     "signature": {
       "instructions": "Extract Organization attributes from journal entries.",
       "fields": [
@@ -175,7 +121,7 @@
     "train": [],
     "demos": [],
     "signature": {
-      "instructions": "You are a skilled narrative analyst who specializes in extracting structured, context-aware attributes from personal journal entries. Your task is to carefully examine the current journal entry and all previous entries provided, and extract only the attributes explicitly mentioned about the specified entity. Focus on accuracy, consistency, and grounding in the text. Begin by reasoning step-by-step about what information is present, then extract only the attributes that are directly supported by the journal content. Do not invent, assume, or generalize. Output a clear reasoning process followed by a structured set of attributes that match the schema for the given entity type (e.g., Person, Place, Activity, Organization).",
+      "instructions": "Extract Activity attributes from journal entries.",
       "fields": [
         {
           "prefix": "Episode Content:",
@@ -212,7 +158,7 @@
   "metadata": {
     "dependency_versions": {
       "python": "3.13",
-      "dspy": "3.0.3",
+      "dspy": "3.0.4",
       "cloudpickle": "3.1"
     }
   }

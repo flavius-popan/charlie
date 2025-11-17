@@ -8,10 +8,10 @@ Charlie is an end-user focused journaling aide that transforms journal entries i
 
 **Unique fusion of three technologies:**
 - **MLX**: Local LLM inference (Apple Silicon optimized, no API calls)
-- **Outlines**: Constrained generation for guaranteed valid structured output
 - **DSPy**: Signature-based LLM programming with automated prompt optimization
+- **graphiti-core**: Deterministic graph tooling, schema validation, and FalkorDB drivers
 
-These are integrated via a custom adapter layer (`dspy_outlines/`) that provides a three-tier fallback strategy (Chat → JSON → Constrained) for optimal speed with guaranteed correctness.
+MLX inference lives in `mlx_runtime/` which provides a thin DSPy `BaseLM` wrapper and shared locking so we can rely on native DSPy adapters (Chat/JSON) without extra fallback code.
 
 ## Core Architecture
 
@@ -35,10 +35,10 @@ All processing is synchronous DSPy modules wrapped by async orchestrators for da
 - **Graph schema**: `pipeline/entity_edge_models.py` - Pydantic models for entities/edges
 
 ### Modifying LLM Behavior
-- **Adapter layer**: `dspy_outlines/README.md` - fallback strategy, thread safety, metrics
-- **LLM interface**: `dspy_outlines/lm.py` - OutlinesLM class, generation params
-- **Constraint extraction**: `dspy_outlines/adapter.py` - how Pydantic models become Outlines constraints
-- **Model loading**: `dspy_outlines/mlx_loader.py` - quantized MLX model management
+- **MLX runtime**: `mlx_runtime/dspy_lm.py` - MLXDspyLM class, generation params
+- **Lock + loader**: `mlx_runtime/__init__.py`, `mlx_runtime/loader.py` - shared lock + MLX loader
+- **DSPy adapters**: use stock `dspy.ChatAdapter` / `dspy.JSONAdapter`; no custom fallback layer
+- **Optimizer entrypoints**: `pipeline/optimizers/<stage>_optimizer.py::configure_dspy()` mirrors runtime config
 
 ### DSPy Optimization
 - **Optimizers**: `pipeline/optimizers/<stage_name>_optimizer.py` - MIPROv2 prompt optimization
@@ -66,7 +66,7 @@ All processing is synchronous DSPy modules wrapped by async orchestrators for da
 
 **Code Reuse**: Maximize graphiti-core imports for deterministic algorithms (deduplication, validation, datetime utilities). Only write custom code for LLM operations (DSPy signatures) and database queries (FalkorDB-specific).
 
-**Thread Safety**: MLX is NOT thread-safe. `OutlinesLM` uses `MLX_LOCK` to serialize inference. DSPy modules are stateless and safe for concurrent use.
+**Thread Safety**: MLX is NOT thread-safe. `mlx_runtime.MLXDspyLM` acquires `MLX_LOCK` while calling `mlx_lm.generate`. DSPy modules are stateless and safe for concurrent use.
 
 ## Deprecated / Pending Removal
 
@@ -80,15 +80,15 @@ All processing is synchronous DSPy modules wrapped by async orchestrators for da
 
 **Debug bad extractions**: Check `debug/failed_generation_*.json` → adjust `max_tokens` in settings → verify prompt quality → consider re-optimization.
 
-**Change LLM model**: Edit `dspy_outlines/mlx_loader.py::load_model()` → update `model_id` → model auto-downloads from HuggingFace.
+**Change LLM model**: Edit `settings.DEFAULT_MODEL_PATH` (or call `MLXDspyLM(model_path=...)`). `mlx_runtime/loader.py::load_mlx_model()` handles download/caching.
 
 **Query the graph**: Use `pipeline/falkordblite_driver.py::execute_query()` with Cypher-like syntax.
 
 ## Quick Reference
 
 - **Main entry**: `pipeline/__init__.py::add_journal(content, group_id, ...)`
-- **Pipeline docs**: `pipeline/README.md` (read this for deep understanding)
-- **Adapter docs**: `dspy_outlines/README.md` (read this for LLM layer understanding)
+- **Pipeline docs**: `pipeline/README.md` (deep overview)
+- **MLX runtime tips**: `docs/benchmark_pool.md`
 - **Schema**: `pipeline/entity_edge_models.py`
-- **Settings**: `pipeline/settings.py` (max_tokens, default schemas, etc.)
+- **Settings**: `pipeline/settings.py` (max_tokens, defaults, model path)
 - **DSPy config**: Configured once at import, shared across all stages

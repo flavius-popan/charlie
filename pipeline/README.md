@@ -6,8 +6,7 @@
 
 This pipeline reimplements graphiti-core's ingestion stages using:
 - **DSPy modules** for each pipeline stage
-- **dspy_outlines adapter** for structured output via Outlines constrained generation
-- **MLX** for local LLM inference (no API calls)
+- **MLX runtime (`mlx_runtime/`)** for local LLM inference (no API calls) with deterministic defaults
 - **graphiti-core utilities** for validators, deduplication, and graph operations (maximize code reuse)
 
 ### Design Pattern

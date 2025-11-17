@@ -17,13 +17,13 @@ With 64GB RAM, can run 3-4 models in parallel for ~3-4x throughput improvement.
 
 ```python
 import multiprocessing as mp
-from dspy_outlines import OutlinesLM, OutlinesAdapter
+from mlx_runtime import MLXDspyLM
 import time
 
 def worker_process(prompts, results_queue):
     """Each process loads its own model."""
-    lm = OutlinesLM()  # Separate 4GB model per process
-    dspy.configure(lm=lm, adapter=OutlinesAdapter())
+    lm = MLXDspyLM()  # Separate 4GB model per process
+    dspy.configure(lm=lm, adapter=dspy.ChatAdapter())
     predictor = dspy.Predict(Signature)
 
     start = time.time()

@@ -16,7 +16,7 @@ import logging
 import dspy
 from dspy.teleprompt import MIPROv2
 
-from dspy_outlines import OutlinesAdapter, OutlinesLM
+from mlx_runtime import MLXDspyLM
 from pipeline.entity_edge_models import (
     edge_types as DEFAULT_EDGE_TYPES,
     edge_type_map as DEFAULT_EDGE_TYPE_MAP,
@@ -478,12 +478,12 @@ RAW_EXAMPLES: list[dict[str, Any]] = [
 
 
 def configure_dspy():
-    """Configure DSPy with OutlinesLM and adapter identical to runtime."""
+    """Configure DSPy with MLX LM and stock adapter identical to runtime."""
 
-    lm = OutlinesLM(model_path=DEFAULT_MODEL_PATH, generation_config=MODEL_CONFIG)
-    adapter = OutlinesAdapter()
+    lm = MLXDspyLM(model_path=DEFAULT_MODEL_PATH, generation_config=MODEL_CONFIG)
+    adapter = dspy.ChatAdapter()
     dspy.configure(lm=lm, adapter=adapter)
-    logger.info("Configured DSPy with OutlinesLM (model: %s)", DEFAULT_MODEL_PATH)
+    logger.info("Configured DSPy with MLXDspyLM (model: %s)", DEFAULT_MODEL_PATH)
 
 
 def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
