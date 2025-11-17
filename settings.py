@@ -3,6 +3,9 @@
 from pathlib import Path
 import os
 
+# Disable tokenizers parallelism to avoid fork warnings when running optimizers in parallel
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+
 
 def _env_flag(name: str, default: bool = False) -> bool:
     """Return True if the environment variable is set to a truthy value."""
@@ -44,18 +47,13 @@ MODEL_CONFIG = {
 }
 
 # GEPA Reflection Model Configuration
-REFLECTION_MODEL = os.getenv("REFLECTION_MODEL", "gpt-5-nano")
-REFLECTION_TEMPERATURE = float(os.getenv("REFLECTION_TEMPERATURE", "1.0"))
+REFLECTION_MODEL = os.getenv("REFLECTION_MODEL", "gpt-4o-mini")
+REFLECTION_TEMPERATURE = float(os.getenv("REFLECTION_TEMPERATURE", "0.7"))  # Standard for GEPA tutorials - balances diversity with focus
 REFLECTION_MAX_TOKENS = int(
-    os.getenv("REFLECTION_MAX_TOKENS", "16000")
-)  # gpt-5-nano requires >= 16000
-
-# GEPA Budget Configuration
-_VALID_BUDGETS = {"light", "medium", "heavy"}
-GEPA_BUDGET = os.getenv("GEPA_BUDGET", "light")
-if GEPA_BUDGET not in _VALID_BUDGETS:
-    raise ValueError(
-        f"Invalid GEPA_BUDGET='{GEPA_BUDGET}'. Must be one of {_VALID_BUDGETS}"
-    )
+    os.getenv("REFLECTION_MAX_TOKENS", "2048")
+)  # Standard for GEPA reflection feedback
 
 GEPA_REFLECTION_MINIBATCH_SIZE = 3  # Number of examples per reflection iteration
+
+# GEPA Optimization Configuration
+GEPA_MAX_FULL_EVALS = 1  # Single iteration to prevent over-complication

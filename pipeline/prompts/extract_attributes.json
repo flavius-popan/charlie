@@ -8,23 +8,23 @@
       "fields": [
         {
           "prefix": "Episode Content:",
-          "description": "Current journal entry text"
+          "description": "journal entry text"
         },
         {
           "prefix": "Previous Episodes:",
-          "description": "Previous journal entries as JSON list for additional context"
+          "description": "prior entries as JSON"
         },
         {
           "prefix": "Entity Name:",
-          "description": "Name of the entity to extract attributes for"
+          "description": "entity name"
         },
         {
           "prefix": "Entity Type:",
-          "description": "Type of entity (e.g., Person, Activity, Organization, Place)"
+          "description": "entity type"
         },
         {
           "prefix": "Existing Attributes:",
-          "description": "Current entity attributes as JSON dict (may be empty)"
+          "description": "current attributes as JSON"
         },
         {
           "prefix": "Reasoning: Let's think step by step in order to",
@@ -32,7 +32,7 @@
         },
         {
           "prefix": "Attributes:",
-          "description": "Extracted Person attributes based on schema. Only extract information explicitly present in the journal data."
+          "description": "extracted attributes"
         }
       ]
     },
@@ -47,23 +47,23 @@
       "fields": [
         {
           "prefix": "Episode Content:",
-          "description": "Current journal entry text"
+          "description": "journal entry text"
         },
         {
           "prefix": "Previous Episodes:",
-          "description": "Previous journal entries as JSON list for additional context"
+          "description": "prior entries as JSON"
         },
         {
           "prefix": "Entity Name:",
-          "description": "Name of the entity to extract attributes for"
+          "description": "entity name"
         },
         {
           "prefix": "Entity Type:",
-          "description": "Type of entity (e.g., Person, Activity, Organization, Place)"
+          "description": "entity type"
         },
         {
           "prefix": "Existing Attributes:",
-          "description": "Current entity attributes as JSON dict (may be empty)"
+          "description": "current attributes as JSON"
         },
         {
           "prefix": "Reasoning: Let's think step by step in order to",
@@ -71,7 +71,7 @@
         },
         {
           "prefix": "Attributes:",
-          "description": "Extracted Place attributes based on schema. Only extract information explicitly present in the journal data."
+          "description": "extracted attributes"
         }
       ]
     },
@@ -86,23 +86,23 @@
       "fields": [
         {
           "prefix": "Episode Content:",
-          "description": "Current journal entry text"
+          "description": "journal entry text"
         },
         {
           "prefix": "Previous Episodes:",
-          "description": "Previous journal entries as JSON list for additional context"
+          "description": "prior entries as JSON"
         },
         {
           "prefix": "Entity Name:",
-          "description": "Name of the entity to extract attributes for"
+          "description": "entity name"
         },
         {
           "prefix": "Entity Type:",
-          "description": "Type of entity (e.g., Person, Activity, Organization, Place)"
+          "description": "entity type"
         },
         {
           "prefix": "Existing Attributes:",
-          "description": "Current entity attributes as JSON dict (may be empty)"
+          "description": "current attributes as JSON"
         },
         {
           "prefix": "Reasoning: Let's think step by step in order to",
@@ -110,7 +110,7 @@
         },
         {
           "prefix": "Attributes:",
-          "description": "Extracted Organization attributes based on schema. Only extract information explicitly present in the journal data."
+          "description": "extracted attributes"
         }
       ]
     },
@@ -125,23 +125,23 @@
       "fields": [
         {
           "prefix": "Episode Content:",
-          "description": "Current journal entry text"
+          "description": "journal entry text"
         },
         {
           "prefix": "Previous Episodes:",
-          "description": "Previous journal entries as JSON list for additional context"
+          "description": "prior entries as JSON"
         },
         {
           "prefix": "Entity Name:",
-          "description": "Name of the entity to extract attributes for"
+          "description": "entity name"
         },
         {
           "prefix": "Entity Type:",
-          "description": "Type of entity (e.g., Person, Activity, Organization, Place)"
+          "description": "entity type"
         },
         {
           "prefix": "Existing Attributes:",
-          "description": "Current entity attributes as JSON dict (may be empty)"
+          "description": "current attributes as JSON"
         },
         {
           "prefix": "Reasoning: Let's think step by step in order to",
@@ -149,7 +149,7 @@
         },
         {
           "prefix": "Attributes:",
-          "description": "Extracted Activity attributes based on schema. Only extract information explicitly present in the journal data."
+          "description": "extracted attributes"
         }
       ]
     },

@@ -28,8 +28,8 @@ from settings import (
     REFLECTION_MODEL,
     REFLECTION_TEMPERATURE,
     REFLECTION_MAX_TOKENS,
-    GEPA_BUDGET,
     GEPA_REFLECTION_MINIBATCH_SIZE,
+    GEPA_MAX_FULL_EVALS,
 )
 
 
@@ -83,7 +83,6 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
             attributes={
                 "relationship_type": "friend",
                 "closeness": 0.82,
-                "overall_valence": 0.65,
             },
         ),
         example(
@@ -95,7 +94,6 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
             attributes={
                 "relationship_type": "coach",
                 "closeness": 0.4,
-                "overall_valence": 0.2,
             },
         ),
         example(
@@ -107,7 +105,6 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
             attributes={
                 "relationship_type": "therapist",
                 "closeness": 0.35,
-                "overall_valence": -0.25,
             },
         ),
         example(
@@ -119,7 +116,6 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
             attributes={
                 "relationship_type": "colleague",
                 "closeness": 0.55,
-                "overall_valence": 0.4,
             },
         ),
         example(
@@ -131,7 +127,6 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
             attributes={
                 "relationship_type": "romantic partner",
                 "closeness": 0.9,
-                "overall_valence": 0.85,
             },
         ),
         example(
@@ -143,7 +138,6 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
             attributes={
                 "relationship_type": "neighbor",
                 "closeness": 0.6,
-                "overall_valence": 0.5,
             },
         ),
         example(
@@ -154,12 +148,10 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
             existing={
                 "relationship_type": "author",
                 "closeness": 0.75,
-                "overall_valence": 0.1,
             },
             attributes={
                 "relationship_type": "author",
                 "closeness": 0.8,
-                "overall_valence": 0.35,
             },
         ),
         example(
@@ -218,12 +210,10 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
             existing={
                 "relationship_type": "author",
                 "closeness": 0.65,
-                "overall_valence": -0.1,
             },
             attributes={
                 "relationship_type": "author",
                 "closeness": 0.55,
-                "overall_valence": -0.35,
             },
         ),
         example(
@@ -234,12 +224,10 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
             existing={
                 "relationship_type": "author",
                 "closeness": 0.6,
-                "overall_valence": 0.0,
             },
             attributes={
                 "relationship_type": "author",
                 "closeness": 0.72,
-                "overall_valence": 0.25,
             },
         ),
     ]
@@ -350,7 +338,7 @@ Incorrect: {incorrect}
 
 Provide feedback on:
 1. Relationship typing: Are Person relationship types human and natural (friend, coach, therapist)?
-2. Numeric accuracy: Are closeness/valence scores appropriate for the context?
+2. Numeric accuracy: Are closeness scores appropriate for the context (0-1 scale)?
 3. Completeness: Are key attributes missing?
 4. Self entity handling: For the author's Self entity, is relationship_type="author" correct?
 
@@ -474,10 +462,10 @@ def main():
     logger.info("GEPA logs will be saved to: %s", log_dir)
 
     # Instantiate and run GEPA
-    logger.info("Starting GEPA optimization with max_full_evals=3")
+    logger.info("Starting GEPA optimization with max_full_evals=%d", GEPA_MAX_FULL_EVALS)
     gepa = GEPA(
         metric=gepa_attribute_metric,
-        max_full_evals=3,
+        max_full_evals=GEPA_MAX_FULL_EVALS,
         reflection_lm=judge_lm,
         reflection_minibatch_size=GEPA_REFLECTION_MINIBATCH_SIZE,
         track_stats=True,

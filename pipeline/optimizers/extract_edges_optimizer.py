@@ -37,8 +37,8 @@ from settings import (
     REFLECTION_MODEL,
     REFLECTION_TEMPERATURE,
     REFLECTION_MAX_TOKENS,
-    GEPA_BUDGET,
     GEPA_REFLECTION_MINIBATCH_SIZE,
+    GEPA_MAX_FULL_EVALS,
 )
 
 
@@ -733,10 +733,10 @@ def main():
     logger.info("GEPA logs will be saved to: %s", log_dir)
 
     # Instantiate and run GEPA
-    logger.info("Starting GEPA optimization with max_full_evals=3")
+    logger.info("Starting GEPA optimization with max_full_evals=%d", GEPA_MAX_FULL_EVALS)
     gepa = GEPA(
         metric=gepa_relationship_metric,
-        max_full_evals=3,
+        max_full_evals=GEPA_MAX_FULL_EVALS,
         reflection_lm=judge_lm,
         reflection_minibatch_size=GEPA_REFLECTION_MINIBATCH_SIZE,
         track_stats=True,

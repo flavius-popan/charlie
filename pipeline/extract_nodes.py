@@ -94,18 +94,12 @@ class ExtractedEntities(BaseModel):
 
 # DSPy signature for entity extraction
 class EntityExtractionSignature(dspy.Signature):
-    """Extract significant entities from personal journal entries: people, places, organizations, concepts, and activities."""
+    """Extract entities from journal entry."""
 
-    episode_content: str = dspy.InputField(
-        desc="personal journal entry describing experiences, relationships, locations, and reflections"
-    )
-    entity_types: str = dspy.InputField(
-        desc="available entity types: Person, Place, Organization, Concept, Activity, and Entity (fallback for others)"
-    )
+    episode_content: str = dspy.InputField(desc="journal entry text")
+    entity_types: str = dspy.InputField(desc="available entity types")
 
-    extracted_entities: ExtractedEntities = dspy.OutputField(
-        desc="entities mentioned: individuals, specific venues/locations, institutions/groups, abstract topics/themes, and activities/events"
-    )
+    extracted_entities: ExtractedEntities = dspy.OutputField(desc="extracted entities")
 
 
 @dataclass

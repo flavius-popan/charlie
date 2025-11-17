@@ -68,23 +68,15 @@ class ExtractedEdges(BaseModel):
 
 
 class RelationshipExtractionSignature(dspy.Signature):
-    """Find relationships between people, places, and things in this journal entry."""
+    """Extract relationships between entities from journal entry."""
 
     episode_content: str = dspy.InputField(desc="journal entry text")
-    entities_json: str = dspy.InputField(
-        desc="JSON array describing entities with id, name, entity_types, and optional is_author flag when the entity represents the journal author"
-    )
-    reference_time: str = dspy.InputField(desc="ISO 8601 timestamp for date resolution")
-    edge_type_context: str = dspy.InputField(
-        desc="JSON payload describing curated relation names and allowed type signatures"
-    )
-    previous_episodes_json: str = dspy.InputField(
-        desc="JSON array of previous episode snippets for context"
-    )
+    entities_json: str = dspy.InputField(desc="available entities as JSON")
+    reference_time: str = dspy.InputField(desc="timestamp for context")
+    edge_type_context: str = dspy.InputField(desc="allowed relationship types")
+    previous_episodes_json: str = dspy.InputField(desc="prior episode context")
 
-    edges: ExtractedEdges = dspy.OutputField(
-        desc="list of relationships with source_entity_id, target_entity_id, relation_type, and fact for each"
-    )
+    edges: ExtractedEdges = dspy.OutputField(desc="extracted relationships")
 
 
 class EdgeExtractor(dspy.Module):

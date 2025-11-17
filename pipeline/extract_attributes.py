@@ -66,22 +66,12 @@ def _build_attribute_signature(
     attrs = {
         "__doc__": doc,
         "__annotations__": annotations,
-        "episode_content": dspy.InputField(desc="Current journal entry text"),
-        "previous_episodes": dspy.InputField(
-            desc="Previous journal entries as JSON list for additional context"
-        ),
-        "entity_name": dspy.InputField(
-            desc="Name of the entity to extract attributes for"
-        ),
-        "entity_type": dspy.InputField(
-            desc="Type of entity (e.g., Person, Activity, Organization, Place)"
-        ),
-        "existing_attributes": dspy.InputField(
-            desc="Current entity attributes as JSON dict (may be empty)"
-        ),
-        "attributes": dspy.OutputField(
-            desc=f"Extracted {entity_type or response_model.__name__} attributes based on schema. Only extract information explicitly present in the journal data."
-        ),
+        "episode_content": dspy.InputField(desc="journal entry text"),
+        "previous_episodes": dspy.InputField(desc="prior entries as JSON"),
+        "entity_name": dspy.InputField(desc="entity name"),
+        "entity_type": dspy.InputField(desc="entity type"),
+        "existing_attributes": dspy.InputField(desc="current attributes as JSON"),
+        "attributes": dspy.OutputField(desc="extracted attributes"),
     }
 
     return type(class_name, (dspy.Signature,), attrs)

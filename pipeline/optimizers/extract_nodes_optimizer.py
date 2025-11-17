@@ -26,8 +26,8 @@ from settings import (
     REFLECTION_MODEL,
     REFLECTION_TEMPERATURE,
     REFLECTION_MAX_TOKENS,
-    GEPA_BUDGET,
     GEPA_REFLECTION_MINIBATCH_SIZE,
+    GEPA_MAX_FULL_EVALS,
 )
 
 
@@ -172,7 +172,9 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
                 extracted_entities=[
                     ExtractedEntity(name="Self", entity_type_id=1),
                     ExtractedEntity(name="home", entity_type_id=2),
-                    ExtractedEntity(name="chamomile journaling ritual", entity_type_id=4),
+                    ExtractedEntity(
+                        name="chamomile journaling ritual", entity_type_id=4
+                    ),
                 ]
             ),
         ).with_inputs("episode_content", "entity_types")
@@ -181,11 +183,11 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
     # Example 4: Work stress and deadline
     all_examples.append(
         dspy.Example(
-            episode_content="Insane day at TechCorp. The product launch is next week and everything's on fire. My manager Lisa says I'm doing great but I feel like I'm barely keeping up.",
+            episode_content="Insane day at Automattic. The product launch is next week and everything's on fire. My manager Lisa says I'm doing great but I feel like I'm barely keeping up.",
             entity_types=entity_types_json,
             extracted_entities=ExtractedEntities(
                 extracted_entities=[
-                    ExtractedEntity(name="TechCorp", entity_type_id=3),
+                    ExtractedEntity(name="Automattic", entity_type_id=3),
                     ExtractedEntity(name="Lisa", entity_type_id=1),
                     ExtractedEntity(name="product launch", entity_type_id=4),
                 ]
@@ -487,10 +489,7 @@ def calculate_entity_score(expected: set, predicted: set) -> float:
 
 
 def generate_feedback(
-    expected_entities: set,
-    predicted_entities: set,
-    score: float,
-    judge_lm: dspy.LM
+    expected_entities: set, predicted_entities: set, score: float, judge_lm: dspy.LM
 ) -> str:
     """Use judge LM to generate actionable feedback."""
 
@@ -519,7 +518,9 @@ Be specific and actionable."""
     logger.info("=" * 80)
     logger.info("JUDGE EVALUATION REQUEST")
     logger.info(f"F1 Score: {score:.2f}")
-    logger.info(f"Missing: {len(missing)}, Extra: {len(extra)}, Correct: {len(correct)}")
+    logger.info(
+        f"Missing: {len(missing)}, Extra: {len(extra)}, Correct: {len(correct)}"
+    )
 
     feedback = judge_lm(feedback_prompt)[0]
 
@@ -574,20 +575,22 @@ def main():
         model=REFLECTION_MODEL,
         api_key=api_key,
         temperature=REFLECTION_TEMPERATURE,
-        max_tokens=REFLECTION_MAX_TOKENS
+        max_tokens=REFLECTION_MAX_TOKENS,
     )
     logger.info(
         "Configured judge LM: %s (temp=%.1f, max_tokens=%d)",
         REFLECTION_MODEL,
         REFLECTION_TEMPERATURE,
-        REFLECTION_MAX_TOKENS
+        REFLECTION_MAX_TOKENS,
     )
 
     # Build datasets
     trainset, valset = build_trainset()
 
     # Create GEPA-compatible metric with judge_lm bound via closure
-    def gepa_entity_metric(gold, pred, trace=None, pred_name=None, pred_trace=None) -> Prediction:
+    def gepa_entity_metric(
+        gold, pred, trace=None, pred_name=None, pred_trace=None
+    ) -> Prediction:
         """GEPA-compatible metric that returns ScoreWithFeedback.
 
         Note: Only calls expensive judge LM during GEPA reflection phase (pred_name != None).
@@ -608,7 +611,8 @@ def main():
         # Handle ExtractedEntities object
         if isinstance(pred_entities, ExtractedEntities):
             predicted = {
-                (e.name.lower(), e.entity_type_id) for e in pred_entities.extracted_entities
+                (e.name.lower(), e.entity_type_id)
+                for e in pred_entities.extracted_entities
             }
         # Handle dict format from adapters
         elif isinstance(pred_entities, dict) and "extracted_entities" in pred_entities:
@@ -633,7 +637,9 @@ def main():
             except (KeyError, TypeError, AttributeError):
                 return Prediction(score=0.0, feedback="Failed to parse list format")
         else:
-            return Prediction(score=0.0, feedback=f"Unknown prediction format: {type(pred_entities)}")
+            return Prediction(
+                score=0.0, feedback=f"Unknown prediction format: {type(pred_entities)}"
+            )
 
         score = calculate_entity_score(expected, predicted)
 
@@ -646,7 +652,7 @@ def main():
                 expected_entities=expected,
                 predicted_entities=predicted,
                 score=score,
-                judge_lm=judge_lm
+                judge_lm=judge_lm,
             )
 
             logger.info(f"METRIC SCORE: {score:.2f}")
@@ -670,21 +676,19 @@ def main():
     logger.info("GEPA logs will be saved to: %s", log_dir)
 
     # Instantiate and run GEPA
-    logger.info("Starting GEPA optimization with max_full_evals=3")
+    logger.info(
+        "Starting GEPA optimization with max_full_evals=%d", GEPA_MAX_FULL_EVALS
+    )
     gepa = GEPA(
         metric=gepa_entity_metric,
-        max_full_evals=3,
+        max_full_evals=GEPA_MAX_FULL_EVALS,
         reflection_lm=judge_lm,
         reflection_minibatch_size=GEPA_REFLECTION_MINIBATCH_SIZE,
         track_stats=True,
-        log_dir=str(log_dir)
+        log_dir=str(log_dir),
     )
 
-    optimized = gepa.compile(
-        student=baseline,
-        trainset=trainset,
-        valset=valset
-    )
+    optimized = gepa.compile(student=baseline, trainset=trainset, valset=valset)
 
     # Evaluate optimized
     optimized_score = evaluate(optimized, valset)

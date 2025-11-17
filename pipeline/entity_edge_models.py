@@ -3,8 +3,7 @@
 This ontology is intentionally small and feelings-aware without being heavy:
 
 - Core entity types: Person, Place, Organization, Activity.
-- Person entities and person→person edges carry light emotional context
-  as attributes (valence, closeness, intensity).
+- Person entities carry light emotional context via closeness attribute (0-1 scale).
 - A small set of edges for relationships, time spent together, and activities.
 - A generic RELATES_TO fallback for all other relationships.
 
@@ -44,12 +43,6 @@ class Person(BaseModel):
         le=1.0,
         description="Overall sense of closeness with this person (0–1), if known.",
     )
-    overall_valence: Optional[float] = Field(
-        default=None,
-        ge=-1.0,
-        le=1.0,
-        description="Overall emotional tone associated with this person (-1..1).",
-    )
 
 
 class Place(BaseModel):
@@ -72,11 +65,6 @@ class Organization(BaseModel):
 
 class Activity(BaseModel):
     """An event, outing, or recurring routine."""
-
-    activity_type: Optional[str] = Field(
-        default=None,
-        description="Short label for the activity (meeting, walk, yoga, therapy session, etc.).",
-    )
 
 
 entity_types: Dict[str, type[BaseModel]] = {
@@ -181,19 +169,9 @@ class Knows(BaseModel):
 class SpendsTimeWith(BaseModel):
     """Two people regularly spend meaningful time together."""
 
-    typical_valence: Optional[float] = Field(
-        default=None,
-        ge=-1.0,
-        le=1.0,
-        description="Typical emotional tone when they spend time together (-1..1).",
-    )
     primary_activity: Optional[str] = Field(
         default=None,
         description="Main thing they tend to do together (e.g., climbing, talking, gaming).",
-    )
-    frequency_label: Optional[str] = Field(
-        default=None,
-        description="Rough frequency label like 'daily', 'weekly', 'monthly', etc.",
     )
 
 
@@ -207,12 +185,6 @@ class Supports(BaseModel):
     primary_emotion: Optional[str] = Field(
         default=None,
         description="Dominant emotion you feel about this support (grateful, reassured, etc.).",
-    )
-    valence: Optional[float] = Field(
-        default=None,
-        ge=-1.0,
-        le=1.0,
-        description="Emotional tone of feeling supported by this person (-1..1).",
     )
 
 
@@ -238,12 +210,6 @@ class ParticipatesIn(BaseModel):
         default=None,
         description="Role in the activity, if any (host, guest, student, teammate, etc.).",
     )
-    valence: Optional[float] = Field(
-        default=None,
-        ge=-1.0,
-        le=1.0,
-        description="Emotional tone of doing this activity (-1..1).",
-    )
 
 
 class OccursAt(BaseModel):
@@ -257,17 +223,6 @@ class OccursAt(BaseModel):
 
 class Visits(BaseModel):
     """A person visits or frequently spends time at a place."""
-
-    frequency_label: Optional[str] = Field(
-        default=None,
-        description="Rough frequency label like 'daily', 'weekly', 'occasionally', etc.",
-    )
-    typical_valence: Optional[float] = Field(
-        default=None,
-        ge=-1.0,
-        le=1.0,
-        description="Typical emotional tone of being at this place (-1..1).",
-    )
 
 
 # Only *custom* edge types go here. RELATES_TO is provided by Graphiti itself.

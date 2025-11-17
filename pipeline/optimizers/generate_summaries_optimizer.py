@@ -30,8 +30,8 @@ from settings import (
     REFLECTION_MODEL,
     REFLECTION_TEMPERATURE,
     REFLECTION_MAX_TOKENS,
-    GEPA_BUDGET,
     GEPA_REFLECTION_MINIBATCH_SIZE,
+    GEPA_MAX_FULL_EVALS,
 )
 
 
@@ -118,7 +118,6 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
             attributes={
                 "relationship_type": "friend",
                 "closeness": 0.78,
-                "overall_valence": 0.6,
             },
             summary_text="I biked the Embarcadero at dawn with Kai and let him spill every anxious portfolio thought until he finally exhaled.",
             key_phrases=["sunrise ride", "portfolio jitters"],
@@ -136,7 +135,6 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
             attributes={
                 "relationship_type": "family",
                 "closeness": 0.92,
-                "overall_valence": 0.1,
             },
             summary_text="I sat beside Grandma Rosa at St. Jude's while Dr. Yates explained tomorrow's surgery and tried to keep both our breaths steady.",
             key_phrases=["St. Jude's", "surgery prep"],
@@ -178,7 +176,6 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
             attributes={
                 "relationship_type": "therapist",
                 "closeness": 0.58,
-                "overall_valence": 0.45,
             },
             summary_text="I stretched session time with therapist Ines so we could climb slow breathing ladders and she left me holding a gentle journal prompt.",
             key_phrases=["breathing ladders", "journal prompt"],
@@ -210,7 +207,6 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
             attributes={
                 "relationship_type": "friend",
                 "closeness": 0.8,
-                "overall_valence": 0.7,
             },
             summary_text="I felt completely seen when Priya hosted a cozy potluck, covered the table in rainbow pens, and re-mapped my training plan with me.",
             key_phrases=["potluck", "training plan", "colored pens"],
@@ -238,7 +234,6 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
             attributes={
                 "relationship_type": "author",
                 "closeness": 0.75,
-                "overall_valence": 0.2,
             },
             summary_text="I biked lazy loops at Crissy Field after therapy so the wind could rinse off the leftover dread.",
             key_phrases=["Crissy Field", "therapy decompression"],
@@ -438,12 +433,10 @@ def main():
     logger.info("GEPA logs will be saved to: %s", log_dir)
 
     # Instantiate and run GEPA
-    # Using max_full_evals for direct control (auto="light" was calculating 392 rollouts - too many)
-    # max_full_evals=3 means ~3 complete passes through train+val sets
-    logger.info("Starting GEPA optimization with max_full_evals=3")
+    logger.info("Starting GEPA optimization with max_full_evals=%d", GEPA_MAX_FULL_EVALS)
     gepa = GEPA(
         metric=gepa_summary_metric,
-        max_full_evals=3,
+        max_full_evals=GEPA_MAX_FULL_EVALS,
         reflection_lm=judge_lm,
         reflection_minibatch_size=GEPA_REFLECTION_MINIBATCH_SIZE,
         track_stats=True,

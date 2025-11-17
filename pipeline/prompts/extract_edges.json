@@ -4,7 +4,7 @@
     "train": [],
     "demos": [],
     "signature": {
-      "instructions": "Find relationships between people, places, and things in this journal entry.",
+      "instructions": "Extract relationships between entities from journal entry.",
       "fields": [
         {
           "prefix": "Episode Content:",
@@ -12,19 +12,19 @@
         },
         {
           "prefix": "Entities Json:",
-          "description": "JSON array describing entities with id, name, entity_types, and optional is_author flag when the entity represents the journal author"
+          "description": "available entities as JSON"
         },
         {
           "prefix": "Reference Time:",
-          "description": "ISO 8601 timestamp for date resolution"
+          "description": "timestamp for context"
         },
         {
           "prefix": "Edge Type Context:",
-          "description": "JSON payload describing curated relation names and allowed type signatures"
+          "description": "allowed relationship types"
         },
         {
           "prefix": "Previous Episodes Json:",
-          "description": "JSON array of previous episode snippets for context"
+          "description": "prior episode context"
         },
         {
           "prefix": "Reasoning: Let's think step by step in order to",
@@ -32,7 +32,7 @@
         },
         {
           "prefix": "Edges:",
-          "description": "list of relationships with source_entity_id, target_entity_id, relation_type, and fact for each"
+          "description": "extracted relationships"
         }
       ]
     },

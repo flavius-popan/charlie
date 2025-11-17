@@ -86,13 +86,11 @@ class EntitySummary(BaseModel):
 
 
 class SummaryGenerationSignature(dspy.Signature):
-    """Generate concise entity summaries from journal context."""
+    """Generate entity summary from journal context."""
 
-    summary_context: str = dspy.InputField(desc="entity and journal context")
+    summary_context: str = dspy.InputField(desc="entity and episodes")
 
-    summary: str = dspy.OutputField(
-        desc="concise summary of the entity (<=250 chars, first-person optional)"
-    )
+    summary: str = dspy.OutputField(desc="concise summary")
 
 
 @dataclass
