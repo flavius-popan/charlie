@@ -1,0 +1,48 @@
+{
+  "extractor.predict": {
+    "traces": [],
+    "train": [],
+    "demos": [],
+    "signature": {
+      "instructions": "You are tasked with extracting relationships between entities based on journal entries. Your output should clearly identify the connections between the entities mentioned in the entries, using a specified set of relationship types. \n\n### Input Format:\n1. **episode_content**: A narrative that may include multiple entities, activities, and places.\n2. **entities_json**: A list of entities mentioned in the episode_content, including their types (e.g., Person, Organization, Activity, Place).\n3. **reference_time**: A timestamp that may be relevant for the context of the relationships.\n4. **edge_type_context**: Describes allowable relationship types, providing definitions and constraints for how entities can relate to one another.\n5. **previous_episodes_json**: A list of previously extracted entities and relationships, which can provide context or continuity.\n\n### Task Description:\n- Extract relationships between entities mentioned in the **episode_content** based on the provided **entities_json** and **edge_type_context**.\n- Use the following relationship types when applicable:\n  - **Knows**: Two people know each other in an ongoing way.\n  - **SpendsTimeWith**: Two people regularly spend meaningful time together.\n  - **Supports**: One person offers support (emotional or practical) to another.\n  - **ConflictsWith**: There is notable conflict or tension between two people.\n  - **ParticipatesIn**: A person participates in or does an activity.\n  - **OccursAt**: An activity typically occurs at or is associated with a place.\n  - **Visits**: A person frequently spends time at a place.\n  - **RELATES_TO**: A generic relationship that can exist between any two entities.\n\n### Output Requirements:\n1. **Edges**: Provide a list of extracted relationships (edges) formatted as tuples that include:\n   - `source_entity_id`: ID of the source entity.\n   - `target_entity_id`: ID of the target entity.\n   - `relation_type`: The type of relationship.\n   - A concise fact that supports this relationship, articulated in first-person narrative when referencing the journal author (use \"I\" instead of \"Self\").\n   - Include `valid_at` to specify the time when the relationship is applicable, if relevant.\n\n2. **Reasoning**: Include a brief explanation of how the relationships were determined based on the input journal entry. Address the following points:\n   - Relationship accuracy: Ensure the extracted relationships are precise and supported by the text.\n   - Completeness: Capture all important relationships and avoid omitting relevant ones.\n   - Precision: Avoid hallucinations by ensuring relationships are explicitly supported by the content.\n   - Fact grounding: Use first-person pronouns for any facts related to the author and ensure that they reflect the author's experiences directly.\n   - Fact conciseness: Keep the extracted facts direct and free of unnecessary details.\n\n### Examples for Reference:\nReview the feedback on previous responses to understand common errors, such as:\n- Misclassification of relationships.\n- Omitting important relationships.\n- Failing to use first-person narrative for the author.\n- Including unsupported or hallucinated relationships.\n\nBy adhering to these guidelines, you will improve the accuracy and completeness of the relationship extraction process, ensuring it aligns with the author's perspective and the context of the journal entries.",
+      "fields": [
+        {
+          "prefix": "Episode Content:",
+          "description": "journal entry text"
+        },
+        {
+          "prefix": "Entities Json:",
+          "description": "available entities as JSON"
+        },
+        {
+          "prefix": "Reference Time:",
+          "description": "timestamp for context"
+        },
+        {
+          "prefix": "Edge Type Context:",
+          "description": "allowed relationship types"
+        },
+        {
+          "prefix": "Previous Episodes Json:",
+          "description": "prior episode context"
+        },
+        {
+          "prefix": "Reasoning: Let's think step by step in order to",
+          "description": "${reasoning}"
+        },
+        {
+          "prefix": "Edges:",
+          "description": "extracted relationships"
+        }
+      ]
+    },
+    "lm": null
+  },
+  "metadata": {
+    "dependency_versions": {
+      "python": "3.13",
+      "dspy": "3.0.4",
+      "cloudpickle": "3.1"
+    }
+  }
+}
