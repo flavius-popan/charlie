@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
 from graphiti_core.nodes import EpisodicNode, EpisodeType
@@ -15,6 +15,34 @@ from backend.database import persist_episode
 MAX_CONTENT_LENGTH = 100_000  # 100k characters
 
 
+def ensure_timezone_aware(dt: datetime) -> datetime:
+    """Convert naive datetimes to UTC, preserving aware datetimes as-is.
+
+    For naive datetimes (no tzinfo), we interpret them as UTC. This is
+    import-friendly: markdown files, text files, and simple formats often
+    provide naive timestamps from file creation times.
+
+    Importers that know the local timezone should convert to UTC before
+    calling add_journal_entry():
+        from zoneinfo import ZoneInfo
+        naive_time = datetime(2024, 11, 18, 14, 30, 0)
+        local_tz = ZoneInfo("America/New_York")
+        local_time = naive_time.replace(tzinfo=local_tz)
+        utc_time = local_time.astimezone(timezone.utc)
+        await add_journal_entry(content, reference_time=utc_time)
+
+    Args:
+        dt: datetime to normalize
+
+    Returns:
+        Timezone-aware datetime in UTC
+    """
+    if dt.tzinfo is None:
+        # Naive datetime - assume UTC
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
 def validate_content(content: str) -> None:
     """Validate journal entry content.
 
@@ -22,12 +50,18 @@ def validate_content(content: str) -> None:
         content: Journal entry text to validate
 
     Raises:
-        ValueError: If content is invalid (empty, whitespace-only, or too long)
+        ValueError: If content is invalid (empty, whitespace-only, contains
+                   null bytes, or too long)
     """
     if not content:
         raise ValueError("Journal entry content cannot be empty")
     if not content.strip():
         raise ValueError("Journal entry content cannot be whitespace-only")
+    if '\x00' in content:
+        raise ValueError(
+            "Journal entry content cannot contain null bytes (\\x00). "
+            "These cause database query parsing errors."
+        )
     if len(content) > MAX_CONTENT_LENGTH:
         raise ValueError(
             f"Content too long: {len(content)} chars (max {MAX_CONTENT_LENGTH:,})"
@@ -92,9 +126,12 @@ async def add_journal_entry(
     # Validate content
     validate_content(content)
 
-    # Apply defaults
+    # Apply defaults and normalize timezone
     journal = journal if journal is not None else DEFAULT_JOURNAL
-    reference_time = reference_time or utc_now()
+    if reference_time is not None:
+        reference_time = ensure_timezone_aware(reference_time)
+    else:
+        reference_time = utc_now()
 
     # Validate journal name (catches empty strings, special chars, etc.)
     from backend.database import validate_journal_name

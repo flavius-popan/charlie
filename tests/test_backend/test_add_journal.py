@@ -450,3 +450,87 @@ async def test_concurrent_same_journal_writes(isolated_graph):
     )
     count = result._raw_response[1][0][0][1] if result._raw_response[1] else 0
     assert count == 10, f"Expected 10 entries, found {count}"
+
+
+@pytest.mark.asyncio
+async def test_naive_datetime_converted_to_utc(isolated_graph):
+    """Test that naive datetimes are converted to UTC.
+
+    Import-friendly: file timestamps and simple formats provide naive datetimes.
+    We interpret them as UTC for consistency.
+    """
+    content = "Test entry with naive datetime"
+    naive_dt = datetime(2024, 11, 18, 14, 30, 0)  # No tzinfo
+
+    uuid = await add_journal_entry(content=content, reference_time=naive_dt)
+
+    # Verify it was stored and can be retrieved
+    query = f"""
+    MATCH (e:Episodic {{uuid: {to_cypher_literal(uuid)}}})
+    RETURN e.valid_at
+    """
+    result = isolated_graph.query(query)
+    data_rows = result._raw_response[1] if len(result._raw_response) > 1 else []
+    stored_time = data_rows[0][0][1].decode('utf-8')
+
+    # Should be stored as UTC (with timezone suffix)
+    # Either "2024-11-18T14:30:00+00:00" or "2024-11-18T14:30:00Z"
+    assert "2024-11-18T14:30:00" in stored_time
+    assert ("+00:00" in stored_time or stored_time.endswith("Z")), \
+        f"Expected UTC timezone marker in {stored_time}"
+
+
+@pytest.mark.asyncio
+async def test_timezone_aware_datetime_accepted(isolated_graph):
+    """Test that timezone-aware datetimes are accepted."""
+    content = "Test entry with timezone-aware datetime"
+    aware_dt = datetime(2024, 11, 18, 14, 30, 0, tzinfo=timezone.utc)
+
+    uuid = await add_journal_entry(content=content, reference_time=aware_dt)
+    assert isinstance(uuid, str)
+
+
+@pytest.mark.asyncio
+async def test_content_with_null_bytes_rejected(isolated_graph):
+    """Test that content containing null bytes is rejected."""
+    test_cases = [
+        "Content with null\x00byte",
+        "\x00Start with null",
+        "End with null\x00",
+        "Multiple\x00null\x00bytes",
+    ]
+
+    for content in test_cases:
+        with pytest.raises(ValueError, match="null byte"):
+            await add_journal_entry(content)
+
+
+@pytest.mark.asyncio
+async def test_unicode_edge_cases(isolated_graph):
+    """Test content with complex Unicode edge cases."""
+    test_cases = [
+        ("Zero-width space: Hello\u200bWorld", "Zero-width space: Hello\u200bWorld"),
+        ("Right-to-left: مرحبا بك في تشارلي", "Right-to-left: مرحبا بك في تشارلي"),
+        ("Combined emoji: 👨‍👩‍👧‍👦", "Combined emoji: 👨‍👩‍👧‍👦"),
+        ("Skin tone modifiers: 👋🏽", "Skin tone modifiers: 👋🏽"),
+        ("Regional indicators: 🇺🇸🇬🇧", "Regional indicators: 🇺🇸🇬🇧"),
+        ("Mathematical: ∑∫∂√∞", "Mathematical: ∑∫∂√∞"),
+        ("CJK unified: 你好世界", "CJK unified: 你好世界"),
+        ("Combining diacritics: e̊x̆a̧m̀p̂lȩ", "Combining diacritics: e̊x̆a̧m̀p̂lȩ"),
+    ]
+
+    for content, expected in test_cases:
+        uuid = await add_journal_entry(content)
+
+        # Verify round-trip
+        query = f"""
+        MATCH (e:Episodic {{uuid: {to_cypher_literal(uuid)}}})
+        RETURN e.content
+        """
+        result = isolated_graph.query(query)
+        data_rows = result._raw_response[1] if len(result._raw_response) > 1 else []
+        assert len(data_rows) == 1, f"Expected 1 row for content: {content[:50]}"
+
+        stored_content = data_rows[0][0][1].decode('utf-8')
+        assert stored_content == expected, \
+            f"Unicode mismatch for '{content[:50]}': got '{stored_content}', expected '{expected}'"

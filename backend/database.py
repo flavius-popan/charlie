@@ -11,7 +11,7 @@ import re
 import signal
 import time
 from threading import Lock
-from typing import Any
+from typing import Any, Protocol
 from uuid import UUID
 
 from graphiti_core.driver.driver import GraphDriver, GraphDriverSession, GraphProvider
@@ -83,7 +83,7 @@ SELF_ENTITY_LABELS = ["Entity", "Person"]
 # Database state
 _db_lock = Lock()
 _db = None
-_graphs: dict[str, Any] = {}  # Cache of graph instances per journal
+_graphs: dict[str, FalkorGraph] = {}  # Cache of graph instances per journal
 _graph_locks: dict[str, Lock] = {}  # Per-journal locks for thread safety
 _db_unavailable = False
 _shutdown_requested = False  # Fail-fast flag to reject operations during shutdown
@@ -95,6 +95,37 @@ _self_seed_lock = None
 
 # Threading lock to protect asyncio.Lock creation (must use threading.Lock, not asyncio.Lock)
 _asyncio_lock_creation_lock = Lock()
+
+
+def _ensure_asyncio_lock(lock_var: asyncio.Lock | None) -> asyncio.Lock:
+    """Safely create or reuse an asyncio.Lock with event loop binding check.
+
+    Uses double-checked locking to prevent race conditions when multiple tasks
+    try to create the lock simultaneously. Also handles event loop rebinding
+    if the lock was created on a different event loop.
+
+    Thread safety: Uses threading.Lock to protect asyncio.Lock creation since
+    this function may be called from multiple asyncio tasks concurrently.
+
+    Args:
+        lock_var: Existing asyncio.Lock or None
+
+    Returns:
+        Valid asyncio.Lock bound to current event loop
+    """
+    current_loop = asyncio.get_running_loop()
+
+    # Fast path: lock exists and is bound to current loop
+    if lock_var is not None and getattr(lock_var, '_loop', None) == current_loop:
+        return lock_var
+
+    # Slow path: need to create or rebind lock
+    with _asyncio_lock_creation_lock:
+        # Re-check after acquiring threading lock (double-checked locking)
+        if lock_var is None or getattr(lock_var, '_loop', None) != current_loop:
+            return asyncio.Lock()
+        return lock_var
+
 
 # TCP server configuration
 _tcp_server = {
@@ -133,6 +164,27 @@ def to_cypher_literal(value: Any) -> str:
 
 
 SELF_UUID_LITERAL = to_cypher_literal(str(SELF_ENTITY_UUID))
+
+
+class FalkorGraph(Protocol):
+    """Type protocol for FalkorDB graph instances.
+
+    This protocol defines the interface expected from FalkorDB graph objects
+    returned by select_graph(). Used for type hints without tight coupling
+    to the redislite.falkordb_client implementation.
+    """
+
+    def query(self, cypher: str, params: Any = None) -> Any:
+        """Execute a Cypher query and return results."""
+        ...
+
+    def ro_query(self, cypher: str, params: Any = None) -> Any:
+        """Execute a read-only Cypher query."""
+        ...
+
+    def delete(self) -> None:
+        """Delete this graph from the database."""
+        ...
 
 
 def _tcp_server_active() -> bool:
@@ -214,7 +266,7 @@ def _decode_value(value: Any) -> Any:
     return value
 
 
-def _init_db():
+def _init_db() -> None:
     """Initialize the FalkorDB database connection."""
     global _db, _db_unavailable
 
@@ -244,8 +296,13 @@ def _init_db():
         raise RuntimeError("FalkorDB Lite is unavailable") from exc
 
 
-def _ensure_graph(journal: str):
+def _ensure_graph(journal: str) -> tuple[FalkorGraph, Lock]:
     """Get or create a FalkorDB graph for the specified journal.
+
+    Thread safety: Uses _db_lock to protect graph cache initialization.
+    Multiple threads can safely call this function concurrently. The lock
+    ensures that exactly one graph instance and one lock are created per
+    journal, even under concurrent access.
 
     Args:
         journal: Journal name (used as graph name)
@@ -396,7 +453,7 @@ def _close_db():
 atexit.register(_close_db)
 
 
-def get_falkordb_graph(journal: str = DEFAULT_JOURNAL):
+def get_falkordb_graph(journal: str = DEFAULT_JOURNAL) -> FalkorGraph:
     """Return a FalkorDB graph instance for the specified journal.
 
     Args:
@@ -708,6 +765,10 @@ def _merge_episode_sync(graph, episode: dict[str, Any]) -> None:
 async def ensure_graph_ready(journal: str = DEFAULT_JOURNAL, *, delete_existing: bool = False) -> None:
     """Build Graphiti indices/constraints for a journal's graph.
 
+    Thread safety: Uses asyncio.Lock to ensure indices are built exactly once
+    per journal. Multiple concurrent calls for the same journal will serialize,
+    with the first call building indices and subsequent calls skipping work.
+
     Args:
         journal: Journal name (graph to initialize)
         delete_existing: Whether to delete existing indices first
@@ -721,14 +782,9 @@ async def ensure_graph_ready(journal: str = DEFAULT_JOURNAL, *, delete_existing:
     if _graph_initialized.get(journal, False) and not delete_existing:
         return
 
-    # Thread-safe asyncio.Lock initialization
-    # Use threading.Lock to protect asyncio.Lock creation from race conditions
-    # Check if lock is bound to current event loop (recreate if needed)
-    current_loop = asyncio.get_running_loop()
-    if _graph_init_lock is None or getattr(_graph_init_lock, '_loop', None) != current_loop:
-        with _asyncio_lock_creation_lock:
-            if _graph_init_lock is None or getattr(_graph_init_lock, '_loop', None) != current_loop:
-                _graph_init_lock = asyncio.Lock()
+    # Ensure we have a valid asyncio.Lock for this event loop
+    global _graph_init_lock
+    _graph_init_lock = _ensure_asyncio_lock(_graph_init_lock)
 
     async with _graph_init_lock:
         if _graph_initialized.get(journal, False) and not delete_existing:
@@ -787,22 +843,33 @@ def _merge_self_entity_sync(graph, journal: str, name: str) -> None:
 async def ensure_self_entity(journal: str, name: str = SELF_ENTITY_NAME) -> None:
     """Seed the deterministic SELF entity for this journal if missing.
 
+    Uses double-checked locking pattern for thread safety:
+    1. Fast-path check without lock (racy read - optimization)
+    2. Acquire asyncio.Lock
+    3. Re-check condition inside lock (prevents duplicate work)
+    4. Perform state modification inside lock
+
+    The initial fast-path check is a racy read without synchronization.
+    This is safe because:
+    - False negatives (thinks not seeded when it is): Acquire lock unnecessarily,
+      but re-check inside lock prevents duplicate work
+    - False positives (thinks seeded when it's not): Cannot occur - once an entry
+      is added to the set, it's never removed, and Python set membership tests
+      are atomic for existing members
+
+    Thread safety: The final `_seeded_self_groups.add()` happens inside the
+    asyncio.Lock, ensuring only one task seeds the entity per journal.
+
     Args:
         journal: Journal name
         name: Name for the SELF entity (defaults to SELF_ENTITY_NAME)
     """
-    if journal in _seeded_self_groups:
+    if journal in _seeded_self_groups:  # Racy optimization - see docstring
         return
 
-    # Thread-safe asyncio.Lock initialization
-    # Use threading.Lock to protect asyncio.Lock creation from race conditions
-    # Check if lock is bound to current event loop (recreate if needed)
+    # Ensure we have a valid asyncio.Lock for this event loop
     global _self_seed_lock
-    current_loop = asyncio.get_running_loop()
-    if _self_seed_lock is None or getattr(_self_seed_lock, '_loop', None) != current_loop:
-        with _asyncio_lock_creation_lock:
-            if _self_seed_lock is None or getattr(_self_seed_lock, '_loop', None) != current_loop:
-                _self_seed_lock = asyncio.Lock()
+    _self_seed_lock = _ensure_asyncio_lock(_self_seed_lock)
 
     async with _self_seed_lock:
         if journal in _seeded_self_groups:
@@ -830,8 +897,12 @@ async def ensure_database_ready(journal: str) -> None:
 
 
 async def persist_episode(episode: EpisodicNode, journal: str) -> None:
-    """
-    Persist an episode to FalkorDB.
+    """Persist an episode to FalkorDB.
+
+    Thread safety: Uses per-journal locks to serialize writes to the same journal.
+    Multiple journals can be written to concurrently. The actual database write
+    happens inside asyncio.to_thread() with a threading.Lock to protect the
+    FalkorDB graph instance.
 
     Args:
         episode: The EpisodicNode to persist
