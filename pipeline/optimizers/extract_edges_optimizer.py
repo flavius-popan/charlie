@@ -151,19 +151,19 @@ RAW_EXAMPLES: list[dict[str, Any]] = [
                 "source": "Self",
                 "target": "Priya",
                 "relation": "SpendsTimeWith",
-                "fact": "I spent time with Priya in person at Dolores Park.",
+                "fact": "I met Priya at Dolores Park.",
             },
             {
                 "source": "Self",
                 "target": "breathing check-in",
                 "relation": "ParticipatesIn",
-                "fact": "I practiced the breathing check-in Priya modeled.",
+                "fact": "I practiced the breathing check-in with Priya.",
             },
             {
                 "source": "breathing check-in",
                 "target": "Dolores Park",
                 "relation": "OccursAt",
-                "fact": "We did the breathing check-in right at Dolores Park.",
+                "fact": "The breathing check-in happened at Dolores Park.",
             },
         ],
     },
@@ -188,13 +188,13 @@ RAW_EXAMPLES: list[dict[str, Any]] = [
                 "source": "Self",
                 "target": "solo laps",
                 "relation": "ParticipatesIn",
-                "fact": "I took solo laps to ground after therapy.",
+                "fact": "I walked solo laps after therapy.",
             },
             {
                 "source": "solo laps",
                 "target": "Lake Merritt",
                 "relation": "OccursAt",
-                "fact": "Those laps happened at Lake Merritt.",
+                "fact": "The laps happened at Lake Merritt.",
             },
         ],
     },
@@ -219,19 +219,19 @@ RAW_EXAMPLES: list[dict[str, Any]] = [
                 "source": "Self",
                 "target": "Mom",
                 "relation": "Supports",
-                "fact": "I reached out to Mom for support after the panic spike.",
+                "fact": "I called Mom after my panic spike.",
             },
             {
                 "source": "Dr. Chen",
                 "target": "Self",
                 "relation": "Supports",
-                "fact": "Dr. Chen checked on me about my medication."
+                "fact": "Dr. Chen texted me about my meds."
             },
             {
                 "source": "Self",
                 "target": "panic spike call",
                 "relation": "ParticipatesIn",
-                "fact": "I initiated the panic spike call ritual to ground myself.",
+                "fact": "I called Mom during a panic spike.",
             },
         ],
     },
@@ -241,6 +241,12 @@ RAW_EXAMPLES: list[dict[str, Any]] = [
             "They kept cracking jokes until I breathed again."
         ),
         "entities": [
+            {
+                "name": "Self",
+                "labels": ["Entity", "Person"],
+                "is_author": True,
+                "notes": SELF_PROMPT_NOTE,
+            },
             {"name": "Mara", "labels": ["Entity", "Person"]},
             {"name": "Tino", "labels": ["Entity", "Person"]},
             {"name": "Ocean Beach", "labels": ["Entity", "Place"]},
@@ -250,21 +256,27 @@ RAW_EXAMPLES: list[dict[str, Any]] = [
         "relationships": [
             {
                 "source": "Mara",
-                "target": "Tino",
-                "relation": "SpendsTimeWith",
-                "fact": "Mara and Tino share sunrise plunges together.",
+                "target": "Self",
+                "relation": "Supports",
+                "fact": "Mara coaxed me into the sunrise plunge.",
             },
             {
-                "source": "Mara",
+                "source": "Tino",
+                "target": "Self",
+                "relation": "Supports",
+                "fact": "Tino cracked jokes during the plunge.",
+            },
+            {
+                "source": "Self",
                 "target": "sunrise plunge",
                 "relation": "ParticipatesIn",
-                "fact": "Mara joined the sunrise plunge ritual.",
+                "fact": "I did a sunrise plunge with Mara and Tino.",
             },
             {
                 "source": "sunrise plunge",
                 "target": "Ocean Beach",
                 "relation": "OccursAt",
-                "fact": "The sunrise plunge happens at Ocean Beach.",
+                "fact": "The sunrise plunge happened at Ocean Beach.",
             },
         ],
     },
@@ -283,19 +295,19 @@ RAW_EXAMPLES: list[dict[str, Any]] = [
                 "source": "Ines",
                 "target": "Avery",
                 "relation": "Supports",
-                "fact": "Ines checked in to support Avery between sessions.",
+                "fact": "Ines texted Avery after their session.",
             },
             {
                 "source": "Avery",
                 "target": "body scan homework",
                 "relation": "ParticipatesIn",
-                "fact": "Avery committed to the body scan homework.",
+                "fact": "Avery tried the body scan homework.",
             },
         ],
     },
     {
         "episode_content": (
-            "Dylan and Sonia argued about whether our sunset hike plan felt safe in the fog."
+            "Dylan and Sonia argued about whether their sunset hike plan felt safe in the fog."
         ),
         "entities": [
             {"name": "Dylan", "labels": ["Entity", "Person"]},
@@ -315,13 +327,19 @@ RAW_EXAMPLES: list[dict[str, Any]] = [
                 "source": "Dylan",
                 "target": "sunset hike",
                 "relation": "ParticipatesIn",
-                "fact": "Dylan still wanted to do the sunset hike.",
+                "fact": "Dylan wanted to do the sunset hike.",
+            },
+            {
+                "source": "Sonia",
+                "target": "sunset hike",
+                "relation": "ParticipatesIn",
+                "fact": "Sonia was concerned about the sunset hike in the fog.",
             },
             {
                 "source": "sunset hike",
                 "target": "Redwood Ridge",
                 "relation": "OccursAt",
-                "fact": "The hike happens at Redwood Ridge.",
+                "fact": "The sunset hike happens at Redwood Ridge.",
             },
         ],
     },
@@ -349,17 +367,36 @@ RAW_EXAMPLES: list[dict[str, Any]] = [
             "how he'll plug in."
         ),
         "entities": [
+            {
+                "name": "Self",
+                "labels": ["Entity", "Person"],
+                "is_author": True,
+                "notes": SELF_PROMPT_NOTE,
+            },
             {"name": "Theo", "labels": ["Entity", "Person"]},
             {"name": "Redwood Mutual Aid", "labels": ["Entity", "Organization"]},
+            {"name": "journaling club", "labels": ["Entity", "Activity"]},
         ],
         "reference_time": "2025-02-06T19:00:00Z",
         "relationships": [
             {
+                "source": "Self",
+                "target": "Theo",
+                "relation": "SpendsTimeWith",
+                "fact": "I talked with Theo at journaling club.",
+            },
+            {
+                "source": "Self",
+                "target": "Redwood Mutual Aid",
+                "relation": "RELATES_TO",
+                "fact": "I mentioned Redwood Mutual Aid to Theo.",
+            },
+            {
                 "source": "Theo",
                 "target": "Redwood Mutual Aid",
                 "relation": "RELATES_TO",
-                "fact": "Theo referenced Redwood Mutual Aid without a clear role.",
-            }
+                "fact": "Theo discussed Redwood Mutual Aid.",
+            },
         ],
     },
     {
@@ -368,6 +405,12 @@ RAW_EXAMPLES: list[dict[str, Any]] = [
             "bouldering session together."
         ),
         "entities": [
+            {
+                "name": "Self",
+                "labels": ["Entity", "Person"],
+                "is_author": True,
+                "notes": SELF_PROMPT_NOTE,
+            },
             {"name": "Kai", "labels": ["Entity", "Person"]},
             {"name": "Lou", "labels": ["Entity", "Person"]},
             {"name": "bouldering session", "labels": ["Entity", "Activity"]},
@@ -377,21 +420,33 @@ RAW_EXAMPLES: list[dict[str, Any]] = [
         "relationships": [
             {
                 "source": "Kai",
+                "target": "Self",
+                "relation": "SpendsTimeWith",
+                "fact": "Kai introduced me to Lou at Touchstone.",
+            },
+            {
+                "source": "Kai",
                 "target": "Lou",
                 "relation": "Knows",
-                "fact": "Kai already knew Lou from the gym.",
+                "fact": "Kai knew Lou from climbing.",
+            },
+            {
+                "source": "Self",
+                "target": "bouldering session",
+                "relation": "ParticipatesIn",
+                "fact": "I did a goofy bouldering session with Kai and Lou.",
             },
             {
                 "source": "Lou",
                 "target": "bouldering session",
                 "relation": "ParticipatesIn",
-                "fact": "Lou led the bouldering session.",
+                "fact": "Lou joined the bouldering session.",
             },
             {
                 "source": "bouldering session",
                 "target": "Touchstone Climbing",
                 "relation": "OccursAt",
-                "fact": "The session was at Touchstone Climbing.",
+                "fact": "The bouldering session was at Touchstone Climbing.",
             },
         ],
     },
@@ -619,19 +674,135 @@ def calculate_relationship_score(
     return 2 * (precision * recall) / (precision + recall)
 
 
+def _extract_edge_details(
+    relations: ExtractedEdges | list | dict | None,
+    entity_names: list[str],
+) -> list[dict[str, Any]]:
+    """Extract full edge details including facts for quality analysis."""
+    if relations is None:
+        return []
+
+    if isinstance(relations, ExtractedEdges):
+        rel_list = relations.edges
+    elif isinstance(relations, dict) and "edges" in relations:
+        rel_list = relations["edges"]
+    else:
+        rel_list = relations
+
+    edges = []
+    def _name_from_index(index: int | None) -> str:
+        if index is None:
+            return ""
+        if 0 <= index < len(entity_names):
+            return entity_names[index]
+        return str(index)
+
+    for rel in rel_list or []:
+        try:
+            if isinstance(rel, ExtractedEdge):
+                edge = {
+                    "source": _name_from_index(rel.source_entity_id),
+                    "target": _name_from_index(rel.target_entity_id),
+                    "relation": rel.relation_type,
+                    "fact": rel.fact or "",
+                }
+            else:
+                if "source_entity_id" in rel:
+                    source = _name_from_index(rel["source_entity_id"])
+                else:
+                    source = rel.get("source", "")
+                if "target_entity_id" in rel:
+                    target = _name_from_index(rel["target_entity_id"])
+                else:
+                    target = rel.get("target", "")
+
+                edge = {
+                    "source": source,
+                    "target": target,
+                    "relation": rel.get("relation_type") or rel.get("relation", ""),
+                    "fact": rel.get("fact", ""),
+                }
+            edges.append(edge)
+        except (KeyError, AttributeError):
+            continue
+
+    return edges
+
+
+def _check_fact_quality_issues(edges: list[dict[str, Any]], entity_names: list[str]) -> list[str]:
+    """Automatically detect common fact quality issues."""
+    issues = []
+
+    has_self = "Self" in [e.lower() for e in entity_names]
+
+    for edge in edges:
+        fact = edge.get("fact", "").strip()
+        source = edge.get("source", "")
+        target = edge.get("target", "")
+
+        if not fact:
+            issues.append(f"Empty fact for {source} → {target}")
+            continue
+
+        fact_lower = fact.lower()
+
+        # Check for third-person references when Self is involved
+        if has_self and (source.lower() == "self" or target.lower() == "self"):
+            if "the narrator" in fact_lower:
+                issues.append(
+                    f"Uses 'the narrator' instead of first-person for {source} → {target}: \"{fact}\""
+                )
+            elif " i " not in fact_lower and " my " not in fact_lower and " me " not in fact_lower:
+                if not fact.startswith("I "):
+                    issues.append(
+                        f"Missing first-person perspective for Self relationship {source} → {target}: \"{fact}\""
+                    )
+
+        # Check for overly generic or template-like facts
+        if "indicating a" in fact_lower or "suggesting that" in fact_lower:
+            issues.append(
+                f"Fact sounds analytical rather than grounded: {source} → {target}: \"{fact}\""
+            )
+
+    return issues
+
+
 def generate_feedback(
     expected_rels: set[tuple[str, str, str]],
     predicted_rels: set[tuple[str, str, str]],
+    expected_edges: list[dict[str, Any]],
+    predicted_edges: list[dict[str, Any]],
+    entity_names: list[str],
     score: float,
     judge_lm: dspy.LM
 ) -> str:
-    """Use judge LM to generate actionable feedback."""
+    """Use judge LM to generate actionable feedback including fact quality analysis."""
 
     missing = expected_rels - predicted_rels
     extra = predicted_rels - expected_rels
     correct = expected_rels & predicted_rels
 
-    feedback_prompt = f"""Evaluate this relationship extraction and provide specific feedback:
+    # Detect automatic fact quality issues
+    quality_issues = _check_fact_quality_issues(predicted_edges, entity_names)
+    quality_section = ""
+    if quality_issues:
+        quality_section = "\n\nAutomatic Fact Quality Issues Detected:\n" + "\n".join(f"- {issue}" for issue in quality_issues)
+
+    # Format predicted edges with facts for judge review
+    predicted_facts_str = "\n".join([
+        f"  {edge['source']} → {edge['target']} [{edge['relation']}]: \"{edge['fact']}\""
+        for edge in predicted_edges
+    ])
+
+    # Format expected edges with facts for comparison
+    expected_facts_str = "\n".join([
+        f"  {edge['source']} → {edge['target']} [{edge['relation']}]: \"{edge['fact']}\""
+        for edge in expected_edges
+    ])
+
+    has_self = "Self" in entity_names
+
+    feedback_prompt = f"""Evaluate this relationship extraction from a journal entry and provide specific, actionable feedback.
 
 Expected relationships: {sorted(expected_rels)}
 Predicted relationships: {sorted(predicted_rels)}
@@ -641,17 +812,37 @@ Correct: {sorted(correct)}
 Missing: {sorted(missing)}
 Extra (hallucinated): {sorted(extra)}
 
-Provide feedback on:
-1. Accuracy: Are the relationship types correct?
-2. Completeness: Are all important relationships captured?
-3. Precision: Are there any hallucinated relationships?
+EXPECTED EDGES WITH FACTS:
+{expected_facts_str}
 
-Be specific and actionable."""
+PREDICTED EDGES WITH FACTS:
+{predicted_facts_str}
+{quality_section}
+
+Provide feedback on:
+1. **Relationship Accuracy**: Are the (source, target, relation) tuples correct?
+2. **Completeness**: Are all important relationships from the journal entry captured?
+3. **Precision**: Are there any hallucinated relationships not supported by the text?
+4. **Fact Grounding**: {"Are facts properly written in FIRST PERSON (using 'I', 'my', 'me') when Self is involved? " if has_self else ""}Are facts grounded in the actual journal entry content, or do they sound analytical/detached?
+5. **Fact Conciseness**: Are facts SHORT and DIRECT (ideally one sentence)? Do they avoid emotional interpretation or explaining WHY things happened?
+
+CRITICAL RULES FOR FACTS:
+- When Self is a participant, facts MUST use first-person pronouns ("I spent time...", "I reached out...", "she checked on me...")
+- NEVER use "the narrator" - use "I/me/my" or the actual entity names
+- Facts should be SHORT, DIRECT, and FACTUAL - similar to concise journal summaries
+- State WHAT happened, not WHY or how people felt about it (unless the feeling is the core fact)
+- Avoid verbose explanations: "I reached out to Mom" NOT "I reached out to Mom for support after the panic spike"
+- Avoid analytical phrases: "indicating a", "suggesting that", "implying", etc.
+- Avoid overfitting: not every person entity relates to Self
+
+Be specific and actionable in your feedback."""
 
     logger.info("=" * 80)
     logger.info("JUDGE EVALUATION REQUEST")
     logger.info(f"Score: {score:.2f}")
     logger.info(f"Correct: {len(correct)}, Missing: {len(missing)}, Extra: {len(extra)}")
+    if quality_issues:
+        logger.info(f"Quality issues found: {len(quality_issues)}")
 
     feedback = judge_lm(feedback_prompt)[0]
 
@@ -741,9 +932,16 @@ def main():
             logger.info("-" * 80)
             logger.info(f"EVALUATING PREDICTOR: {pred_name}")
 
+            # Extract full edge details including facts for quality analysis
+            expected_edges = _extract_edge_details(gold.edges, gold.entity_names)
+            predicted_edges = _extract_edge_details(predicted_source, gold.entity_names)
+
             feedback = generate_feedback(
                 expected_rels=expected,
                 predicted_rels=predicted,
+                expected_edges=expected_edges,
+                predicted_edges=predicted_edges,
+                entity_names=gold.entity_names,
                 score=score,
                 judge_lm=judge_lm
             )
