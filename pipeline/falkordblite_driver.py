@@ -997,11 +997,38 @@ class FalkorLiteDriver(GraphDriver):
         return None
 
     async def build_indices_and_constraints(self, delete_existing: bool = False):
-        from graphiti_core.graph_queries import get_range_indices, get_fulltext_indices
+        from graphiti_core.graph_queries import get_range_indices
 
         if delete_existing:
             await self.delete_all_indexes()
-        index_queries = get_range_indices(self.provider) + get_fulltext_indices(self.provider)
+
+        # Get range indices from graphiti-core
+        index_queries = get_range_indices(self.provider)
+
+        # Add fulltext indices - FalkorDB Lite supports them natively
+        # Using standard English stopwords (same as graphiti-core's falkordb_driver)
+        stopwords = ['a', 'is', 'the', 'an', 'and', 'are', 'as', 'at', 'be', 'but',
+                     'by', 'for', 'if', 'in', 'into', 'it', 'no', 'not', 'of', 'on',
+                     'or', 'such', 'that', 'their', 'then', 'there', 'these', 'they',
+                     'this', 'to', 'was', 'will', 'with']
+
+        fulltext_queries = [
+            f"""CALL db.idx.fulltext.createNodeIndex(
+                {{label: 'Episodic', stopwords: {stopwords}}},
+                'content', 'source', 'source_description', 'group_id'
+            )""",
+            f"""CALL db.idx.fulltext.createNodeIndex(
+                {{label: 'Entity', stopwords: {stopwords}}},
+                'name', 'summary', 'group_id'
+            )""",
+            f"""CALL db.idx.fulltext.createNodeIndex(
+                {{label: 'Community', stopwords: {stopwords}}},
+                'name', 'summary'
+            )""",
+        ]
+
+        index_queries.extend(fulltext_queries)
+
         for query in index_queries:
             await self.execute_query(query)
 

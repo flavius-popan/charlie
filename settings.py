@@ -36,8 +36,8 @@ DEFAULT_MODEL_PATH = "mlx-community/Qwen3-4B-Instruct-2507-4bit-DWQ-2510"
 # PyInstaller: Set LLAMA_GPU_LAYERS=0 for CPU-only builds (macOS/Linux/Windows)
 LLAMA_CPP_GPU_LAYERS = int(os.getenv("LLAMA_GPU_LAYERS", "-1"))  # -1=auto GPU
 
-# PyInstaller: Reduce LLAMA_CTX_SIZE for lower-memory builds if needed
-LLAMA_CPP_N_CTX = int(os.getenv("LLAMA_CTX_SIZE", "8192"))
+# PyInstaller: Adjust LLAMA_CTX_SIZE for memory/speed trade-offs
+LLAMA_CPP_N_CTX = int(os.getenv("LLAMA_CTX_SIZE", "4096"))
 
 # Database
 DB_PATH = Path("data/graphiti-poc.db")
@@ -65,7 +65,9 @@ MODEL_CONFIG = {
 
 # GEPA Reflection Model Configuration
 REFLECTION_MODEL = os.getenv("REFLECTION_MODEL", "gpt-4o-mini")
-REFLECTION_TEMPERATURE = float(os.getenv("REFLECTION_TEMPERATURE", "0.7"))  # Standard for GEPA tutorials - balances diversity with focus
+REFLECTION_TEMPERATURE = float(
+    os.getenv("REFLECTION_TEMPERATURE", "0.7")
+)  # Standard for GEPA tutorials - balances diversity with focus
 REFLECTION_MAX_TOKENS = int(
     os.getenv("REFLECTION_MAX_TOKENS", "2048")
 )  # Standard for GEPA reflection feedback
