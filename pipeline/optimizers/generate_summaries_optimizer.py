@@ -38,7 +38,7 @@ import dspy  # noqa: E402
 from dspy.teleprompt import GEPA  # noqa: E402
 from dspy import Prediction  # noqa: E402
 
-from mlx_runtime import MLXDspyLM
+from inference_runtime import DspyLM
 from pipeline.generate_summaries import (
     EntitySummary,
     SummaryGenerator,
@@ -54,10 +54,10 @@ logger = logging.getLogger(__name__)
 def configure_dspy():
     """Match runtime LM + adapter configuration."""
 
-    lm = MLXDspyLM(model_path=DEFAULT_MODEL_PATH, generation_config=MODEL_CONFIG)
+    lm = DspyLM(model_path=DEFAULT_MODEL_PATH, generation_config=MODEL_CONFIG)
     adapter = dspy.ChatAdapter()
     dspy.configure(lm=lm, adapter=adapter)
-    logger.info("Configured DSPy with MLXDspyLM (model: %s)", DEFAULT_MODEL_PATH)
+    logger.info("Configured DSPy with DspyLM (model: %s)", DEFAULT_MODEL_PATH)
 
 
 def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:

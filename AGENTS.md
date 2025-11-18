@@ -7,11 +7,11 @@ Charlie is an end-user focused journaling aide that transforms journal entries i
 ## Tech Stack
 
 **Unique fusion of three technologies:**
-- **MLX**: Local LLM inference (Apple Silicon optimized, no API calls)
+- **llama.cpp**: Local LLM inference (cross-platform, GPU-accelerated, no API calls)
 - **DSPy**: Signature-based LLM programming with automated prompt optimization
 - **graphiti-core**: Deterministic graph tooling, schema validation, and FalkorDB drivers
 
-MLX inference lives in `mlx_runtime/` which provides a thin DSPy `BaseLM` wrapper and shared locking so we can rely on native DSPy adapters (Chat/JSON) without extra fallback code.
+llama.cpp inference lives in `inference_runtime/` which provides a thin DSPy `BaseLM` wrapper so we can rely on native DSPy adapters (Chat/JSON) without extra fallback code.
 
 ## Core Architecture
 
@@ -35,8 +35,8 @@ All processing is synchronous DSPy modules wrapped by async orchestrators for da
 - **Graph schema**: `pipeline/entity_edge_models.py` - Pydantic models for entities/edges
 
 ### Modifying LLM Behavior
-- **MLX runtime**: `mlx_runtime/dspy_lm.py` - MLXDspyLM class, generation params
-- **Lock + loader**: `mlx_runtime/__init__.py`, `mlx_runtime/loader.py` - shared lock + MLX loader
+- **Inference runtime**: `inference_runtime/dspy_lm.py` - DspyLM class, generation params
+- **Model loader**: `inference_runtime/__init__.py`, `inference_runtime/loader.py` - llama.cpp loader
 - **DSPy adapters**: use stock `dspy.ChatAdapter` / `dspy.JSONAdapter`; no custom fallback layer
 - **Optimizer entrypoints**: `pipeline/optimizers/<stage>_optimizer.py::configure_dspy()` mirrors runtime config
 
@@ -66,7 +66,7 @@ All processing is synchronous DSPy modules wrapped by async orchestrators for da
 
 **Code Reuse**: Maximize graphiti-core imports for deterministic algorithms (deduplication, validation, datetime utilities). Only write custom code for LLM operations (DSPy signatures) and database queries (FalkorDB-specific).
 
-**Thread Safety**: MLX is NOT thread-safe. `mlx_runtime.MLXDspyLM` acquires `MLX_LOCK` while calling `mlx_lm.generate`. DSPy modules are stateless and safe for concurrent use.
+**Thread Safety**: llama.cpp is thread-safe. `inference_runtime.DspyLM` uses `create_chat_completion` without locking. DSPy modules are stateless and safe for concurrent use.
 
 ## Deprecated / Pending Removal
 
@@ -80,7 +80,7 @@ All processing is synchronous DSPy modules wrapped by async orchestrators for da
 
 **Debug bad extractions**: Check `debug/failed_generation_*.json` → adjust `max_tokens` in settings → verify prompt quality → consider re-optimization.
 
-**Change LLM model**: Edit `settings.DEFAULT_MODEL_PATH` (or call `MLXDspyLM(model_path=...)`). `mlx_runtime/loader.py::load_mlx_model()` handles download/caching.
+**Change LLM model**: Edit `settings.py` llama.cpp config (or call `DspyLM(model_path=...)`). `inference_runtime/loader.py::load_model()` handles HF auto-download/caching.
 
 **Query the graph**: Use `pipeline/falkordblite_driver.py::execute_query()` with Cypher-like syntax.
 
@@ -88,7 +88,7 @@ All processing is synchronous DSPy modules wrapped by async orchestrators for da
 
 - **Main entry**: `pipeline/__init__.py::add_journal(content, group_id, ...)`
 - **Pipeline docs**: `pipeline/README.md` (deep overview)
-- **MLX runtime tips**: `docs/benchmark_pool.md`
+- **Inference runtime tips**: `docs/benchmark_pool.md`
 - **Schema**: `pipeline/entity_edge_models.py`
 - **Settings**: `pipeline/settings.py` (max_tokens, defaults, model path)
 - **DSPy config**: Configured once at import, shared across all stages

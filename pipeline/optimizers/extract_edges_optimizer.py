@@ -38,7 +38,7 @@ from settings import (  # noqa: E402
     GEPA_OUTPUT_DIR,
 )
 
-from mlx_runtime import MLXDspyLM
+from inference_runtime import DspyLM
 from pipeline.entity_edge_models import (
     edge_types as DEFAULT_EDGE_TYPES,
     edge_type_map as DEFAULT_EDGE_TYPE_MAP,
@@ -556,10 +556,10 @@ RAW_EXAMPLES: list[dict[str, Any]] = [
 def configure_dspy():
     """Configure DSPy with MLX LM and stock adapter identical to runtime."""
 
-    lm = MLXDspyLM(model_path=DEFAULT_MODEL_PATH, generation_config=MODEL_CONFIG)
+    lm = DspyLM(model_path=DEFAULT_MODEL_PATH, generation_config=MODEL_CONFIG)
     adapter = dspy.ChatAdapter()
     dspy.configure(lm=lm, adapter=adapter)
-    logger.info("Configured DSPy with MLXDspyLM (model: %s)", DEFAULT_MODEL_PATH)
+    logger.info("Configured DSPy with DspyLM (model: %s)", DEFAULT_MODEL_PATH)
 
 
 def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:

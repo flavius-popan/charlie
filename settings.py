@@ -33,6 +33,12 @@ GEPA_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 # Model
 DEFAULT_MODEL_PATH = "mlx-community/Qwen3-4B-Instruct-2507-4bit-DWQ-2510"
 
+# PyInstaller: Set LLAMA_GPU_LAYERS=0 for CPU-only builds (macOS/Linux/Windows)
+LLAMA_CPP_GPU_LAYERS = int(os.getenv("LLAMA_GPU_LAYERS", "-1"))  # -1=auto GPU
+
+# PyInstaller: Reduce LLAMA_CTX_SIZE for lower-memory builds if needed
+LLAMA_CPP_N_CTX = int(os.getenv("LLAMA_CTX_SIZE", "8192"))
+
 # Database
 DB_PATH = Path("data/graphiti-poc.db")
 GRAPH_NAME = "phase1_poc"
@@ -46,12 +52,14 @@ FALKORLITE_TCP_ENABLED_BY_DEFAULT = _env_flag("FALKORLITE_TCP_ENABLED", False)
 GROUP_ID = "phase1-poc"
 EPISODE_CONTEXT_WINDOW = 3  # Mirrors Graphiti's default (EPISODE_WINDOW_LEN)
 
-# Model generation parameters
-# Supported: temp, top_p, min_p, min_tokens_to_keep, top_k, max_tokens
+# Model generation parameters (Qwen3 recommended: temp=0.7, top_p=0.8, top_k=20, min_p=0)
+# Supported: temp, top_p, top_k, min_p, presence_penalty, max_tokens
 MODEL_CONFIG = {
-    "temp": 0.0,
-    "top_p": 1.0,
+    "temp": 0.7,
+    "top_p": 0.8,
+    "top_k": 20,
     "min_p": 0.0,
+    "presence_penalty": 0.0,
     "max_tokens": 2048,
 }
 

@@ -10,7 +10,7 @@ import pytest
 from pipeline import _dspy_setup  # noqa: F401
 import dspy
 
-from mlx_runtime import MLXDspyLM
+from inference_runtime import DspyLM
 
 import pipeline.falkordblite_driver as db_utils
 import settings
@@ -25,7 +25,7 @@ def configure_dspy_for_pipeline(request: pytest.FixtureRequest) -> Iterator[None
     """
     model_path = request.config.getoption("--model")
     adapter = dspy.ChatAdapter()
-    lm = MLXDspyLM(model_path=model_path, generation_config={"temp": 0.0})
+    lm = DspyLM(model_path=model_path, generation_config={"temp": 0.0})
     dspy.configure(lm=lm, adapter=adapter)
     yield
 

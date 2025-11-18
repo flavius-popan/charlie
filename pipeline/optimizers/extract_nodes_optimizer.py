@@ -39,7 +39,7 @@ import dspy  # noqa: E402
 from dspy.teleprompt import GEPA  # noqa: E402
 from dspy import Prediction  # noqa: E402
 
-from mlx_runtime import MLXDspyLM
+from inference_runtime import DspyLM
 from pipeline.extract_nodes import EntityExtractor
 from pipeline.extract_nodes import ExtractedEntity, ExtractedEntities
 
@@ -57,10 +57,10 @@ REQUIRED_ENTITY_TYPES = set(ENTITY_TYPE_ID_TO_LABEL.values())
 def configure_dspy():
     """Configure DSPy with the MLX-backed LM used in production."""
 
-    lm = MLXDspyLM(model_path=DEFAULT_MODEL_PATH, generation_config=MODEL_CONFIG)
+    lm = DspyLM(model_path=DEFAULT_MODEL_PATH, generation_config=MODEL_CONFIG)
     adapter = dspy.ChatAdapter()
     dspy.configure(lm=lm, adapter=adapter)
-    logger.info("Configured DSPy with MLXDspyLM (model: %s)", DEFAULT_MODEL_PATH)
+    logger.info("Configured DSPy with DspyLM (model: %s)", DEFAULT_MODEL_PATH)
 
 
 def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:

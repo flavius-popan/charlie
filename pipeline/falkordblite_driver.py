@@ -20,9 +20,6 @@ from graphiti_core.helpers import get_default_group_id
 from graphiti_core.nodes import EntityNode, EpisodicNode, EpisodeType
 from graphiti_core.utils.bulk_utils import add_nodes_and_edges_bulk
 from graphiti_core.utils.datetime_utils import convert_datetimes_to_strings, utc_now
-from graphiti_core.utils.maintenance.graph_data_operations import (
-    build_indices_and_constraints,
-)
 
 from settings import (
     DB_PATH,
@@ -177,8 +174,7 @@ async def ensure_graph_ready(*, delete_existing: bool = False) -> None:
             return
         driver = _get_driver()
         try:
-            await build_indices_and_constraints(
-                driver,
+            await driver.build_indices_and_constraints(
                 delete_existing=delete_existing,
             )
         except ImportError as exc:  # pragma: no cover - falkordb optional
@@ -999,6 +995,15 @@ class FalkorLiteDriver(GraphDriver):
 
     async def close(self):
         return None
+
+    async def build_indices_and_constraints(self, delete_existing: bool = False):
+        from graphiti_core.graph_queries import get_range_indices, get_fulltext_indices
+
+        if delete_existing:
+            await self.delete_all_indexes()
+        index_queries = get_range_indices(self.provider) + get_fulltext_indices(self.provider)
+        for query in index_queries:
+            await self.execute_query(query)
 
     async def delete_all_indexes(self):
         logger.debug("FalkorDB Lite does not expose index management APIs")

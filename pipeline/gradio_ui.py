@@ -14,7 +14,7 @@ import gradio as gr
 from graphiti_core.nodes import EpisodeType, EpisodicNode
 from graphiti_core.utils.datetime_utils import ensure_utc, utc_now
 
-from mlx_runtime import MLXDspyLM
+from inference_runtime import DspyLM
 from pipeline import (
     ExtractAttributes,
     ExtractEdges,
@@ -84,11 +84,11 @@ if tcp_endpoint:
             port,
         )
 
-lm = MLXDspyLM(model_path=DEFAULT_MODEL_PATH, generation_config=MODEL_CONFIG)
+lm = DspyLM(model_path=DEFAULT_MODEL_PATH, generation_config=MODEL_CONFIG)
 adapter = dspy.ChatAdapter()
 dspy.configure(lm=lm, adapter=adapter)
 
-logger.info("DSPy configured with MLXDspyLM")
+logger.info("DSPy configured with DspyLM")
 
 
 def _format_entity_list(nodes) -> str:

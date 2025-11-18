@@ -6,7 +6,7 @@
 
 This pipeline reimplements graphiti-core's ingestion stages using:
 - **DSPy modules** for each pipeline stage
-- **MLX runtime (`mlx_runtime/`)** for local LLM inference (no API calls) with deterministic defaults
+- **Inference runtime (`inference_runtime/`)** for local LLM inference via llama.cpp (no API calls) with deterministic defaults
 - **graphiti-core utilities** for validators, deduplication, and graph operations (maximize code reuse)
 
 ### Design Pattern
@@ -624,7 +624,7 @@ For each LLM operation, create a custom `dspy.Signature`:
 ## Implementation Notes
 
 - **One DSPy config**: Configure once at module import, shared across all stages
-- **Async/sync hybrid**: Database queries async, DSPy signatures sync (MLX_LOCK in adapter)
+- **Async/sync hybrid**: Database queries async, DSPy signatures sync (llama.cpp is thread-safe)
 - **Single event loop**: All async stages share one event loop (no conflicts)
 - **Code reuse first**: Import graphiti-core utilities before writing custom code
 - **Test coverage**: Both end-to-end (`test_add_journal.py`) and per-stage (`test_extract_nodes.py`) tests

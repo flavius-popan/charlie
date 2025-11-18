@@ -8,7 +8,7 @@ dependencies = [
     "graphiti-core>=0.21.0",
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
-    "mlx-lm>=0.28.2",
+    "llama-cpp-python>=0.2.0",
     "dspy>=3.0.4",
     "gradio>=5.49.1",
     "graphviz>=0.21",
@@ -16,12 +16,12 @@ dependencies = [
     "numpy>=2.3.4",
     "onnxruntime>=1.23.2",
     "huggingface-hub>=0.20.0",
-    "falkordblite>=0.1.0"
+    "falkordblite>=0.1.0",
 ]
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["app*", "pipeline*", "mlx_runtime*"]
+include = ["app*", "pipeline*", "inference_runtime*"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
