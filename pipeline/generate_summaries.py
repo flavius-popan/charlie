@@ -35,10 +35,13 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from pipeline import _dspy_setup  # noqa: F401
 import dspy
 from graphiti_core.nodes import EntityNode, EpisodicNode
 from graphiti_core.utils.text_utils import truncate_at_sentence, MAX_SUMMARY_CHARS
 from pydantic import BaseModel, Field
+
+from pipeline.self_reference import SELF_ENTITY_UUID
 
 logger = logging.getLogger(__name__)
 
@@ -84,13 +87,11 @@ class EntitySummary(BaseModel):
 
 
 class SummaryGenerationSignature(dspy.Signature):
-    """Generate concise entity summaries from journal context."""
+    """Generate entity summary from journal context."""
 
-    summary_context: str = dspy.InputField(desc="entity and journal context")
+    summary_context: str = dspy.InputField(desc="entity and episodes")
 
-    summary: EntitySummary = dspy.OutputField(
-        desc="concise summary of the entity"
-    )
+    summary: str = dspy.OutputField(desc="concise summary")
 
 
 @dataclass
@@ -99,6 +100,7 @@ class GenerateSummariesOutput:
 
     nodes: list[EntityNode]  # Same nodes with summaries populated
     metadata: dict[str, Any]
+    raw_llm_outputs: list[dict[str, Any]] = None  # Raw LLM summary responses (one per node)
 
 
 class SummaryGenerator(dspy.Module):
@@ -151,7 +153,10 @@ class SummaryGenerator(dspy.Module):
             summary_context=summary_context,
         )
 
-        return result.summary
+        summary_text = result.summary
+        if isinstance(summary_text, dict):
+            summary_text = summary_text.get("summary", "")
+        return EntitySummary(summary=summary_text)
 
 
 class GenerateSummaries:
@@ -221,9 +226,13 @@ class GenerateSummaries:
         nodes_processed = 0
         total_summary_length = 0
         truncated_count = 0
+        raw_llm_outputs = []  # Collect raw LLM outputs for each entity
 
         # MLX inference currently serializes LLM generations, so this loop stays sequential.
         for node in nodes:
+            if node.uuid == str(SELF_ENTITY_UUID):
+                logger.debug("Skipping SELF entity for summary generation")
+                continue
             entity_type_name = next((item for item in node.labels if item != 'Entity'), 'Entity')
 
             logger.info(
@@ -249,6 +258,13 @@ class GenerateSummaries:
             )
 
             summary_text = generated_summary.summary
+
+            # Capture raw LLM output for this entity
+            raw_llm_outputs.append({
+                "entity_name": node.name,
+                "entity_type": entity_type_name,
+                "summary": summary_text,
+            })
 
             original_length = len(summary_text)
             truncated_summary = truncate_at_sentence(summary_text, MAX_SUMMARY_CHARS)
@@ -294,7 +310,7 @@ class GenerateSummaries:
             truncated_count,
         )
 
-        return GenerateSummariesOutput(nodes=nodes, metadata=metadata)
+        return GenerateSummariesOutput(nodes=nodes, metadata=metadata, raw_llm_outputs=raw_llm_outputs)
 
 
 __all__ = [

@@ -1,7 +1,7 @@
 """Benchmark parallel inference using multiprocessing model pool.
 
-This benchmark tests true parallel inference by running multiple MLX models
-in separate processes. Unlike threading (which is serialized by MLX_LOCK),
+This benchmark tests true parallel inference by running multiple llama.cpp models
+in separate processes. Unlike threading (which shares a single model),
 multiprocessing gives each process its own 4GB model instance.
 
 Run with: python benchmarks/benchmark_model_pool.py
@@ -22,10 +22,11 @@ import time
 import os
 from typing import List
 
+from pipeline import _dspy_setup  # noqa: F401
 import dspy
 from pydantic import BaseModel, Field
 
-from dspy_outlines import OutlinesLM, OutlinesAdapter
+from inference_runtime import DspyLM
 
 # Disable tokenizers parallelism warning (we're using multiprocessing, not threading)
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -101,7 +102,7 @@ def worker_process(process_id: int, prompts: List[str], result_queue: mp.Queue):
     """Worker process that loads its own model and processes prompts.
 
     Timing includes:
-    - Model loading (4GB MLX model load time)
+    - Model loading (4GB llama.cpp model load time)
     - All inference time (including any gaps)
     - Total wall-clock time from start to finish
 
@@ -114,8 +115,8 @@ def worker_process(process_id: int, prompts: List[str], result_queue: mp.Queue):
         start_time = time.time()  # Start timing BEFORE model load
 
         # Each process loads its own model (separate 4GB instance)
-        lm = OutlinesLM()
-        dspy.configure(lm=lm, adapter=OutlinesAdapter())
+        lm = DspyLM()
+        dspy.configure(lm=lm, adapter=dspy.ChatAdapter())
         predictor = dspy.Predict(ClassifySentiment)
 
         results = []
@@ -162,8 +163,8 @@ def benchmark_serial(prompts: List[str]) -> dict:
     """
     start_time = time.time()  # Start timing BEFORE model load
 
-    lm = OutlinesLM()
-    dspy.configure(lm=lm, adapter=OutlinesAdapter())
+    lm = DspyLM()
+    dspy.configure(lm=lm, adapter=dspy.ChatAdapter())
     predictor = dspy.Predict(ClassifySentiment)
 
     results = []
@@ -244,8 +245,8 @@ def benchmark_parallel(num_total_processes: int, prompts_per_process: int) -> di
 
     # Main process loads model and processes its chunk
     main_start = time.time()
-    lm = OutlinesLM()
-    dspy.configure(lm=lm, adapter=OutlinesAdapter())
+    lm = DspyLM()
+    dspy.configure(lm=lm, adapter=dspy.ChatAdapter())
     predictor = dspy.Predict(ClassifySentiment)
 
     for i, prompt in enumerate(main_prompts):
@@ -409,7 +410,7 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="Benchmark parallel MLX model inference using multiprocessing",
+        description="Benchmark parallel llama.cpp model inference using multiprocessing",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=f"""
 Examples:

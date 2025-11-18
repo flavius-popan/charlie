@@ -23,8 +23,9 @@ from dataclasses import dataclass
 from datetime import datetime
 import logging
 from pathlib import Path
+from textwrap import shorten
 from typing import Any
-
+from pipeline import _dspy_setup  # noqa: F401
 import dspy
 from graphiti_core.edges import EntityEdge
 from graphiti_core.nodes import EntityNode, EpisodicNode
@@ -32,26 +33,31 @@ from graphiti_core.utils.bulk_utils import resolve_edge_pointers
 from graphiti_core.utils.datetime_utils import ensure_utc, utc_now
 from graphiti_core.utils.maintenance.edge_operations import DEFAULT_EDGE_NAME
 from pipeline.entity_edge_models import EdgeMeta
-from pydantic import BaseModel, Field, model_validator
+from pipeline.self_reference import SELF_PROMPT_NOTE, is_self_entity_name
+from pydantic import BaseModel, Field, ValidationError, model_validator
+from dspy.utils.exceptions import AdapterParseError
 
-from pipeline.falkordblite_driver import fetch_entity_edges_by_group
+# NOTE: Database imports are intentionally NOT at module level.
+# EdgeExtractor is a pure DSPy module with no database dependencies.
+# Database functions are imported locally in ExtractEdges (orchestrator) only.
+# DO NOT move fetch_entity_edges_by_group to module level - it breaks DSPy contract.
 
 logger = logging.getLogger(__name__)
 
 
 class ExtractedEdge(BaseModel):
-    """Relationship between indexed entities with supporting fact."""
+    """One relationship between two entities. Example: entity 0 SpendsTimeWith entity 1."""
 
-    source_entity_id: int = Field(description="Index of source entity from ENTITIES list")
-    target_entity_id: int = Field(description="Index of target entity from ENTITIES list")
-    relation_type: str = Field(description="Relationship label in SCREAMING_SNAKE_CASE")
-    fact: str = Field(description="Description of the relationship")
-    valid_at: str | None = Field(None, description="When relationship started")
-    invalid_at: str | None = Field(None, description="When relationship ended")
+    source_entity_id: int = Field(description="ID number of first entity (the one doing the action)")
+    target_entity_id: int = Field(description="ID number of second entity (the one receiving the action)")
+    relation_type: str = Field(description="Relationship type like SpendsTimeWith, ParticipatesIn, Supports, Knows, or Visits")
+    fact: str = Field(description="Single sentence describing this specific relationship")
+    valid_at: str | None = Field(None, description="ISO date when this started (optional)")
+    invalid_at: str | None = Field(None, description="ISO date when this ended (optional)")
 
 
 class ExtractedEdges(BaseModel):
-    """Collection of indexed relationships extracted from an episode."""
+    """Output format: must have an 'edges' field containing a list of relationships."""
 
     edges: list[ExtractedEdge]
 
@@ -65,21 +71,15 @@ class ExtractedEdges(BaseModel):
 
 
 class RelationshipExtractionSignature(dspy.Signature):
-    """Extract graph edges between indexed entities from the journal entry."""
+    """Extract relationships between entities from journal entry."""
 
     episode_content: str = dspy.InputField(desc="journal entry text")
-    entities_json: str = dspy.InputField(
-        desc="JSON array describing entities with id, name, and entity_types"
-    )
-    reference_time: str = dspy.InputField(desc="ISO 8601 timestamp for date resolution")
-    edge_type_context: str = dspy.InputField(
-        desc="JSON payload describing curated relation names and allowed type signatures"
-    )
-    previous_episodes_json: str = dspy.InputField(
-        desc="JSON array of previous episode snippets for context"
-    )
+    entities_json: str = dspy.InputField(desc="available entities as JSON")
+    reference_time: str = dspy.InputField(desc="timestamp for context")
+    edge_type_context: str = dspy.InputField(desc="allowed relationship types")
+    previous_episodes_json: str = dspy.InputField(desc="prior episode context")
 
-    edges: ExtractedEdges = dspy.OutputField(desc="relationships referencing entity IDs")
+    edges: ExtractedEdges = dspy.OutputField(desc="extracted relationships")
 
 
 class EdgeExtractor(dspy.Module):
@@ -147,14 +147,67 @@ class EdgeExtractor(dspy.Module):
         #     }
         #     # Pass to LLM in signature context
 
-        result = self.extractor(
-            episode_content=episode_content,
-            entities_json=entities_json,
-            reference_time=reference_time,
-            edge_type_context=edge_type_context,
-            previous_episodes_json=previous_episodes_json,
-        )
-        return result.edges
+        try:
+            result = self.extractor(
+                episode_content=episode_content,
+                entities_json=entities_json,
+                reference_time=reference_time,
+                edge_type_context=edge_type_context,
+                previous_episodes_json=previous_episodes_json,
+            )
+        except AdapterParseError as exc:
+            logger.warning("Edge extractor failed to parse output: %s", exc)
+            return self._fallback_edges(entities_json, episode_content)
+
+        edges = self._coerce_edges(result.edges)
+        if not edges.edges:
+            logger.info("Edge extractor returned zero edges; using fallback heuristics.")
+            return self._fallback_edges(entities_json, episode_content)
+        return edges
+
+    @staticmethod
+    def _coerce_edges(value) -> ExtractedEdges:
+        if isinstance(value, ExtractedEdges):
+            return value
+        try:
+            return ExtractedEdges.model_validate(value)
+        except ValidationError as exc:
+            logger.warning("Unable to coerce edge output (%s). Returning empty set.", exc)
+            return ExtractedEdges(edges=[])
+
+    @staticmethod
+    def _fallback_edges(entities_json: str, episode_content: str) -> ExtractedEdges:
+        """Simple heuristic fallback: relate every pair of entities."""
+        try:
+            entities = json.loads(entities_json)
+        except json.JSONDecodeError:
+            return ExtractedEdges(edges=[])
+
+        if not isinstance(entities, list):
+            return ExtractedEdges(edges=[])
+
+        excerpt = shorten(episode_content.strip(), width=160, placeholder="…")
+        fallback_edges: list[ExtractedEdge] = []
+        for source_idx in range(len(entities)):
+            for target_idx in range(source_idx + 1, len(entities)):
+                source = entities[source_idx]
+                target = entities[target_idx]
+                fact = (
+                    f"{source.get('name')} and {target.get('name')} were both mentioned. "
+                    f"Context: {excerpt}"
+                )
+                fallback_edges.append(
+                    ExtractedEdge(
+                        source_entity_id=source_idx,
+                        target_entity_id=target_idx,
+                        relation_type="RELATES_TO",
+                        fact=fact,
+                        valid_at=None,
+                        invalid_at=None,
+                    )
+                )
+
+        return ExtractedEdges(edges=fallback_edges)
 
 
 @dataclass
@@ -163,6 +216,7 @@ class ExtractEdgesOutput:
 
     edges: list[EntityEdge]
     metadata: dict[str, Any]
+    raw_llm_output: ExtractedEdges | None = None  # Raw LLM response before EntityEdge conversion
 
 
 def normalize_edge_name(name: str) -> str:
@@ -206,14 +260,18 @@ def _get_node_by_index(nodes: list[EntityNode], index: int) -> EntityNode | None
 
 
 def _format_entities_for_prompt(nodes: list[EntityNode]) -> list[dict[str, Any]]:
-    return [
-        {
+    formatted: list[dict[str, Any]] = []
+    for idx, node in enumerate(nodes):
+        entry = {
             "id": idx,
             "name": node.name,
             "entity_types": node.labels,
         }
-        for idx, node in enumerate(nodes)
-    ]
+        if is_self_entity_name(node.name):
+            entry["is_author"] = True
+            entry["notes"] = SELF_PROMPT_NOTE
+        formatted.append(entry)
+    return formatted
 
 
 def _format_previous_episodes_for_prompt(
@@ -291,36 +349,31 @@ def _enforce_edge_type_rules(
     source_node: EntityNode,
     target_node: EntityNode,
     *,
-    edge_types: dict[str, BaseModel],
     edge_type_map: dict[tuple[str, str], list[str]],
 ) -> None:
-    if not edge_types:
-        return
-
     allowed = _collect_allowed_relations(source_node, target_node, edge_type_map)
-    custom_names = {name.upper() for name in edge_types.keys()}
     edge_name = edge.name
 
-    if not allowed and edge_name in custom_names and edge_name != DEFAULT_EDGE_NAME:
-        logger.debug(
-            "Relation %s not permitted for %s/%s. Falling back to %s.",
-            edge.name,
-            source_node.labels,
-            target_node.labels,
-            DEFAULT_EDGE_NAME,
-        )
-        edge.name = DEFAULT_EDGE_NAME
-        return
-
-    if edge_name in custom_names and allowed and edge_name not in allowed and edge_name != DEFAULT_EDGE_NAME:
-        logger.debug(
-            "Relation %s not allowed for %s/%s. Using %s instead.",
-            edge.name,
-            source_node.labels,
-            target_node.labels,
-            DEFAULT_EDGE_NAME,
-        )
-        edge.name = DEFAULT_EDGE_NAME
+    if allowed:
+        if edge_name not in allowed and edge_name != DEFAULT_EDGE_NAME:
+            logger.debug(
+                "Relation %s not allowed for %s/%s. Using %s instead.",
+                edge.name,
+                source_node.labels,
+                target_node.labels,
+                DEFAULT_EDGE_NAME,
+            )
+            edge.name = DEFAULT_EDGE_NAME
+    else:
+        if edge_name != DEFAULT_EDGE_NAME:
+            logger.debug(
+                "No allowed relations for %s/%s. Normalizing %s to %s.",
+                source_node.labels,
+                target_node.labels,
+                edge.name,
+                DEFAULT_EDGE_NAME,
+            )
+            edge.name = DEFAULT_EDGE_NAME
 
 
 def build_entity_edges(
@@ -386,13 +439,7 @@ def build_entity_edges(
             invalid_at=invalid_at_datetime,
         )
 
-        _enforce_edge_type_rules(
-            edge,
-            source_node,
-            target_node,
-            edge_types=edge_types,
-            edge_type_map=edge_type_map,
-        )
+        _enforce_edge_type_rules(edge, source_node, target_node, edge_type_map=edge_type_map)
 
         entity_edges.append(edge)
 
@@ -515,6 +562,9 @@ class ExtractEdges:
         entity_edges = resolve_edge_pointers(entity_edges, uuid_map)
 
         if self.dedupe_enabled:
+            # Import database function locally to maintain EdgeExtractor's purity for DSPy optimization
+            from pipeline.falkordblite_driver import fetch_entity_edges_by_group  # noqa: PLC0415
+
             existing_edges = await fetch_entity_edges_by_group(self.group_id)
             logger.info("Resolving against %d existing edges", len(existing_edges))
 
@@ -545,7 +595,7 @@ class ExtractEdges:
             metadata["merged_count"],
         )
 
-        return ExtractEdgesOutput(edges=resolved_edges, metadata=metadata)
+        return ExtractEdgesOutput(edges=resolved_edges, metadata=metadata, raw_llm_output=relationships)
 
     def _resolve_edges(
         self,

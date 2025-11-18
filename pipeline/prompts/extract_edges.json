@@ -2,83 +2,9 @@
   "extractor.predict": {
     "traces": [],
     "train": [],
-    "demos": [
-      {
-        "episode_content": "Therapist Ines texted Avery after session to make sure she actually tried the body scan homework.",
-        "entities_json": "[{\"id\": 0, \"name\": \"Ines\", \"entity_types\": [\"Entity\", \"Person\"]}, {\"id\": 1, \"name\": \"Avery\", \"entity_types\": [\"Entity\", \"Person\"]}, {\"id\": 2, \"name\": \"body scan homework\", \"entity_types\": [\"Entity\", \"Activity\"]}]",
-        "entity_names": [
-          "Ines",
-          "Avery",
-          "body scan homework"
-        ],
-        "reference_time": "2025-02-10T18:30:00Z",
-        "edge_type_context": "{\"edge_types\": [{\"name\": \"Knows\", \"description\": \"Two people know each other in some ongoing way.\", \"source_types\": [\"Person\"], \"target_types\": [\"Person\"], \"symmetric\": true}, {\"name\": \"SpendsTimeWith\", \"description\": \"Two people regularly spend meaningful time together.\", \"source_types\": [\"Person\"], \"target_types\": [\"Person\"], \"symmetric\": true}, {\"name\": \"Supports\", \"description\": \"One person offers support (emotional or practical) to another.\", \"source_types\": [\"Person\"], \"target_types\": [\"Person\"], \"symmetric\": false}, {\"name\": \"ConflictsWith\", \"description\": \"There is notable conflict, tension, or friction between two people.\", \"source_types\": [\"Person\"], \"target_types\": [\"Person\"], \"symmetric\": true}, {\"name\": \"ParticipatesIn\", \"description\": \"A person participates in or does an activity.\", \"source_types\": [\"Person\"], \"target_types\": [\"Activity\"], \"symmetric\": false}, {\"name\": \"OccursAt\", \"description\": \"An activity typically occurs at or is associated with a place.\", \"source_types\": [\"Activity\"], \"target_types\": [\"Place\"], \"symmetric\": false}, {\"name\": \"Visits\", \"description\": \"A person visits or frequently spends time at a place.\", \"source_types\": [\"Person\"], \"target_types\": [\"Place\"], \"symmetric\": false}, {\"name\": \"RELATES_TO\", \"description\": \"Generic relationship between any two entities.\", \"source_types\": [\"Entity\"], \"target_types\": [\"Entity\"], \"symmetric\": true}], \"edge_type_map\": [{\"source_type\": \"Person\", \"target_type\": \"Person\", \"allowed_relations\": [\"Knows\", \"SpendsTimeWith\", \"Supports\", \"ConflictsWith\"]}, {\"source_type\": \"Person\", \"target_type\": \"Activity\", \"allowed_relations\": [\"ParticipatesIn\"]}, {\"source_type\": \"Activity\", \"target_type\": \"Place\", \"allowed_relations\": [\"OccursAt\"]}, {\"source_type\": \"Person\", \"target_type\": \"Place\", \"allowed_relations\": [\"Visits\"]}, {\"source_type\": \"Entity\", \"target_type\": \"Entity\", \"allowed_relations\": [\"RELATES_TO\"]}]}",
-        "previous_episodes_json": "[]",
-        "edges": {
-          "edges": [
-            {
-              "source_entity_id": 0,
-              "target_entity_id": 1,
-              "relation_type": "Supports",
-              "fact": "Ines checked in to support Avery between sessions.",
-              "valid_at": null,
-              "invalid_at": null
-            },
-            {
-              "source_entity_id": 1,
-              "target_entity_id": 2,
-              "relation_type": "ParticipatesIn",
-              "fact": "Avery committed to the body scan homework.",
-              "valid_at": null,
-              "invalid_at": null
-            }
-          ]
-        }
-      },
-      {
-        "episode_content": "Mara and Tino coaxed me into a shivery sunrise plunge at Ocean Beach. They kept cracking jokes until I breathed again.",
-        "entities_json": "[{\"id\": 0, \"name\": \"Mara\", \"entity_types\": [\"Entity\", \"Person\"]}, {\"id\": 1, \"name\": \"Tino\", \"entity_types\": [\"Entity\", \"Person\"]}, {\"id\": 2, \"name\": \"Ocean Beach\", \"entity_types\": [\"Entity\", \"Place\"]}, {\"id\": 3, \"name\": \"sunrise plunge\", \"entity_types\": [\"Entity\", \"Activity\"]}]",
-        "entity_names": [
-          "Mara",
-          "Tino",
-          "Ocean Beach",
-          "sunrise plunge"
-        ],
-        "reference_time": "2025-02-14T07:05:00Z",
-        "edge_type_context": "{\"edge_types\": [{\"name\": \"Knows\", \"description\": \"Two people know each other in some ongoing way.\", \"source_types\": [\"Person\"], \"target_types\": [\"Person\"], \"symmetric\": true}, {\"name\": \"SpendsTimeWith\", \"description\": \"Two people regularly spend meaningful time together.\", \"source_types\": [\"Person\"], \"target_types\": [\"Person\"], \"symmetric\": true}, {\"name\": \"Supports\", \"description\": \"One person offers support (emotional or practical) to another.\", \"source_types\": [\"Person\"], \"target_types\": [\"Person\"], \"symmetric\": false}, {\"name\": \"ConflictsWith\", \"description\": \"There is notable conflict, tension, or friction between two people.\", \"source_types\": [\"Person\"], \"target_types\": [\"Person\"], \"symmetric\": true}, {\"name\": \"ParticipatesIn\", \"description\": \"A person participates in or does an activity.\", \"source_types\": [\"Person\"], \"target_types\": [\"Activity\"], \"symmetric\": false}, {\"name\": \"OccursAt\", \"description\": \"An activity typically occurs at or is associated with a place.\", \"source_types\": [\"Activity\"], \"target_types\": [\"Place\"], \"symmetric\": false}, {\"name\": \"Visits\", \"description\": \"A person visits or frequently spends time at a place.\", \"source_types\": [\"Person\"], \"target_types\": [\"Place\"], \"symmetric\": false}, {\"name\": \"RELATES_TO\", \"description\": \"Generic relationship between any two entities.\", \"source_types\": [\"Entity\"], \"target_types\": [\"Entity\"], \"symmetric\": true}], \"edge_type_map\": [{\"source_type\": \"Person\", \"target_type\": \"Person\", \"allowed_relations\": [\"Knows\", \"SpendsTimeWith\", \"Supports\", \"ConflictsWith\"]}, {\"source_type\": \"Person\", \"target_type\": \"Activity\", \"allowed_relations\": [\"ParticipatesIn\"]}, {\"source_type\": \"Activity\", \"target_type\": \"Place\", \"allowed_relations\": [\"OccursAt\"]}, {\"source_type\": \"Person\", \"target_type\": \"Place\", \"allowed_relations\": [\"Visits\"]}, {\"source_type\": \"Entity\", \"target_type\": \"Entity\", \"allowed_relations\": [\"RELATES_TO\"]}]}",
-        "previous_episodes_json": "[]",
-        "edges": {
-          "edges": [
-            {
-              "source_entity_id": 0,
-              "target_entity_id": 1,
-              "relation_type": "SpendsTimeWith",
-              "fact": "Mara and Tino share sunrise plunges together.",
-              "valid_at": null,
-              "invalid_at": null
-            },
-            {
-              "source_entity_id": 0,
-              "target_entity_id": 3,
-              "relation_type": "ParticipatesIn",
-              "fact": "Mara joined the sunrise plunge ritual.",
-              "valid_at": null,
-              "invalid_at": null
-            },
-            {
-              "source_entity_id": 3,
-              "target_entity_id": 2,
-              "relation_type": "OccursAt",
-              "fact": "The sunrise plunge happens at Ocean Beach.",
-              "valid_at": null,
-              "invalid_at": null
-            }
-          ]
-        }
-      }
-    ],
+    "demos": [],
     "signature": {
-      "instructions": "Extract graph edges between indexed entities from the journal entry.",
+      "instructions": "You are tasked with extracting relationships between entities from journal entries. The extraction should be based on the provided context, which includes the journal content, a list of entities, their types, and a description of allowed relationship types. Follow these detailed guidelines to ensure accuracy and completeness in your outputs.\n\n### Input Format:\n1. **episode_content**: A string representing the journal entry, which may contain personal reflections, interactions, and activities.\n2. **entities_json**: A JSON array listing entities mentioned in the journal entry, each with an ID, name, entity types (such as Person, Place, Activity), and notes about their significance.\n3. **reference_time**: A timestamp indicating when the events in the journal entry took place.\n4. **edge_type_context**: A JSON object that defines various relationship types (like Knows, Supports, Visits, etc.) between entities, including descriptions and allowed source/target types.\n5. **previous_episodes_json**: A JSON array (potentially empty) representing past entries that may inform the current context.\n\n### Task Description:\n- Extract and represent relationships between the identified entities based on the journal entry. Each relationship should be expressed as an edge, which consists of a source entity, a target entity, a relationship type, a fact grounding the relationship, and validity timestamps.\n- Ensure that the relationships are accurately derived from the content of the journal entry, reflecting the dynamics between the entities involved.\n\n### Extraction Guidelines:\n1. **Relationship Types**: Use only the allowed relationship types from `edge_type_context`. Relationships could include:\n   - **Knows**: Indicates ongoing familiarity between two persons.\n   - **SpendsTimeWith**: Indicates meaningful time spent together.\n   - **Supports**: Indicates support (emotional or practical) offered by one person to another (asymmetric).\n   - **ParticipatesIn**: Indicates a person is involved in an activity.\n   - **Visits**: Indicates a person frequently spends time at a place.\n   - **OccursAt**: Indicates an activity is associated with a specific place.\n\n2. **Fact Grounding**: Ensure the facts provided in the output maintain a first-person perspective when referring to the author of the journal. Avoid analytical language and emotional interpretations—focus on direct statements of facts.\n\n3. **Completeness**: Strive to capture all relevant relationships mentioned in the journal entry. Do not omit significant interactions or connections between entities.\n\n4. **Conciseness**: Keep the language used in the output concise and to the point. Each edge should ideally consist of one short sentence that clearly describes the relationship.\n\n5. **Avoid Hallucinations**: Do not create relationships that are not supported by the text. Ensure all extracted relationships are directly backed by the information provided in the journal entry.\n\n### Output Format:\n- The output should be a JSON array of edges, where each edge is represented as:\n```json\n{\n  \"source_entity_id\": <id of the source entity>,\n  \"target_entity_id\": <id of the target entity>,\n  \"relation_type\": \"<type of relationship>\",\n  \"fact\": \"<fact that supports the relationship>\",\n  \"valid_at\": \"<timestamp>\",\n  \"invalid_at\": null\n}\n```\n\nBy following these guidelines, you will effectively extract meaningful relationships from the journal entries while adhering to the context and entity definitions provided.",
       "fields": [
         {
           "prefix": "Episode Content:",
@@ -86,19 +12,19 @@
         },
         {
           "prefix": "Entities Json:",
-          "description": "JSON array describing entities with id, name, and entity_types"
+          "description": "available entities as JSON"
         },
         {
           "prefix": "Reference Time:",
-          "description": "ISO 8601 timestamp for date resolution"
+          "description": "timestamp for context"
         },
         {
           "prefix": "Edge Type Context:",
-          "description": "JSON payload describing curated relation names and allowed type signatures"
+          "description": "allowed relationship types"
         },
         {
           "prefix": "Previous Episodes Json:",
-          "description": "JSON array of previous episode snippets for context"
+          "description": "prior episode context"
         },
         {
           "prefix": "Reasoning: Let's think step by step in order to",
@@ -106,7 +32,7 @@
         },
         {
           "prefix": "Edges:",
-          "description": "relationships referencing entity IDs"
+          "description": "extracted relationships"
         }
       ]
     },
@@ -115,7 +41,7 @@
   "metadata": {
     "dependency_versions": {
       "python": "3.13",
-      "dspy": "3.0.3",
+      "dspy": "3.0.4",
       "cloudpickle": "3.1"
     }
   }

@@ -20,6 +20,8 @@ distilbert-ner-uncased-onnx/onnx/*.onnx
 distilbert-ner-uncased-onnx/.cache/
 prompts/.dspy_cache/
 .dspy_cache
+pipeline/prompts/.dspy_cache/
+pipeline/prompts/gepa/
 
 # Database files (FalkorDB/Redis/SQLite)
 data/*.db

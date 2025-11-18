@@ -8,29 +8,20 @@ dependencies = [
     "graphiti-core>=0.21.0",
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
-    "mlx-lm>=0.28.2",
-    "outlines>=1.2.6", # outlines-core version overridden in [tool.uv] for PR #230 MLX fix
-    "dspy>=3.0.3",
+    "llama-cpp-python>=0.2.0",
+    "dspy>=3.0.4",
     "gradio>=5.49.1",
     "graphviz>=0.21",
     "transformers>=4.57.1",
     "numpy>=2.3.4",
     "onnxruntime>=1.23.2",
     "huggingface-hub>=0.20.0",
-    "falkordblite>=0.1.0"
+    "falkordblite>=0.1.0",
 ]
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["app*", "dspy_outlines*"]
-
-[tool.uv]
-# Override outlines-core version to get PR #230 MLX type-safe kernel fix
-# TO REMOVE: When outlines updates to outlines-core >= 0.2.12, delete this entire [tool.uv] section
-# and run: uv lock --upgrade && uv sync
-override-dependencies = [
-    "outlines-core @ git+https://github.com/dottxt-ai/outlines-core.git@0.2.13",
-]
+include = ["app*", "pipeline*", "inference_runtime*"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

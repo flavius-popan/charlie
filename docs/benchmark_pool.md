@@ -2,11 +2,11 @@
 
 ## Objective
 
-Test and benchmark parallel inference using multiple MLX model instances across separate processes.
+Test and benchmark parallel inference using multiple llama.cpp model instances across separate processes.
 
 ## Background
 
-**Current pattern**: Single model (~4GB), all threads serialized via `MLX_LOCK`
+**Current pattern**: Single model (~4GB), thread-safe llama.cpp
 **Alternative pattern**: Multiple processes, each with own model, true parallelism
 
 With 64GB RAM, can run 3-4 models in parallel for ~3-4x throughput improvement.
@@ -17,13 +17,13 @@ With 64GB RAM, can run 3-4 models in parallel for ~3-4x throughput improvement.
 
 ```python
 import multiprocessing as mp
-from dspy_outlines import OutlinesLM, OutlinesAdapter
+from inference_runtime import DspyLM
 import time
 
 def worker_process(prompts, results_queue):
     """Each process loads its own model."""
-    lm = OutlinesLM()  # Separate 4GB model per process
-    dspy.configure(lm=lm, adapter=OutlinesAdapter())
+    lm = DspyLM()  # Separate 4GB model per process
+    dspy.configure(lm=lm, adapter=dspy.ChatAdapter())
     predictor = dspy.Predict(Signature)
 
     start = time.time()

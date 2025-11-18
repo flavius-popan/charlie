@@ -8,11 +8,18 @@ pytest suite and reuse the session-wide FalkorDB Lite process configured in
 
 from __future__ import annotations
 
+import json
 from contextlib import ExitStack
 
 import pytest
 
 import pipeline.falkordblite_driver as db_utils
+from pipeline.self_reference import (
+    SELF_ENTITY_LABELS,
+    SELF_ENTITY_NAME,
+    SELF_ENTITY_UUID,
+)
+from settings import GROUP_ID
 
 
 def _decode(value):
@@ -208,8 +215,19 @@ def test_vecf32_empty_embedding(isolated_graph):
 
 
 @pytest.mark.asyncio
-async def test_reset_database_clears_all_nodes(isolated_graph):
-    """Verify that reset_database clears both Episodic and Entity nodes."""
+async def test_ensure_graph_ready_idempotent(isolated_graph):
+    """ensure_graph_ready can rebuild indices multiple times without corrupting data."""
+    await db_utils.ensure_graph_ready(delete_existing=True)
+    await db_utils.ensure_graph_ready()
+
+    isolated_graph.query("CREATE (:InitSmoke {uuid: 'init-smoke'})")
+    rows = _query_rows(isolated_graph, "MATCH (n:InitSmoke) RETURN count(n)")
+    assert rows == [[1]]
+
+
+@pytest.mark.asyncio
+async def test_reset_database_reseeds_self_node(isolated_graph):
+    """reset_database now wipes data but reseeds the deterministic SELF entity."""
     isolated_graph.query(
         """
         CREATE (:Episodic {uuid: 'reset-episode', group_id: 'reset-group'}),
@@ -223,7 +241,24 @@ async def test_reset_database_clears_all_nodes(isolated_graph):
 
     await db_utils.reset_database()
     stats_after = await db_utils.get_db_stats()
-    assert stats_after == {"episodes": 0, "entities": 0}
+    assert stats_after["episodes"] == 0
+    assert stats_after["entities"] == 1
+
+    rows = _query_rows(
+        isolated_graph,
+        """
+        MATCH (self:Entity {uuid: $self_uuid})
+        RETURN self.name, self.group_id, self.labels
+        """.replace(
+            "$self_uuid", db_utils.to_cypher_literal(str(SELF_ENTITY_UUID))
+        ),
+    )
+    assert rows, "SELF entity should exist after reset"
+    self_name, self_group, raw_labels = rows[0]
+    assert self_name == SELF_ENTITY_NAME
+    assert self_group == GROUP_ID
+    labels = json.loads(raw_labels)
+    assert all(label in labels for label in SELF_ENTITY_LABELS)
 
 
 @pytest.mark.asyncio
@@ -284,14 +319,11 @@ async def test_gradio_persistence_workflow(isolated_graph):
     # Step 4: Verify database is empty (simulating another page refresh)
     stats_after_reset = await db_utils.get_db_stats()
     assert stats_after_reset["episodes"] == 0, "Episodes should be 0 after reset"
-    assert stats_after_reset["entities"] == 0, "Entities should be 0 after reset"
+    assert stats_after_reset["entities"] == 1, "Only SELF entity should remain after reset"
 
     # Step 5: Verify no nodes remain in the database
-    all_nodes = isolated_graph.query("MATCH (n) RETURN count(n)")
-    node_count = 0
-    if all_nodes.statistics and all_nodes.statistics[0]:
-        col = all_nodes.statistics[0][0]
-        val = col[1] if len(col) > 1 else col[0]
-        node_count = int(val) if val else 0
-
-    assert node_count == 0, "No nodes should remain after reset"
+    rows = _query_rows(
+        isolated_graph,
+        "MATCH (n:Entity) RETURN count(n)",
+    )
+    assert rows == [[1]], "Only SELF entity should exist after reset"

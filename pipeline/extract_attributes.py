@@ -35,11 +35,13 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from pipeline import _dspy_setup  # noqa: F401
 import dspy
 from graphiti_core.nodes import EntityNode, EpisodicNode
 from pydantic import BaseModel
 
 from pipeline.entity_edge_models import entity_types
+from pipeline.self_reference import SELF_ENTITY_UUID
 
 logger = logging.getLogger(__name__)
 
@@ -65,22 +67,12 @@ def _build_attribute_signature(
     attrs = {
         "__doc__": doc,
         "__annotations__": annotations,
-        "episode_content": dspy.InputField(desc="Current journal entry text"),
-        "previous_episodes": dspy.InputField(
-            desc="Previous journal entries as JSON list for additional context"
-        ),
-        "entity_name": dspy.InputField(
-            desc="Name of the entity to extract attributes for"
-        ),
-        "entity_type": dspy.InputField(
-            desc="Type of entity (e.g., Person, Activity, Organization, Place)"
-        ),
-        "existing_attributes": dspy.InputField(
-            desc="Current entity attributes as JSON dict (may be empty)"
-        ),
-        "attributes": dspy.OutputField(
-            desc=f"Extracted {entity_type or response_model.__name__} attributes based on schema. Only extract information explicitly present in the journal data."
-        ),
+        "episode_content": dspy.InputField(desc="journal entry text"),
+        "previous_episodes": dspy.InputField(desc="prior entries as JSON"),
+        "entity_name": dspy.InputField(desc="entity name"),
+        "entity_type": dspy.InputField(desc="entity type"),
+        "existing_attributes": dspy.InputField(desc="current attributes as JSON"),
+        "attributes": dspy.OutputField(desc="extracted attributes"),
     }
 
     return type(class_name, (dspy.Signature,), attrs)
@@ -92,6 +84,7 @@ class ExtractAttributesOutput:
 
     nodes: list[EntityNode]  # Nodes with attributes populated
     metadata: dict[str, Any]
+    raw_llm_outputs: list[dict[str, Any]] = None  # Raw LLM responses for each entity (one per node)
 
 
 class AttributeExtractor(dspy.Module):
@@ -307,8 +300,13 @@ class ExtractAttributes:
         nodes_processed = 0
         nodes_skipped = 0
         attributes_extracted_by_type: dict[str, int] = {}
+        raw_llm_outputs = []  # Collect raw LLM outputs for each entity
 
         for node in nodes:
+            if node.uuid == str(SELF_ENTITY_UUID):
+                logger.debug("Skipping SELF entity for attribute extraction")
+                nodes_skipped += 1
+                continue
             entity_type_name = next((item for item in node.labels if item != 'Entity'), '')
 
             if not entity_type_name or entity_type_name not in entity_types:
@@ -348,6 +346,13 @@ class ExtractAttributes:
                 response_model=entity_model,
             )
 
+            # Capture raw LLM output for this entity
+            raw_llm_outputs.append({
+                "entity_name": node.name,
+                "entity_type": entity_type_name,
+                "attributes": extracted_attributes,
+            })
+
             entity_model(**extracted_attributes)
 
             node.attributes.update(extracted_attributes)
@@ -380,7 +385,7 @@ class ExtractAttributes:
             attributes_extracted_by_type,
         )
 
-        return ExtractAttributesOutput(nodes=nodes, metadata=metadata)
+        return ExtractAttributesOutput(nodes=nodes, metadata=metadata, raw_llm_outputs=raw_llm_outputs)
 
 
 __all__ = [

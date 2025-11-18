@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 import pytest
 
 from pipeline.extract_nodes import ExtractNodes, ExtractNodesOutput
+from pipeline.self_reference import SELF_ENTITY_NAME
 
 
 @pytest.mark.asyncio
@@ -61,5 +62,53 @@ async def test_extract_nodes_resolves_against_existing_entities(
         reference_time=datetime(2024, 3, 10, 16, 45, tzinfo=timezone.utc),
     )
 
-    assert result.metadata["resolved_count"] >= 1
     assert existing_uuid in result.uuid_map.values()
+    assert any(node.uuid == existing_uuid for node in result.nodes)
+
+
+@pytest.mark.asyncio
+async def test_extract_nodes_reuses_existing_self_and_friend(isolated_graph, seed_entity) -> None:
+    """Ensure canonical SELF and existing friends are reused, not duplicated."""
+    group_id = "self-dedupe"
+    friend_uuid = "55555555-5555-4555-8555-555555555555"
+    seed_entity(uuid=friend_uuid, name="Jefe", group_id=group_id, labels=["Entity", "Person"])
+
+    extractor = ExtractNodes(group_id=group_id)
+    result = await extractor(
+        content="I met Jefe for lunch today.",
+        reference_time=datetime(2024, 4, 1, 12, 0, tzinfo=timezone.utc),
+    )
+
+    resolved_ids = set(result.uuid_map.values())
+    assert friend_uuid in resolved_ids, "Existing friend should be reused"
+    assert any(node.uuid == friend_uuid for node in result.nodes)
+    self_nodes = [node for node in result.nodes if node.name == "Self"]
+    assert len(self_nodes) == 1, "Self should only appear once"
+
+
+@pytest.mark.asyncio
+async def test_extract_nodes_injects_self_on_pronoun(isolated_graph) -> None:
+    """First-person journals should always include the deterministic SELF entity."""
+    group_id = "self-inject"
+    extractor = ExtractNodes(group_id=group_id)
+    result = await extractor(
+        content="I visited the memorial garden after work.",
+        reference_time=datetime(2024, 4, 2, 12, 30, tzinfo=timezone.utc),
+    )
+
+    assert result.metadata["first_person_detected"] is True
+    assert any(node.name == SELF_ENTITY_NAME for node in result.nodes)
+
+
+@pytest.mark.asyncio
+async def test_extract_nodes_omits_self_when_not_referenced(isolated_graph) -> None:
+    """Entries without first-person pronouns should not include the author node."""
+    group_id = "self-omit"
+    extractor = ExtractNodes(group_id=group_id)
+    result = await extractor(
+        content="Dana and Lee reviewed the rollout plan together.",
+        reference_time=datetime(2024, 4, 3, 9, 0, tzinfo=timezone.utc),
+    )
+
+    assert result.metadata["first_person_detected"] is False
+    assert all(node.name != SELF_ENTITY_NAME for node in result.nodes)

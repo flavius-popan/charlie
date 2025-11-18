@@ -35,7 +35,9 @@ import json
 import logging
 from pathlib import Path
 from typing import Any
+import copy
 
+from pipeline import _dspy_setup  # noqa: F401
 import dspy
 from graphiti_core.nodes import EntityNode, EpisodeType, EpisodicNode
 from graphiti_core.utils.datetime_utils import ensure_utc, utc_now
@@ -43,19 +45,30 @@ from graphiti_core.utils.maintenance.dedup_helpers import (
     DedupCandidateIndexes,
     DedupResolutionState,
     _build_candidate_indexes,
+    _normalize_string_exact,
     _resolve_with_similarity,
 )
+from graphiti_core.utils.maintenance.edge_operations import filter_existing_duplicate_of_edges
 from graphiti_core.utils.ontology_utils.entity_types_utils import validate_entity_types
 from pydantic import BaseModel, Field, model_validator
 
-from pipeline.falkordblite_driver import fetch_entities_by_group, fetch_recent_episodes
+# NOTE: Database imports are intentionally NOT at module level.
+# EntityExtractor is a pure DSPy module with no database dependencies.
+# Database functions are imported locally in ExtractNodes (orchestrator) only.
+# DO NOT move these imports to module level - breaks DSPy contract.
+
 from pipeline.entity_edge_models import entity_types
+from pipeline.self_reference import (
+    build_provisional_self_node,
+    contains_first_person_reference,
+    is_self_entity_name,
+)
 
 
 logger = logging.getLogger(__name__)
 
 
-# Pydantic models for structured output via Outlines
+# Pydantic models for structured DSPy outputs
 class ExtractedEntity(BaseModel):
     """Entity with name and type classification.
 
@@ -82,18 +95,12 @@ class ExtractedEntities(BaseModel):
 
 # DSPy signature for entity extraction
 class EntityExtractionSignature(dspy.Signature):
-    """Extract significant entities from personal journal entries: people, places, organizations, concepts, and activities."""
+    """Extract entities from journal entry."""
 
-    episode_content: str = dspy.InputField(
-        desc="personal journal entry describing experiences, relationships, locations, and reflections"
-    )
-    entity_types: str = dspy.InputField(
-        desc="available entity types: Person, Place, Organization, Concept, Activity, and Entity (fallback for others)"
-    )
+    episode_content: str = dspy.InputField(desc="journal entry text")
+    entity_types: str = dspy.InputField(desc="available entity types")
 
-    extracted_entities: ExtractedEntities = dspy.OutputField(
-        desc="entities mentioned: individuals, specific venues/locations, institutions/groups, abstract topics/themes, and activities/events"
-    )
+    extracted_entities: ExtractedEntities = dspy.OutputField(desc="extracted entities")
 
 
 @dataclass
@@ -111,6 +118,7 @@ class ExtractNodesOutput:
     ]  # Consumed in Stage 5 for DUPLICATE_OF edges
     metadata: dict[str, Any]
     previous_episodes: list[EpisodicNode]  # For Stage 2 edge extraction context
+    raw_llm_output: ExtractedEntities | None = None  # Raw LLM response before EntityNode conversion
 
 
 class EntityExtractor(dspy.Module):
@@ -212,6 +220,13 @@ class ExtractNodes:
         Returns:
             ExtractNodesOutput with episode, resolved nodes, and UUID mappings
         """
+        # Import database functions locally to maintain EntityExtractor's purity for DSPy optimization
+        from pipeline.falkordblite_driver import (  # noqa: PLC0415
+            fetch_entities_by_group,
+            fetch_recent_episodes,
+            fetch_self_entity,
+        )
+
         # Validate entity types using graphiti-core validator
         validate_entity_types(entity_types)
         # Create episode (follows graphiti-core convention)
@@ -238,24 +253,36 @@ class ExtractNodes:
         )
 
         # Stage 1: Extract provisional entities via pure DSPy module
-        provisional_nodes = self._extract_entities(
+        pronoun_detected = contains_first_person_reference(episode.content)
+        canonical_self = None
+        if pronoun_detected:
+            canonical_self = await fetch_self_entity(self.group_id)
+
+        provisional_nodes, raw_extracted = self._extract_entities(
             episode, previous_episodes, entity_types
         )
         logger.info("Extracted %d provisional entities", len(provisional_nodes))
 
+        first_person_detected, self_injected = self._handle_self_reference(
+            provisional_nodes, pronoun_detected, canonical_self
+        )
+        if self_injected:
+            logger.debug("Injected SELF placeholder for group %s", self.group_id)
+
         # Stage 2: Resolve against existing graph (async DB + sync resolution)
         existing_entities = await fetch_entities_by_group(self.group_id)
+        existing_uuid_set = set(existing_entities.keys())
         logger.info("Resolving against %d existing entities", len(existing_entities))
 
-        nodes, uuid_map, duplicate_pairs = self._resolve_entities(
-            provisional_nodes, existing_entities
+        nodes, uuid_map, duplicate_pairs = await self._resolve_entities(
+            provisional_nodes,
+            existing_entities,
+            episode,
+            previous_episodes,
+            entity_types,
         )
 
-        new_entities = sum(
-            1
-            for provisional_uuid, resolved_uuid in uuid_map.items()
-            if provisional_uuid == resolved_uuid
-        )
+        new_entities = sum(1 for node in nodes if node.uuid not in existing_uuid_set)
         metadata = {
             "extracted_count": len(provisional_nodes),
             "resolved_count": len(nodes),
@@ -266,6 +293,9 @@ class ExtractNodes:
                 [p for p in duplicate_pairs if p[0].name.lower() != p[1].name.lower()]
             ),
             "new_entities": new_entities,
+            "first_person_detected": first_person_detected,
+            "self_node_injected": self_injected,
+            "existing_entity_uuids": list(existing_uuid_set),
         }
 
         logger.info(
@@ -284,6 +314,7 @@ class ExtractNodes:
             duplicate_pairs=duplicate_pairs,
             metadata=metadata,
             previous_episodes=previous_episodes,
+            raw_llm_output=raw_extracted,
         )
 
     def _extract_entities(
@@ -291,11 +322,14 @@ class ExtractNodes:
         episode: EpisodicNode,
         previous_episodes: list[EpisodicNode],
         entity_types: dict | None,
-    ) -> list[EntityNode]:
+    ) -> tuple[list[EntityNode], ExtractedEntities]:
         """Extract entities via EntityExtractor module.
 
         Note: previous_episodes are fetched for future use (reflexion, classification)
         but NOT used in initial entity extraction, following graphiti-core's approach.
+
+        Returns:
+            Tuple of (converted EntityNode objects, raw ExtractedEntities from LLM)
         """
         entity_types_json = self._format_entity_types(entity_types)
 
@@ -321,31 +355,65 @@ class ExtractNodes:
             )
             nodes.append(node)
 
-        return nodes
+        return nodes, extracted
 
-    def _resolve_entities(
+    def _handle_self_reference(
+        self,
+        nodes: list[EntityNode],
+        pronoun_detected: bool,
+        canonical_self: EntityNode | None,
+    ) -> tuple[bool, bool]:
+        """Normalize how SELF is represented based on pronoun usage."""
+        has_llm_self = any(is_self_entity_name(node.name) for node in nodes)
+        if has_llm_self and canonical_self is not None:
+            for idx, node in enumerate(list(nodes)):
+                if is_self_entity_name(node.name):
+                    nodes[idx] = copy.deepcopy(canonical_self)
+
+        if not pronoun_detected and has_llm_self:
+            nodes[:] = [node for node in nodes if not is_self_entity_name(node.name)]
+            has_llm_self = False
+
+        injected = False
+        if pronoun_detected and not has_llm_self:
+            if canonical_self is not None:
+                nodes.append(copy.deepcopy(canonical_self))
+            else:
+                nodes.append(build_provisional_self_node(self.group_id))
+            has_llm_self = True
+            injected = True
+
+        first_person_detected = pronoun_detected or has_llm_self
+        return first_person_detected, injected
+
+    async def _resolve_entities(
         self,
         provisional_nodes: list[EntityNode],
         existing_nodes: dict[str, EntityNode],
+        episode: EpisodicNode,
+        previous_episodes: list[EpisodicNode],
+        entity_types: dict | None,
     ) -> tuple[list[EntityNode], dict[str, str], list[tuple[EntityNode, EntityNode]]]:
-        """Resolve provisional nodes using graphiti-core's deterministic matching.
+        """Resolve provisional nodes using graphiti-core's deterministic + LLM passes."""
+        # Import database driver locally to maintain EntityExtractor's purity for DSPy optimization
+        from pipeline.falkordblite_driver import get_driver  # noqa: PLC0415
 
-        Two-pass resolution:
-        1. Exact match: Normalized string equality
-        2. Fuzzy match: MinHash LSH + Jaccard similarity (threshold=0.9)
-
-        LLM disambiguation (Pass 3) is stubbed for future implementation.
-        """
         if not self.dedupe_enabled:
             uuid_map = {node.uuid: node.uuid for node in provisional_nodes}
             return provisional_nodes, uuid_map, []
 
-        # Build candidate indexes for fuzzy matching
         indexes: DedupCandidateIndexes = _build_candidate_indexes(
             list(existing_nodes.values())
         )
+        logger.debug(
+            "Existing candidates: %s",
+            [(node.name, node.uuid) for node in existing_nodes.values()],
+        )
+        logger.debug(
+            "Normalized existing keys: %s",
+            list(indexes.normalized_existing.keys()),
+        )
 
-        # Track resolution state
         state = DedupResolutionState(
             resolved_nodes=[None] * len(provisional_nodes),
             uuid_map={},
@@ -353,16 +421,14 @@ class ExtractNodes:
             duplicate_pairs=[],
         )
 
-        # Pass 1 & 2: Exact + fuzzy matching (deterministic)
         _resolve_with_similarity(provisional_nodes, indexes, state)
+        _resolve_exact_names(provisional_nodes, indexes, state)
 
-        # Pass 3: LLM disambiguation (stubbed - treat unresolved as new)
         for idx in state.unresolved_indices:
             node = provisional_nodes[idx]
             state.resolved_nodes[idx] = node
             state.uuid_map[node.uuid] = node.uuid
 
-        # Filter out None entries and deduplicate by canonical UUID
         unique_nodes: dict[str, EntityNode] = {}
         for node in state.resolved_nodes:
             if node is None:
@@ -370,7 +436,11 @@ class ExtractNodes:
             if node.uuid not in unique_nodes:
                 unique_nodes[node.uuid] = node
 
-        return list(unique_nodes.values()), state.uuid_map, state.duplicate_pairs
+        duplicate_pairs = await filter_existing_duplicate_of_edges(
+            get_driver(), state.duplicate_pairs
+        )
+
+        return list(unique_nodes.values()), state.uuid_map, duplicate_pairs
 
     def _format_entity_types(self, entity_types: dict | None) -> str:
         """Format entity type schemas for entity_types input field."""
@@ -431,10 +501,14 @@ class ExtractNodes:
 
     def _extract_with_reflexion(self, episode, previous_episodes, entity_types):
         """TODO: Add reflexion loop (EntityReflexionSignature, max 3 iterations)."""
-        return self._extract_entities(episode, previous_episodes, entity_types)
+        nodes, _ = self._extract_entities(episode, previous_episodes, entity_types)
+        return nodes
 
     async def _collect_candidates_with_embeddings(self, provisional_nodes, group_id):
         """TODO: Hybrid search (embedding + text) when Qwen embedder lands."""
+        # Import database function locally to maintain EntityExtractor's purity for DSPy optimization
+        from pipeline.falkordblite_driver import fetch_entities_by_group  # noqa: PLC0415
+
         return await fetch_entities_by_group(group_id)
 
     async def _disambiguate_with_llm(self, unresolved, candidates, episode):
@@ -447,3 +521,32 @@ __all__ = [
     "ExtractNodes",
     "ExtractNodesOutput",
 ]
+def _resolve_exact_names(
+    provisional_nodes: list[EntityNode],
+    indexes: DedupCandidateIndexes,
+    state: DedupResolutionState,
+) -> None:
+    """Resolve nodes via case-insensitive exact-name hits before fuzzy matching."""
+    for idx, node in enumerate(provisional_nodes):
+        if state.resolved_nodes[idx] is not None:
+            continue
+        normalized = _normalize_string_exact(node.name)
+        if not normalized:
+            continue
+        candidates = indexes.normalized_existing.get(normalized)
+        if not candidates:
+            continue
+        canonical = candidates[0]
+        logger.debug(
+            "Exact name resolved %s -> %s",
+            node.name,
+            canonical.uuid,
+        )
+        state.resolved_nodes[idx] = canonical
+        state.uuid_map[node.uuid] = canonical.uuid
+        if canonical.uuid != node.uuid:
+            state.duplicate_pairs.append((node, canonical))
+        try:
+            state.unresolved_indices.remove(idx)
+        except ValueError:
+            pass

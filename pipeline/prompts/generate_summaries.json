@@ -2,35 +2,17 @@
   "generator": {
     "traces": [],
     "train": [],
-    "demos": [
-      {
-        "augmented": true,
-        "summary_context": "{\"node\": {\"name\": \"Grandma Rosa\", \"summary\": \"Recovering slowly from pneumonia.\", \"entity_types\": [\"Entity\", \"Person\"], \"attributes\": {\"relationship_type\": \"family\", \"closeness\": 0.92, \"overall_valence\": 0.1}}, \"episode_content\": \"Sat with Grandma Rosa at St. Jude's while Dr. Yates walked her through tomorrow's surgery.\", \"previous_episodes\": [\"Grandma Rosa is still regaining strength after pneumonia.\"]}",
-        "summary": {
-          "summary": "Grandma Rosa is recovering from pneumonia and preparing for surgery, with Dr. Yates guiding her through the process while we sat together at St. Jude's."
-        }
-      },
-      {
-        "summary_context": "{\"node\": {\"name\": \"Kai\", \"summary\": \"\", \"entity_types\": [\"Entity\", \"Person\"], \"attributes\": {\"relationship_type\": \"friend\", \"closeness\": 0.78, \"overall_valence\": 0.6}}, \"episode_content\": \"Kai and I biked the Embarcadero at dawn. He vented about finishing his art school portfolio.\", \"previous_episodes\": [\"Kai stayed over last weekend to prep his art school interviews.\"]}",
-        "summary": {
-          "summary": "Kai welcomed a sunrise bike ride down the Embarcadero with me, spilling anxious portfolio talk until he felt seen."
-        },
-        "key_phrases": [
-          "sunrise ride",
-          "portfolio jitters"
-        ]
-      }
-    ],
+    "demos": [],
     "signature": {
-      "instructions": "Generate concise entity summaries from journal context.",
+      "instructions": "Generate a concise yet engaging entity summary based on the provided journal context. The summary should encapsulate the essence of the entity, which can be a person, organization, or place, while incorporating details mentioned in the episode content. \n\n### Detailed Task Description:\n1. **Input Structure**:\n   - You will receive a JSON object containing:\n     - `node`: Information about the entity, including its `name`, `summary`, `entity_types`, and `attributes`.\n     - `episode_content`: A personal account or observation related to the entity.\n     - `previous_episodes`: Context from earlier entries that may provide additional insight.\n\n2. **Output Requirements**:\n   - The summary should:\n     - Clearly state the name and type of the entity.\n     - Highlight key attributes or recent developments related to the entity.\n\n3. **Tone and Style**:\n   - Use first-person language where appropriate to enhance engagement.\n\n4. **Conciseness**:\n   - The summary should be brief, ideally consisting of two to two sentences, while still conveying all essential information.\n\n5. **Examples of Improvements**:\n   - Strive for clarity and avoid overly complex sentences.\n\nBy following these guidelines, you will create summaries that effectively communicate the significance of the entities.",
       "fields": [
         {
           "prefix": "Summary Context:",
-          "description": "entity and journal context"
+          "description": "entity and episodes"
         },
         {
           "prefix": "Summary:",
-          "description": "concise summary of the entity"
+          "description": "concise summary"
         }
       ]
     },
@@ -39,7 +21,7 @@
   "metadata": {
     "dependency_versions": {
       "python": "3.13",
-      "dspy": "3.0.3",
+      "dspy": "3.0.4",
       "cloudpickle": "3.1"
     }
   }

@@ -136,5 +136,6 @@ async def test_add_journal_can_skip_persistence(isolated_graph) -> None:
     )
 
     stats_after = await db_utils.get_db_stats()
-    assert stats_after == stats_before
+    assert stats_after["episodes"] == stats_before["episodes"]
+    assert stats_after["entities"] == stats_before["entities"] + 1
     assert result.metadata["persistence"] == {"status": "skipped"}

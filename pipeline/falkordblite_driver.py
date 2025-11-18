@@ -15,7 +15,8 @@ from typing import Any, Iterable
 
 from graphiti_core.driver.driver import GraphDriver, GraphDriverSession, GraphProvider
 from graphiti_core.edges import EntityEdge, EpisodicEdge
-from graphiti_core.embedder.client import EmbedderClient
+from graphiti_core.embedder.client import EmbedderClient, EMBEDDING_DIM
+from graphiti_core.helpers import get_default_group_id
 from graphiti_core.nodes import EntityNode, EpisodicNode, EpisodeType
 from graphiti_core.utils.bulk_utils import add_nodes_and_edges_bulk
 from graphiti_core.utils.datetime_utils import convert_datetimes_to_strings, utc_now
@@ -27,6 +28,12 @@ from settings import (
     FALKORLITE_TCP_HOST,
     FALKORLITE_TCP_PASSWORD,
     FALKORLITE_TCP_PORT,
+    GROUP_ID,
+)
+from pipeline.self_reference import (
+    SELF_ENTITY_LABELS,
+    SELF_ENTITY_NAME,
+    SELF_ENTITY_UUID,
 )
 
 try:  # Optional dependency in CI / unit tests
@@ -38,6 +45,42 @@ try:  # Optional, used for graceful shutdown observation
     import psutil  # type: ignore
 except Exception:  # noqa: BLE001
     psutil = None  # type: ignore[assignment]
+
+STOPWORDS = [
+    'a',
+    'is',
+    'the',
+    'an',
+    'and',
+    'are',
+    'as',
+    'at',
+    'be',
+    'but',
+    'by',
+    'for',
+    'if',
+    'in',
+    'into',
+    'it',
+    'no',
+    'not',
+    'of',
+    'on',
+    'or',
+    'such',
+    'that',
+    'their',
+    'then',
+    'there',
+    'these',
+    'they',
+    'this',
+    'to',
+    'was',
+    'will',
+    'with',
+]
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +98,11 @@ _tcp_server = {
     "port": FALKORLITE_TCP_PORT,
     "password": FALKORLITE_TCP_PASSWORD,
 }
+
+_graph_initialized = False
+_graph_init_lock: asyncio.Lock | None = None
+_self_seed_lock: asyncio.Lock | None = None
+_seeded_self_groups: set[str] = set()
 
 
 def _tcp_server_active() -> bool:
@@ -108,6 +156,52 @@ def get_tcp_server_password() -> str | None:
     return _tcp_server["password"]
 
 
+async def ensure_graph_ready(*, delete_existing: bool = False) -> None:
+    """Build Graphiti indices/constraints once per process."""
+    global _graph_initialized, _graph_init_lock, _seeded_self_groups
+    if delete_existing:
+        _graph_initialized = False
+        _seeded_self_groups.clear()
+
+    if _graph_initialized and not delete_existing:
+        return
+
+    if _graph_init_lock is None:
+        _graph_init_lock = asyncio.Lock()
+
+    async with _graph_init_lock:
+        if _graph_initialized and not delete_existing:
+            return
+        driver = _get_driver()
+        try:
+            await driver.build_indices_and_constraints(
+                delete_existing=delete_existing,
+            )
+        except ImportError as exc:  # pragma: no cover - falkordb optional
+            logger.warning(
+                "Skipping Falkor index bootstrap because dependencies are missing: %s",
+                exc,
+            )
+        _graph_initialized = True
+
+
+async def ensure_self_entity(group_id: str, name: str = SELF_ENTITY_NAME) -> None:
+    """Seed the deterministic SELF entity for journaling if it's missing."""
+    normalized_group = group_id or DEFAULT_SELF_GROUP
+    if normalized_group in _seeded_self_groups:
+        return
+
+    global _self_seed_lock
+    if _self_seed_lock is None:
+        _self_seed_lock = asyncio.Lock()
+
+    async with _self_seed_lock:
+        if normalized_group in _seeded_self_groups:
+            return
+        await asyncio.to_thread(_merge_self_entity_sync, normalized_group, name)
+        _seeded_self_groups.add(normalized_group)
+
+
 def _build_serverconfig() -> dict[str, str] | None:
     if not _tcp_server_active():
         return None
@@ -158,6 +252,40 @@ def _ensure_graph():
             return None
 
     return _graph
+
+
+def _merge_self_entity_sync(group_id: str, name: str) -> None:
+    graph = _ensure_graph()
+    if graph is None:
+        return
+
+    now_literal = to_cypher_literal(utc_now().isoformat())
+    summary_literal = to_cypher_literal(
+        "Represents the journal author for first-person perspective anchoring."
+    )
+    labels_literal = to_cypher_literal(json.dumps(SELF_ENTITY_LABELS))
+    attributes_literal = to_cypher_literal(json.dumps({}))
+
+    query = f"""
+    MERGE (self:Entity:Person {{uuid: {SELF_UUID_LITERAL}}})
+    SET self.name = {to_cypher_literal(name)},
+        self.group_id = COALESCE(self.group_id, {to_cypher_literal(group_id)}),
+        self.labels = {labels_literal},
+        self.summary = CASE
+            WHEN self.summary = '' OR self.summary IS NULL THEN {summary_literal}
+            ELSE self.summary
+        END,
+        self.attributes = CASE
+            WHEN self.attributes = '' OR self.attributes IS NULL THEN {attributes_literal}
+            ELSE self.attributes
+        END,
+        self.created_at = COALESCE(self.created_at, {now_literal})
+    RETURN self.uuid
+    """
+    try:
+        graph.query(query)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Failed to seed SELF entity: %s", exc)
 
 
 def _pid_exists(pid: int) -> bool:
@@ -218,7 +346,12 @@ def _send_signal(pid: int, sig: signal.Signals) -> None:
 
 
 def _ensure_redis_stopped(redis_client) -> None:
-    """Best-effort shutdown of the embedded redis-server process."""
+    """Best-effort shutdown of the embedded redis-server process.
+
+    Uses direct SIGTERM instead of the blocking shutdown() command to avoid
+    a known redis-py client timeout issue that causes 5-10 second delays.
+    See: https://github.com/redis/redis-py/issues/3704
+    """
     if redis_client is None:
         return
 
@@ -231,14 +364,6 @@ def _ensure_redis_stopped(redis_client) -> None:
     except Exception:  # noqa: BLE001
         logger.debug("Failed to disconnect redis connection pool cleanly", exc_info=True)
 
-    try:
-        redis_client.shutdown(save=True, now=True, force=True)
-    except Exception:  # noqa: BLE001
-        logger.debug("Redis SHUTDOWN command failed; will escalate", exc_info=True)
-    else:
-        if _wait_for_exit(pid, timeout=5.0):
-            return
-
     _send_signal(pid, signal.SIGTERM)
     if _wait_for_exit(pid, timeout=3.0):
         return
@@ -249,22 +374,21 @@ def _ensure_redis_stopped(redis_client) -> None:
 
 
 def _close_db():
-    """Ensure the embedded FalkorDB process shuts down cleanly."""
+    """Ensure the embedded FalkorDB process shuts down cleanly.
+
+    Skips db.close() because it calls client.shutdown() which has a
+    known blocking timeout issue. We handle shutdown directly via SIGTERM.
+    """
     global _db, _graph
     with _db_lock:
         if _db is None:
             return
         client = getattr(_db, "client", None)
         try:
-            _db.close()
-        except Exception:  # noqa: BLE001
-            logger.debug("Failed to close FalkorDBLite cleanly", exc_info=True)
+            _ensure_redis_stopped(client)
         finally:
-            try:
-                _ensure_redis_stopped(client)
-            finally:
-                _db = None
-                _graph = None
+            _db = None
+            _graph = None
 
 
 def shutdown_falkordb():
@@ -278,6 +402,11 @@ atexit.register(_close_db)
 def get_falkordb_graph():
     """Return the shared FalkorDB graph instance (None if unavailable)."""
     return _ensure_graph()
+
+
+def get_driver() -> GraphDriver:
+    """Expose the shared Falkor Lite driver."""
+    return _get_driver()
 
 
 def to_cypher_literal(value: Any) -> str:
@@ -294,6 +423,10 @@ def to_cypher_literal(value: Any) -> str:
     if isinstance(value, (list, dict)):
         return json.dumps(value)
     return json.dumps(value)
+
+
+SELF_UUID_LITERAL = to_cypher_literal(str(SELF_ENTITY_UUID))
+DEFAULT_SELF_GROUP = GROUP_ID or get_default_group_id(GraphProvider.FALKORDB)
 
 
 def _decode_value(value: Any) -> Any:
@@ -430,6 +563,7 @@ async def fetch_recent_episodes(
     limit: int,
 ) -> list[EpisodicNode]:
     """Fetch the most recent episodes for a group."""
+    await ensure_graph_ready()
     return await asyncio.to_thread(
         _fetch_recent_episodes_sync,
         group_id,
@@ -446,7 +580,7 @@ def _fetch_entities_by_group_sync(group_id: str) -> dict[str, EntityNode]:
     group_literal = to_cypher_literal(group_id)
     query = f"""
     MATCH (n:Entity)
-    WHERE n.group_id = {group_literal}
+    WHERE n.group_id = {group_literal} OR n.uuid = {SELF_UUID_LITERAL}
     RETURN n.uuid, n.name, n.summary, n.labels, n.attributes, n.created_at
     """
 
@@ -479,7 +613,49 @@ def _fetch_entities_by_group_sync(group_id: str) -> dict[str, EntityNode]:
 
 async def fetch_entities_by_group(group_id: str) -> dict[str, EntityNode]:
     """Fetch all entities in the given group keyed by UUID."""
+    await ensure_graph_ready()
+    await ensure_self_entity(group_id)
     return await asyncio.to_thread(_fetch_entities_by_group_sync, group_id)
+
+
+def _fetch_self_entity_sync() -> EntityNode | None:
+    graph = _ensure_graph()
+    if graph is None:
+        return None
+
+    query = f"""
+    MATCH (n:Entity {{uuid: {SELF_UUID_LITERAL}}})
+    RETURN n.uuid, n.name, n.summary, n.labels, n.attributes, n.created_at, n.group_id
+    LIMIT 1
+    """
+
+    try:
+        result = graph.query(query)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("FalkorDB query failed (fetch_self_entity): %s", exc)
+        return None
+
+    rows = list(_iter_statistics_rows(result))
+    if not rows:
+        return None
+
+    uuid, name, summary, labels, attributes, created_at, group_id = rows[0]
+    return EntityNode(
+        uuid=str(uuid or ""),
+        name=str(name or ""),
+        summary=str(summary or ""),
+        labels=_normalize_string_list(_decode_json(labels, ["Entity"])),
+        attributes=_decode_json(attributes, {}),
+        created_at=_parse_datetime(created_at) or utc_now(),
+        group_id=str(group_id or ""),
+    )
+
+
+async def fetch_self_entity(group_id: str | None = None) -> EntityNode | None:
+    """Return the canonical SELF entity for cloning in extraction stages."""
+    await ensure_graph_ready()
+    await ensure_self_entity(group_id or DEFAULT_SELF_GROUP)
+    return await asyncio.to_thread(_fetch_self_entity_sync)
 
 
 def _fetch_entity_edges_by_group_sync(group_id: str) -> dict[str, EntityEdge]:
@@ -550,6 +726,7 @@ async def fetch_entity_edges_by_group(group_id: str) -> dict[str, EntityEdge]:
     Returns:
         Dict mapping edge_uuid -> EntityEdge
     """
+    await ensure_graph_ready()
     return await asyncio.to_thread(_fetch_entity_edges_by_group_sync, group_id)
 
 
@@ -582,6 +759,7 @@ def _get_db_stats_sync() -> dict[str, int]:
 
 async def get_db_stats() -> dict[str, int]:
     """Get database statistics (episode and entity counts)."""
+    await ensure_graph_ready()
     return await asyncio.to_thread(_get_db_stats_sync)
 
 
@@ -601,7 +779,10 @@ def _reset_database_sync() -> str:
 
 async def reset_database() -> str:
     """Clear all graph data (DESTRUCTIVE)."""
-    return await asyncio.to_thread(_reset_database_sync)
+    result = await asyncio.to_thread(_reset_database_sync)
+    await ensure_graph_ready(delete_existing=True)
+    await ensure_self_entity(GROUP_ID)
+    return result
 
 
 def _prepare_dicts(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -770,9 +951,40 @@ class FalkorLiteDriver(GraphDriver):
         self._database = "falkordb-lite"
 
     async def execute_query(self, cypher_query_, **kwargs: Any):
-        raise NotImplementedError(
-            "Direct query execution is not implemented for FalkorLiteDriver"
-        )
+        graph = _ensure_graph()
+        if graph is None:
+            raise RuntimeError("FalkorDB Lite is unavailable")
+
+        params = dict(kwargs)
+        params.pop("routing_", None)
+        params = convert_datetimes_to_strings(params)
+
+        def _inject(query: str, substitutions: dict[str, Any]) -> str:
+            for key, value in substitutions.items():
+                placeholder = f"${key}"
+                literal = to_cypher_literal(value)
+                query = query.replace(placeholder, literal)
+            return query
+
+        formatted_query = _inject(cypher_query_, params)
+        result = await asyncio.to_thread(graph.query, formatted_query, None)
+
+        raw = getattr(result, "_raw_response", None)
+        records: list[dict[str, Any]] = []
+        header: list[str] = []
+        rows = []
+        if isinstance(raw, list) and len(raw) >= 2:
+            header = [_decode_value(col[1]) for col in raw[0]]
+            rows = raw[1]
+
+        for row in rows:
+            record: dict[str, Any] = {}
+            for idx, field_name in enumerate(header):
+                value = row[idx][1] if idx < len(row) else None
+                record[str(field_name)] = _decode_value(value)
+            records.append(record)
+
+        return records, header, None
 
     def session(self, database: str | None = None) -> GraphDriverSession:
         return FalkorLiteSession()
@@ -780,8 +992,110 @@ class FalkorLiteDriver(GraphDriver):
     async def close(self):
         return None
 
+    async def build_indices_and_constraints(self, delete_existing: bool = False):
+        from graphiti_core.graph_queries import get_range_indices
+
+        if delete_existing:
+            await self.delete_all_indexes()
+
+        # Get range indices from graphiti-core
+        index_queries = get_range_indices(self.provider)
+
+        # Add fulltext indices - FalkorDB Lite supports them natively
+        # Using standard English stopwords (same as graphiti-core's falkordb_driver)
+        stopwords = ['a', 'is', 'the', 'an', 'and', 'are', 'as', 'at', 'be', 'but',
+                     'by', 'for', 'if', 'in', 'into', 'it', 'no', 'not', 'of', 'on',
+                     'or', 'such', 'that', 'their', 'then', 'there', 'these', 'they',
+                     'this', 'to', 'was', 'will', 'with']
+
+        fulltext_queries = [
+            f"""CALL db.idx.fulltext.createNodeIndex(
+                {{label: 'Episodic', stopwords: {stopwords}}},
+                'content', 'source', 'source_description', 'group_id'
+            )""",
+            f"""CALL db.idx.fulltext.createNodeIndex(
+                {{label: 'Entity', stopwords: {stopwords}}},
+                'name', 'summary', 'group_id'
+            )""",
+            f"""CALL db.idx.fulltext.createNodeIndex(
+                {{label: 'Community', stopwords: {stopwords}}},
+                'name', 'summary'
+            )""",
+        ]
+
+        index_queries.extend(fulltext_queries)
+
+        for query in index_queries:
+            try:
+                await self.execute_query(query)
+            except Exception as exc:
+                if "already indexed" in str(exc).lower():
+                    logger.debug("Index already exists, skipping: %s", exc)
+                else:
+                    raise
+
     async def delete_all_indexes(self):
         logger.debug("FalkorDB Lite does not expose index management APIs")
+
+    @staticmethod
+    def _sanitize_fulltext(query: str) -> str:
+        separator_map = str.maketrans(
+            {
+                ',': ' ',
+                '.': ' ',
+                '<': ' ',
+                '>': ' ',
+                '{': ' ',
+                '}': ' ',
+                '[': ' ',
+                ']': ' ',
+                '"': ' ',
+                "'": ' ',
+                ':': ' ',
+                ';': ' ',
+                '!': ' ',
+                '@': ' ',
+                '#': ' ',
+                '$': ' ',
+                '%': ' ',
+                '^': ' ',
+                '&': ' ',
+                '*': ' ',
+                '(': ' ',
+                ')': ' ',
+                '-': ' ',
+                '+': ' ',
+                '=': ' ',
+                '~': ' ',
+                '?': ' ',
+            }
+        )
+        sanitized = query.translate(separator_map)
+        return " ".join(sanitized.split())
+
+    def build_fulltext_query(
+        self, query: str, group_ids: list[str] | None = None, max_query_length: int = 128
+    ) -> str:
+        """Simplified fulltext query builder for local Falkor Lite."""
+        group_filter = (
+            f"(@group_id:{'|'.join(group_ids)})" if group_ids and len(group_ids) > 0 else ""
+        )
+        sanitized_query = self._sanitize_fulltext(query)
+        filtered_words = [word for word in sanitized_query.split() if word.lower() not in STOPWORDS]
+        sanitized_query = " | ".join(filtered_words)
+
+        if len(sanitized_query.split(" ")) + len(group_filter.split(" ")) >= max_query_length:
+            return ""
+
+        if not sanitized_query and not group_filter:
+            return ""
+
+        if not sanitized_query:
+            return group_filter
+
+        if group_filter:
+            return f"{group_filter} ({sanitized_query})"
+        return f"({sanitized_query})"
 
 
 _driver: FalkorLiteDriver | None = None
@@ -791,7 +1105,7 @@ class NullEmbedder(EmbedderClient):
     """Fallback embedder that returns empty vectors when embeddings are unavailable."""
 
     async def create(self, input_data):  # type: ignore[override]
-        return []
+        return [[0.0] * EMBEDDING_DIM for _ in input_data]
 
 
 _embedder = NullEmbedder()
@@ -820,6 +1134,8 @@ async def persist_episode_and_nodes(
     episodic_edges: list[EpisodicEdge] | None = None,
 ) -> dict[str, Any]:
     """Persist pipeline outputs using graphiti-core's bulk writer."""
+    await ensure_graph_ready()
+    await ensure_self_entity(episode.group_id or GROUP_ID)
     edges = edges or []
     episodic_edges = episodic_edges or []
 
@@ -861,6 +1177,9 @@ __all__ = [
     "FalkorLiteSession",
     "NullEmbedder",
     "disable_tcp_server",
+    "ensure_graph_ready",
+    "ensure_self_entity",
+    "fetch_self_entity",
     "enable_tcp_server",
     "fetch_entities_by_group",
     "fetch_entity_edges_by_group",
@@ -869,6 +1188,7 @@ __all__ = [
     "get_tcp_server_password",
     "get_db_stats",
     "get_falkordb_graph",
+    "get_driver",
     "persist_episode_and_nodes",
     "reset_database",
     "to_cypher_literal",
