@@ -331,3 +331,122 @@ async def test_multiple_entries_same_journal(isolated_graph):
     count = data_rows[0][0][1] if data_rows else 0
 
     assert count == 3
+
+
+@pytest.mark.asyncio
+async def test_content_with_backslashes(isolated_graph):
+    """Test that content with backslashes is persisted correctly.
+
+    This tests the Cypher string escaping fix for Critical Issue #2.
+    Without proper escaping, backslashes can cause query syntax errors.
+    """
+    test_cases = [
+        ("Single backslash: \\", "Single backslash: \\"),
+        ("Double backslash: \\\\", "Double backslash: \\\\"),
+        ("Windows path: C:\\Users\\Alice", "Windows path: C:\\Users\\Alice"),
+        ("Trailing backslash: test\\", "Trailing backslash: test\\"),
+        ("Backslash before quote: test\\'end", "Backslash before quote: test\\'end"),
+        ("Multiple escapes: \\n\\t\\r", "Multiple escapes: \\n\\t\\r"),
+    ]
+
+    for content, expected in test_cases:
+        uuid = await add_journal_entry(content)
+
+        # Query back and verify exact content match
+        query = f"""
+        MATCH (e:Episodic {{uuid: {to_cypher_literal(uuid)}}})
+        RETURN e.content
+        """
+        result = isolated_graph.query(query)
+        data_rows = result._raw_response[1] if len(result._raw_response) > 1 else []
+        assert len(data_rows) == 1, f"Expected 1 row for content: {content}"
+
+        stored_content = data_rows[0][0][1].decode('utf-8')
+        assert stored_content == expected, \
+            f"Content mismatch for input '{content}': got '{stored_content}', expected '{expected}'"
+
+
+@pytest.mark.asyncio
+async def test_content_with_special_characters(isolated_graph):
+    """Test content with various special characters that need escaping."""
+    test_cases = [
+        "Single quote: it's working",
+        "Double quote: she said \"hello\"",
+        "Mixed quotes: it's \"nice\" weather",
+        "Emoji content: Hello 👋 World 🌍",
+        "Unicode: café, naïve, 日本語",
+        "Newlines:\nLine 1\nLine 2\nLine 3",
+        "Tabs:\tIndented\tContent",
+        "Special chars: @#$%^&*()_+-=[]{}|;:,.<>?",
+    ]
+
+    for content in test_cases:
+        uuid = await add_journal_entry(content)
+
+        # Query back and verify
+        query = f"""
+        MATCH (e:Episodic {{uuid: {to_cypher_literal(uuid)}}})
+        RETURN e.content
+        """
+        result = isolated_graph.query(query)
+        data_rows = result._raw_response[1] if len(result._raw_response) > 1 else []
+        assert len(data_rows) == 1
+
+        stored_content = data_rows[0][0][1].decode('utf-8')
+        assert stored_content == content, \
+            f"Content mismatch: got '{stored_content}', expected '{content}'"
+
+
+@pytest.mark.asyncio
+async def test_auto_generated_title_format(isolated_graph):
+    """Test that auto-generated titles are human-readable."""
+    from datetime import datetime, timezone
+
+    reference_time = datetime(2024, 11, 18, 14, 30, 0, tzinfo=timezone.utc)
+
+    uuid = await add_journal_entry(
+        content="Test entry",
+        reference_time=reference_time
+    )
+
+    query = f"""
+    MATCH (e:Episodic {{uuid: {to_cypher_literal(uuid)}}})
+    RETURN e.name
+    """
+    result = isolated_graph.query(query)
+    data_rows = result._raw_response[1] if len(result._raw_response) > 1 else []
+    title = data_rows[0][0][1].decode('utf-8')
+
+    assert title == "Monday Nov 18, 2024"
+
+
+@pytest.mark.asyncio
+async def test_concurrent_same_journal_writes(isolated_graph):
+    """Test that concurrent writes to the SAME journal are properly serialized.
+
+    This verifies that per-journal locking works correctly and prevents race conditions.
+    """
+    import asyncio
+
+    async def write_entry(index: int):
+        """Write an entry and return its UUID."""
+        return await add_journal_entry(
+            f"Concurrent entry {index}",
+            journal="shared-journal"
+        )
+
+    # Write 10 entries concurrently to the same journal
+    uuids = await asyncio.gather(*[write_entry(i) for i in range(10)])
+
+    # All should succeed and have unique UUIDs
+    assert len(uuids) == 10
+    assert len(set(uuids)) == 10, "All UUIDs should be unique"
+
+    # Verify all entries persisted
+    import backend.database as db_utils
+    graph = db_utils.get_falkordb_graph("shared-journal")
+    result = graph.query(
+        "MATCH (e:Episodic {group_id: 'shared-journal'}) RETURN count(e)"
+    )
+    count = result._raw_response[1][0][0][1] if result._raw_response[1] else 0
+    assert count == 10, f"Expected 10 entries, found {count}"

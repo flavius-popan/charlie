@@ -86,11 +86,15 @@ _db = None
 _graphs: dict[str, Any] = {}  # Cache of graph instances per journal
 _graph_locks: dict[str, Lock] = {}  # Per-journal locks for thread safety
 _db_unavailable = False
+_shutdown_requested = False  # Fail-fast flag to reject operations during shutdown
 
 _graph_initialized: dict[str, bool] = {}  # Per-journal initialization tracking
 _graph_init_lock = None
 _seeded_self_groups: set[str] = set()
 _self_seed_lock = None
+
+# Threading lock to protect asyncio.Lock creation (must use threading.Lock, not asyncio.Lock)
+_asyncio_lock_creation_lock = Lock()
 
 # TCP server configuration
 _tcp_server = {
@@ -105,7 +109,13 @@ DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 
 def to_cypher_literal(value: Any) -> str:
-    """Convert Python values into Cypher literals (FalkorDB lacks parameters)."""
+    """Convert Python values into Cypher literals (FalkorDB lacks parameters).
+
+    Properly escapes special characters in strings for Cypher queries:
+    - Backslashes must be escaped first (before quotes)
+    - Single quotes are then escaped
+    - This prevents malformed queries and ensures content integrity
+    """
     if value is None:
         return "null"
     if isinstance(value, bool):
@@ -113,7 +123,9 @@ def to_cypher_literal(value: Any) -> str:
     if isinstance(value, (int, float)):
         return str(value)
     if isinstance(value, str):
-        escaped = value.replace("'", "\\'")
+        # CRITICAL: Escape backslashes FIRST, then quotes
+        # This prevents content like "C:\Users\" from creating malformed queries
+        escaped = value.replace("\\", "\\\\").replace("'", "\\'")
         return f"'{escaped}'"
     if isinstance(value, (list, dict)):
         return json.dumps(value)
@@ -360,8 +372,15 @@ def _close_db():
 
     Skips db.close() because it calls client.shutdown() which has a
     known blocking timeout issue. We handle shutdown directly via SIGTERM.
+
+    Sets shutdown flag to fail-fast reject any new operations attempting to
+    start during shutdown (no waiting - operations fail immediately).
     """
-    global _db, _graphs, _graph_locks
+    global _db, _graphs, _graph_locks, _shutdown_requested
+
+    # Set shutdown flag FIRST (before lock) for immediate fail-fast
+    _shutdown_requested = True
+
     with _db_lock:
         if _db is None:
             return
@@ -702,8 +721,14 @@ async def ensure_graph_ready(journal: str = DEFAULT_JOURNAL, *, delete_existing:
     if _graph_initialized.get(journal, False) and not delete_existing:
         return
 
-    if _graph_init_lock is None:
-        _graph_init_lock = asyncio.Lock()
+    # Thread-safe asyncio.Lock initialization
+    # Use threading.Lock to protect asyncio.Lock creation from race conditions
+    # Check if lock is bound to current event loop (recreate if needed)
+    current_loop = asyncio.get_running_loop()
+    if _graph_init_lock is None or getattr(_graph_init_lock, '_loop', None) != current_loop:
+        with _asyncio_lock_creation_lock:
+            if _graph_init_lock is None or getattr(_graph_init_lock, '_loop', None) != current_loop:
+                _graph_init_lock = asyncio.Lock()
 
     async with _graph_init_lock:
         if _graph_initialized.get(journal, False) and not delete_existing:
@@ -769,9 +794,15 @@ async def ensure_self_entity(journal: str, name: str = SELF_ENTITY_NAME) -> None
     if journal in _seeded_self_groups:
         return
 
+    # Thread-safe asyncio.Lock initialization
+    # Use threading.Lock to protect asyncio.Lock creation from race conditions
+    # Check if lock is bound to current event loop (recreate if needed)
     global _self_seed_lock
-    if _self_seed_lock is None:
-        _self_seed_lock = asyncio.Lock()
+    current_loop = asyncio.get_running_loop()
+    if _self_seed_lock is None or getattr(_self_seed_lock, '_loop', None) != current_loop:
+        with _asyncio_lock_creation_lock:
+            if _self_seed_lock is None or getattr(_self_seed_lock, '_loop', None) != current_loop:
+                _self_seed_lock = asyncio.Lock()
 
     async with _self_seed_lock:
         if journal in _seeded_self_groups:
@@ -808,8 +839,12 @@ async def persist_episode(episode: EpisodicNode, journal: str) -> None:
 
     Raises:
         ValueError: If journal name is invalid
-        RuntimeError: If persistence fails
+        RuntimeError: If persistence fails or shutdown is in progress
     """
+    # Fail-fast if shutdown requested (no waiting - immediate rejection)
+    if _shutdown_requested:
+        raise RuntimeError("Database shutdown in progress - cannot persist episode")
+
     await ensure_database_ready(journal)
 
     graph, lock = _ensure_graph(journal)
@@ -847,9 +882,10 @@ def shutdown_database():
 
     Resets all global state to allow clean database reinitialization.
     """
-    global _db_unavailable, _graph_initialized
+    global _db_unavailable, _graph_initialized, _shutdown_requested
     _close_db()
     _db_unavailable = False
+    _shutdown_requested = False  # Reset for testing/reinitialization
     _graph_initialized.clear()
     _seeded_self_groups.clear()
 

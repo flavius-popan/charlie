@@ -319,3 +319,100 @@ async def test_driver_build_indices(isolated_graph):
 
     # Test idempotency - should not raise on second call
     await driver.build_indices_and_constraints()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_lock_initialization(isolated_graph):
+    """Test that concurrent calls to ensure_graph_ready don't create multiple locks.
+
+    This test exposes the race condition in asyncio.Lock initialization where
+    multiple tasks could create separate Lock instances, defeating synchronization.
+    """
+    import asyncio
+
+    # Reset initialization state to force lock creation
+    db_utils._graph_initialized.clear()
+    db_utils._graph_init_lock = None
+
+    async def initialize_graph(journal: str, task_id: int):
+        """Try to initialize the same journal from multiple tasks."""
+        await db_utils.ensure_graph_ready(journal)
+        return task_id
+
+    # Launch 10 concurrent tasks trying to initialize the same journal
+    # This should trigger the race condition where multiple Lock objects are created
+    tasks = [initialize_graph("race-test-journal", i) for i in range(10)]
+    results = await asyncio.gather(*tasks)
+
+    # All tasks should complete successfully
+    assert len(results) == 10
+    assert results == list(range(10))
+
+    # Verify the journal was initialized (should be True, set by any of the tasks)
+    assert db_utils._graph_initialized.get("race-test-journal", False) is True
+
+
+@pytest.mark.asyncio
+async def test_concurrent_self_entity_seeding(isolated_graph):
+    """Test that concurrent SELF entity seeding doesn't create race conditions.
+
+    Similar to lock initialization, SELF entity seeding has a lazy lock initialization
+    that could race.
+    """
+    import asyncio
+
+    # Reset SELF seeding state
+    db_utils._seeded_self_groups.clear()
+    db_utils._self_seed_lock = None
+
+    async def seed_self(journal: str, task_id: int):
+        """Try to seed SELF entity from multiple tasks."""
+        await db_utils.ensure_self_entity(journal)
+        return task_id
+
+    # Launch 10 concurrent tasks trying to seed SELF for the same journal
+    tasks = [seed_self("self-race-journal", i) for i in range(10)]
+    results = await asyncio.gather(*tasks)
+
+    # All tasks should complete
+    assert len(results) == 10
+
+    # Verify SELF was seeded (should be in the set)
+    assert "self-race-journal" in db_utils._seeded_self_groups
+
+    # Verify only one SELF entity exists in the graph
+    graph = db_utils.get_falkordb_graph("self-race-journal")
+    from backend.database import SELF_ENTITY_UUID, to_cypher_literal
+    query = f"""
+    MATCH (self:Entity:Person {{uuid: {to_cypher_literal(str(SELF_ENTITY_UUID))}}})
+    RETURN count(self) as count
+    """
+    result = graph.query(query)
+    rows = _query_rows(graph, query)
+    count = int(rows[0][0]) if rows else 0
+    assert count == 1, f"Expected exactly 1 SELF entity, found {count}"
+
+
+@pytest.mark.asyncio
+async def test_shutdown_rejects_new_operations(isolated_graph):
+    """Test that new operations fail-fast when shutdown is requested.
+
+    This prevents data corruption without adding delays to shutdown.
+    No waiting - operations immediately fail if shutdown is in progress.
+    """
+    import asyncio
+    from backend import add_journal_entry
+
+    # First, verify normal operation works
+    uuid1 = await add_journal_entry("Entry before shutdown")
+    assert uuid1 is not None
+
+    # Set shutdown flag (simulating shutdown in progress)
+    db_utils._shutdown_requested = True
+
+    # Attempting new operation should fail immediately
+    with pytest.raises(RuntimeError, match="shutdown in progress"):
+        await add_journal_entry("Entry during shutdown")
+
+    # Reset flag for test cleanup
+    db_utils._shutdown_requested = False

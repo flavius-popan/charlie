@@ -110,9 +110,8 @@ async def add_journal_entry(
     else:
         episode_uuid = str(uuid4())
 
-    # Auto-generate title from timestamp if not provided
     if title is None:
-        title = f"journal_{reference_time.isoformat()}"
+        title = reference_time.strftime("%A %b %d, %Y").replace(" 0", " ")
 
     # Create EpisodicNode
     # Note: group_id is set to journal name for graphiti-core compatibility

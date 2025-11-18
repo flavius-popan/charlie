@@ -16,7 +16,7 @@ The v2 rewrite eliminates the concept of "stages" in favor of discrete operation
 
 The backend provides a clean API layer separating UI concerns from graph operations:
 
-**Episode Creation**: `add_journal_entry(content, reference_time, journal_id, name, source_description, uuid)` - Saves episode to database immediately, returns `EpisodicNode` object. No LLM processing performed. Supports multiple isolated journals via `journal_id` parameter (maps to `group_id` internally). Accepts pre-existing UUIDs for imports from Day One, Notion, Obsidian, etc. Automatically creates SELF entity for each journal on first entry.
+**Episode Creation**: `add_journal_entry(content, reference_time, journal, title, source_description, uuid)` - Saves episode to database immediately, returns episode UUID string. No LLM processing performed. Supports multiple isolated journals via `journal` parameter (maps to `group_id` internally). Auto-generates human-readable titles ("Tuesday Nov 18, 2024") when not provided. Accepts pre-existing UUIDs for imports from Day One, Notion, Obsidian, etc. Automatically creates SELF entity for each journal on first entry.
 
 **Operation Triggers**: `enrich_episode(episode_uuid)` - Queues entity and relationship extraction for a saved episode. Background workers poll the queue and update episode state as operations complete. *(Not yet implemented)*
 
@@ -58,6 +58,7 @@ charlie/
 ├── charlie.py              # TUI application entry point
 ├── backend/                # Graph operations library
 │   ├── __init__.py         # Public API: add_journal_entry() ✓
+│   ├── settings.py         # Backend configuration ✓
 │   ├── database.py         # FalkorDB-Lite driver + SELF entity ✓
 │   ├── extract_entities.py # Entity extraction + resolution (not yet implemented)
 │   ├── extract_edges.py    # Relationship extraction + resolution (not yet implemented)
@@ -67,8 +68,9 @@ charlie/
 │   └── markdown.py         # Import markdown files as episodes
 ├── pipeline/               # V1 reference (preserved, not imported)
 ├── tests/test_backend/     # Backend API tests ✓
-│   ├── conftest.py         # Test fixtures (FalkorDB setup) ✓
-│   └── test_add_journal.py # Tests for add_journal_entry() ✓
+│   ├── conftest.py         # Test fixtures ✓
+│   ├── test_add_journal.py # API tests ✓
+│   └── test_database.py    # Database layer tests ✓
 └── V2_PLAN.md              # This document
 ```
 
