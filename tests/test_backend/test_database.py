@@ -29,10 +29,12 @@ def _query_rows(graph, query: str) -> list[list[object]]:
 @pytest.fixture
 def falkordb_client(falkordb_test_context):
     """Get the FalkorDB client instance."""
-    graph = db_utils.get_falkordb_graph()  # Uses DEFAULT_JOURNAL
-    if graph is None or db_utils._db is None:
+    from backend.settings import DEFAULT_JOURNAL
+    import backend.database.lifecycle as lifecycle
+    graph = db_utils.get_falkordb_graph(DEFAULT_JOURNAL)
+    if graph is None or lifecycle._db is None:
         pytest.skip("FalkorDB Lite is unavailable in this environment.")
-    return db_utils._db
+    return lifecycle._db
 
 
 def test_falkordblite_imports():
@@ -245,7 +247,7 @@ def test_tcp_server_configuration():
 
 def test_fulltext_query_builder():
     """Test fulltext query building and sanitization."""
-    driver = db_utils._get_driver()
+    driver = db_utils.get_driver()
 
     # Test basic query sanitization
     sanitized = driver._sanitize_fulltext("hello, world! test@example.com")
@@ -279,12 +281,12 @@ def test_fulltext_query_builder():
 
 def test_stopwords_constant():
     """Verify STOPWORDS constant is defined and contains expected words."""
-    assert hasattr(db_utils, 'STOPWORDS')
-    assert isinstance(db_utils.STOPWORDS, list)
-    assert len(db_utils.STOPWORDS) > 0
-    assert 'the' in db_utils.STOPWORDS
-    assert 'a' in db_utils.STOPWORDS
-    assert 'and' in db_utils.STOPWORDS
+    from backend.database.utils import STOPWORDS
+    assert isinstance(STOPWORDS, list)
+    assert len(STOPWORDS) > 0
+    assert 'the' in STOPWORDS
+    assert 'a' in STOPWORDS
+    assert 'and' in STOPWORDS
 
 
 def test_to_cypher_literal():
@@ -312,7 +314,7 @@ def test_to_cypher_literal():
 @pytest.mark.asyncio
 async def test_driver_build_indices(isolated_graph):
     """Test that driver can build indices without errors."""
-    driver = db_utils._get_driver()
+    driver = db_utils.get_driver()
 
     # Should not raise
     await driver.build_indices_and_constraints()
@@ -329,10 +331,11 @@ async def test_concurrent_lock_initialization(isolated_graph):
     multiple tasks could create separate Lock instances, defeating synchronization.
     """
     import asyncio
+    import backend.database.persistence as persistence
 
     # Reset initialization state to force lock creation
-    db_utils._graph_initialized.clear()
-    db_utils._graph_init_lock = None
+    persistence._graph_initialized.clear()
+    persistence._graph_init_lock = None
 
     async def initialize_graph(journal: str, task_id: int):
         """Try to initialize the same journal from multiple tasks."""
@@ -349,7 +352,7 @@ async def test_concurrent_lock_initialization(isolated_graph):
     assert results == list(range(10))
 
     # Verify the journal was initialized (should be True, set by any of the tasks)
-    assert db_utils._graph_initialized.get("race-test-journal", False) is True
+    assert persistence._graph_initialized.get("race-test-journal", False) is True
 
 
 @pytest.mark.asyncio
@@ -360,10 +363,11 @@ async def test_concurrent_self_entity_seeding(isolated_graph):
     that could race.
     """
     import asyncio
+    import backend.database.persistence as persistence
 
     # Reset SELF seeding state
-    db_utils._seeded_self_groups.clear()
-    db_utils._self_seed_lock = None
+    persistence._seeded_self_groups.clear()
+    persistence._self_seed_lock = None
 
     async def seed_self(journal: str, task_id: int):
         """Try to seed SELF entity from multiple tasks."""
@@ -378,7 +382,7 @@ async def test_concurrent_self_entity_seeding(isolated_graph):
     assert len(results) == 10
 
     # Verify SELF was seeded (should be in the set)
-    assert "self-race-journal" in db_utils._seeded_self_groups
+    assert "self-race-journal" in persistence._seeded_self_groups
 
     # Verify only one SELF entity exists in the graph
     graph = db_utils.get_falkordb_graph("self-race-journal")
@@ -401,6 +405,7 @@ async def test_shutdown_rejects_new_operations(isolated_graph):
     No waiting - operations immediately fail if shutdown is in progress.
     """
     import asyncio
+    import backend.database.lifecycle as lifecycle
     from backend import add_journal_entry
 
     # First, verify normal operation works
@@ -408,11 +413,11 @@ async def test_shutdown_rejects_new_operations(isolated_graph):
     assert uuid1 is not None
 
     # Set shutdown flag (simulating shutdown in progress)
-    db_utils._shutdown_requested = True
+    lifecycle._shutdown_requested = True
 
     # Attempting new operation should fail immediately
     with pytest.raises(RuntimeError, match="shutdown in progress"):
         await add_journal_entry("Entry during shutdown")
 
     # Reset flag for test cleanup
-    db_utils._shutdown_requested = False
+    lifecycle._shutdown_requested = False

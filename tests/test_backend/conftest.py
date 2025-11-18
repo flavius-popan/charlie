@@ -18,7 +18,9 @@ def falkordb_test_context(tmp_path_factory: pytest.TempPathFactory) -> Iterator[
     db_path = db_dir / "backend-tests.db"
 
     backend_settings.DB_PATH = db_path
-    db_utils.DB_PATH = db_path  # type: ignore[misc]
+    # Update DB_PATH in lifecycle module
+    import backend.database.lifecycle as lifecycle
+    lifecycle.DB_PATH = db_path  # type: ignore[misc]
 
     # Reset cached connections before opening a new graph
     db_utils.shutdown_database()
@@ -44,13 +46,14 @@ def isolated_graph(falkordb_test_context) -> Iterator[object]:
     graph.query("MATCH (n) DETACH DELETE n")
 
     # Reset graph initialization state for clean tests
-    db_utils._graph_initialized.clear()  # type: ignore[misc]
-    db_utils._seeded_self_groups.clear()  # type: ignore[attr-defined]
+    import backend.database.persistence as persistence
+    persistence._graph_initialized.clear()
+    persistence._seeded_self_groups.clear()
 
     try:
         yield graph
     finally:
         # Clear all data after test
         graph.query("MATCH (n) DETACH DELETE n")
-        db_utils._graph_initialized.clear()  # type: ignore[misc]
-        db_utils._seeded_self_groups.clear()  # type: ignore[attr-defined]
+        persistence._graph_initialized.clear()
+        persistence._seeded_self_groups.clear()

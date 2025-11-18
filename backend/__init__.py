@@ -9,7 +9,7 @@ from graphiti_core.nodes import EpisodicNode, EpisodeType
 from graphiti_core.utils.datetime_utils import utc_now
 
 from backend.settings import DEFAULT_JOURNAL
-from backend.database import persist_episode
+from backend.database import persist_episode, validate_journal_name
 
 # Content validation limits
 MAX_CONTENT_LENGTH = 100_000  # 100k characters
@@ -134,7 +134,6 @@ async def add_journal_entry(
         reference_time = utc_now()
 
     # Validate journal name (catches empty strings, special chars, etc.)
-    from backend.database import validate_journal_name
     validate_journal_name(journal)
 
     # Validate and generate UUID
