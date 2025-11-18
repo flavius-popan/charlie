@@ -100,6 +100,7 @@ class GenerateSummariesOutput:
 
     nodes: list[EntityNode]  # Same nodes with summaries populated
     metadata: dict[str, Any]
+    raw_llm_outputs: list[dict[str, Any]] = None  # Raw LLM summary responses (one per node)
 
 
 class SummaryGenerator(dspy.Module):
@@ -225,6 +226,7 @@ class GenerateSummaries:
         nodes_processed = 0
         total_summary_length = 0
         truncated_count = 0
+        raw_llm_outputs = []  # Collect raw LLM outputs for each entity
 
         # MLX inference currently serializes LLM generations, so this loop stays sequential.
         for node in nodes:
@@ -256,6 +258,13 @@ class GenerateSummaries:
             )
 
             summary_text = generated_summary.summary
+
+            # Capture raw LLM output for this entity
+            raw_llm_outputs.append({
+                "entity_name": node.name,
+                "entity_type": entity_type_name,
+                "summary": summary_text,
+            })
 
             original_length = len(summary_text)
             truncated_summary = truncate_at_sentence(summary_text, MAX_SUMMARY_CHARS)
@@ -301,7 +310,7 @@ class GenerateSummaries:
             truncated_count,
         )
 
-        return GenerateSummariesOutput(nodes=nodes, metadata=metadata)
+        return GenerateSummariesOutput(nodes=nodes, metadata=metadata, raw_llm_outputs=raw_llm_outputs)
 
 
 __all__ = [

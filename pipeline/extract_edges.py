@@ -216,6 +216,7 @@ class ExtractEdgesOutput:
 
     edges: list[EntityEdge]
     metadata: dict[str, Any]
+    raw_llm_output: ExtractedEdges | None = None  # Raw LLM response before EntityEdge conversion
 
 
 def normalize_edge_name(name: str) -> str:
@@ -594,7 +595,7 @@ class ExtractEdges:
             metadata["merged_count"],
         )
 
-        return ExtractEdgesOutput(edges=resolved_edges, metadata=metadata)
+        return ExtractEdgesOutput(edges=resolved_edges, metadata=metadata, raw_llm_output=relationships)
 
     def _resolve_edges(
         self,

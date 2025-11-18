@@ -6,7 +6,9 @@ Provides interactive testing interface for entity extraction and resolution.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import time
 
 import _dspy_setup  # noqa: F401
 import dspy
@@ -91,15 +93,20 @@ dspy.configure(lm=lm, adapter=adapter)
 logger.info("DSPy configured with DspyLM")
 
 
-def _format_entity_list(nodes) -> str:
-    """Format entity nodes as readable list."""
+def _format_entity_list(nodes, metadata=None) -> str:
+    """Format entity nodes as readable list with NEW/MATCHED status."""
     if not nodes:
         return "(no entities extracted)"
+
+    existing_set = set()
+    if metadata:
+        existing_set = set(metadata.get("existing_entity_uuids", []))
 
     lines = []
     for node in nodes:
         labels = ", ".join(node.labels) if node.labels else "Entity"
-        base_info = f"- {node.name} [{labels}]"
+        status = "MATCHED" if node.uuid in existing_set else "NEW"
+        base_info = f"- {node.name} [{labels}] [{status}]"
         lines.append(base_info)
 
     return "\n".join(lines)
@@ -158,7 +165,14 @@ def _format_edge_list(edges, nodes=None) -> str:
         )
         fact_preview = edge.fact[:100] + "..." if len(edge.fact) > 100 else edge.fact
 
-        lines.append(f"- {source_name} → {target_name} [{edge.name}]\n  {fact_preview}")
+        edge_name = edge.name
+        if edge.name.upper() in [k.upper() for k in DEFAULT_EDGE_META.keys()]:
+            for proper_name in DEFAULT_EDGE_META.keys():
+                if proper_name.upper() == edge.name.upper():
+                    edge_name = proper_name
+                    break
+
+        lines.append(f"- {source_name} → {target_name} [{edge_name}]\n  {fact_preview}")
 
     return "\n\n".join(lines)
 
@@ -257,13 +271,43 @@ Source: {episode.source.value}
 Content: {content_preview}"""
 
 
+def _format_raw_data(data) -> str:
+    """Format raw data as JSON for inspection."""
+    if data is None:
+        return "(no data)"
+
+    try:
+        if hasattr(data, "model_dump"):
+            return json.dumps(data.model_dump(), indent=2, default=str)
+        elif hasattr(data, "__dict__"):
+            return json.dumps(data.__dict__, indent=2, default=str)
+        else:
+            return str(data)
+    except Exception as e:
+        return f"(error formatting data: {e})"
+
+
+def _format_timing(timings: dict) -> str:
+    """Format timing information."""
+    if not timings:
+        return "(no timing data)"
+
+    lines = []
+    for stage, duration in timings.items():
+        lines.append(f"{stage}: {duration:.2f}s")
+
+    if "total" in timings:
+        lines.append(f"\nTotal: {timings['total']:.2f}s")
+
+    return "\n".join(lines)
+
+
 def on_extract(content: str):
     """Extract entities and relationships from journal entry text with progressive updates."""
     if not content or not content.strip():
         empty_result = (
             "(enter journal text to extract entities)",
             "(no statistics)",
-            "(no UUID map)",
             "(no episode)",
             "(no edges extracted)",
             "(no edge statistics)",
@@ -271,6 +315,15 @@ def on_extract(content: str):
             "(no attribute statistics)",
             "(no summaries generated)",
             "(no summary statistics)",
+            "(no LLM output)",
+            "(no processed data)",
+            "(no LLM output)",
+            "(no processed data)",
+            "(no LLM output)",
+            "(no processed data)",
+            "(no LLM output)",
+            "(no processed data)",
+            "(no timing data)",
             None,
             None,
             None,
@@ -279,6 +332,9 @@ def on_extract(content: str):
         return
 
     logger.info("Processing journal entry through pipeline")
+
+    timings = {}
+    pipeline_start = time.time()
 
     try:
         reference_time = ensure_utc(utc_now())
@@ -296,6 +352,7 @@ def on_extract(content: str):
         logger.info("Created episode %s", episode.uuid)
 
         logger.info("Starting Stage 1: Extract Nodes")
+        stage_start = time.time()
         extractor = ExtractNodes(group_id=GROUP_ID, dedupe_enabled=True)
         extract_result = asyncio.run(
             extractor(
@@ -304,20 +361,28 @@ def on_extract(content: str):
                 entity_types=entity_types,
             )
         )
+        timings["Stage 1: Extract Nodes"] = time.time() - stage_start
 
-        entity_list = _format_entity_list(extract_result.nodes)
+        entity_list = _format_entity_list(extract_result.nodes, extract_result.metadata)
         stats = _format_stats(extract_result.metadata)
-        uuid_map = _format_uuid_map(
-            extract_result.uuid_map, extract_result.nodes, extract_result.metadata
-        )
         episode_details = _format_episode(extract_result.episode)
+
+        # Format raw LLM output and processed output separately
+        llm_stage1 = json.dumps(
+            extract_result.raw_llm_output.model_dump() if extract_result.raw_llm_output else None,
+            indent=2,
+            default=str
+        )
+        raw_stage1 = json.dumps({
+            "nodes": [node.model_dump() if hasattr(node, "model_dump") else str(node) for node in extract_result.nodes],
+            "metadata": extract_result.metadata,
+        }, indent=2, default=str)
 
         logger.info("Stage 1 complete: %d nodes extracted", len(extract_result.nodes))
 
         yield (
             entity_list,
             stats,
-            uuid_map,
             episode_details,
             "(stage 2 running...)",
             "(stage 2 running...)",
@@ -325,12 +390,22 @@ def on_extract(content: str):
             "(stage 3 pending...)",
             "(stage 4 pending...)",
             "(stage 4 pending...)",
+            llm_stage1,
+            raw_stage1,
+            "(stage 2 pending...)",
+            "(stage 2 pending...)",
+            "(stage 3 pending...)",
+            "(stage 3 pending...)",
+            "(stage 4 pending...)",
+            "(stage 4 pending...)",
+            _format_timing(timings),
             extract_result.episode,
             extract_result.nodes,
             extract_result.uuid_map,
         )
 
         logger.info("Starting Stage 2: Extract Edges")
+        stage_start = time.time()
         edge_extractor = ExtractEdges(
             group_id=GROUP_ID,
             dedupe_enabled=True,
@@ -348,16 +423,27 @@ def on_extract(content: str):
                 entity_types=entity_types,
             )
         )
+        timings["Stage 2: Extract Edges"] = time.time() - stage_start
 
         edge_list = _format_edge_list(edges_result.edges, extract_result.nodes)
         edge_stats = _format_edge_stats({"edges": edges_result.metadata})
+
+        # Format raw LLM output and processed output separately
+        llm_stage2 = json.dumps(
+            edges_result.raw_llm_output.model_dump() if edges_result.raw_llm_output else None,
+            indent=2,
+            default=str
+        )
+        raw_stage2 = json.dumps({
+            "edges": [edge.model_dump() if hasattr(edge, "model_dump") else str(edge) for edge in edges_result.edges],
+            "metadata": edges_result.metadata,
+        }, indent=2, default=str)
 
         logger.info("Stage 2 complete: %d edges extracted", len(edges_result.edges))
 
         yield (
             entity_list,
             stats,
-            uuid_map,
             episode_details,
             edge_list,
             edge_stats,
@@ -365,12 +451,22 @@ def on_extract(content: str):
             "(stage 3 running...)",
             "(stage 4 pending...)",
             "(stage 4 pending...)",
+            llm_stage1,
+            raw_stage1,
+            llm_stage2,
+            raw_stage2,
+            "(stage 3 pending...)",
+            "(stage 3 pending...)",
+            "(stage 4 pending...)",
+            "(stage 4 pending...)",
+            _format_timing(timings),
             extract_result.episode,
             extract_result.nodes,
             extract_result.uuid_map,
         )
 
         logger.info("Starting Stage 3: Extract Attributes")
+        stage_start = time.time()
         attribute_extractor = ExtractAttributes(group_id=GROUP_ID)
         attributes_result = asyncio.run(
             attribute_extractor(
@@ -380,11 +476,23 @@ def on_extract(content: str):
                 entity_types=entity_types,
             )
         )
+        timings["Stage 3: Extract Attributes"] = time.time() - stage_start
 
         attributes_output = _format_attributes_output(attributes_result.nodes)
         attributes_stats = _format_attributes_stats(
             {"attributes": attributes_result.metadata}
         )
+
+        # Format all raw LLM outputs (one per entity) and processed output separately
+        llm_stage3 = json.dumps(
+            attributes_result.raw_llm_outputs if attributes_result.raw_llm_outputs else [],
+            indent=2,
+            default=str
+        )
+        raw_stage3 = json.dumps({
+            "nodes": [node.model_dump() if hasattr(node, "model_dump") else str(node) for node in attributes_result.nodes],
+            "metadata": attributes_result.metadata,
+        }, indent=2, default=str)
 
         logger.info(
             "Stage 3 complete: %d nodes processed",
@@ -394,7 +502,6 @@ def on_extract(content: str):
         yield (
             entity_list,
             stats,
-            uuid_map,
             episode_details,
             edge_list,
             edge_stats,
@@ -402,12 +509,22 @@ def on_extract(content: str):
             attributes_stats,
             "(stage 4 running...)",
             "(stage 4 running...)",
+            llm_stage1,
+            raw_stage1,
+            llm_stage2,
+            raw_stage2,
+            llm_stage3,
+            raw_stage3,
+            "(stage 4 pending...)",
+            "(stage 4 pending...)",
+            _format_timing(timings),
             extract_result.episode,
             attributes_result.nodes,
             extract_result.uuid_map,
         )
 
         logger.info("Starting Stage 4: Generate Summaries")
+        stage_start = time.time()
         summary_generator = GenerateSummaries(group_id=GROUP_ID)
         summaries_result = asyncio.run(
             summary_generator(
@@ -416,11 +533,25 @@ def on_extract(content: str):
                 previous_episodes=extract_result.previous_episodes,
             )
         )
+        timings["Stage 4: Generate Summaries"] = time.time() - stage_start
 
         summaries_output = _format_summaries_output(summaries_result.nodes)
         summaries_stats = _format_summaries_stats(
             {"summaries": summaries_result.metadata}
         )
+
+        # Format all raw LLM outputs (one per entity) and final processed output separately
+        llm_stage4 = json.dumps(
+            summaries_result.raw_llm_outputs if summaries_result.raw_llm_outputs else [],
+            indent=2,
+            default=str
+        )
+        raw_stage4 = json.dumps({
+            "nodes": [node.model_dump() if hasattr(node, "model_dump") else str(node) for node in summaries_result.nodes],
+            "metadata": summaries_result.metadata,
+        }, indent=2, default=str)
+
+        timings["total"] = time.time() - pipeline_start
 
         logger.info(
             "Stage 4 complete: %d nodes processed",
@@ -430,7 +561,6 @@ def on_extract(content: str):
         yield (
             entity_list,
             stats,
-            uuid_map,
             episode_details,
             edge_list,
             edge_stats,
@@ -438,21 +568,39 @@ def on_extract(content: str):
             attributes_stats,
             summaries_output,
             summaries_stats,
+            llm_stage1,
+            raw_stage1,
+            llm_stage2,
+            raw_stage2,
+            llm_stage3,
+            raw_stage3,
+            llm_stage4,
+            raw_stage4,
+            _format_timing(timings),
             extract_result.episode,
             summaries_result.nodes,
             extract_result.uuid_map,
         )
 
         logger.info(
-            "Pipeline complete: %d nodes, %d edges",
+            "Pipeline complete: %d nodes, %d edges in %.2fs",
             len(summaries_result.nodes),
             len(edges_result.edges),
+            timings["total"],
         )
 
     except Exception as exc:
         logger.exception("Pipeline failed")
         error_msg = f"ERROR: {exc}"
         yield (
+            error_msg,
+            error_msg,
+            error_msg,
+            error_msg,
+            error_msg,
+            error_msg,
+            error_msg,
+            error_msg,
             error_msg,
             error_msg,
             error_msg,
@@ -568,12 +716,19 @@ Test the complete knowledge graph extraction pipeline with progressive stage upd
                 lines=8,
             )
 
-        with gr.Column():
-            uuid_map_output = gr.Textbox(
-                label="UUID Mapping (Provisional → Resolved)",
-                interactive=False,
-                lines=8,
-            )
+    llm_stage1_output = gr.Textbox(
+        label="Raw LLM Output (Stage 1)",
+        interactive=False,
+        lines=10,
+        max_lines=20,
+    )
+
+    raw_stage1_output = gr.Textbox(
+        label="Processed Output → Stage 2 (JSON)",
+        interactive=False,
+        lines=10,
+        max_lines=20,
+    )
 
     gr.Markdown("### Stage 2: Relationship Extraction")
     with gr.Row():
@@ -589,6 +744,20 @@ Test the complete knowledge graph extraction pipeline with progressive stage upd
             lines=8,
         )
 
+    llm_stage2_output = gr.Textbox(
+        label="Raw LLM Output (Stage 2)",
+        interactive=False,
+        lines=10,
+        max_lines=20,
+    )
+
+    raw_stage2_output = gr.Textbox(
+        label="Processed Output → Stage 3 (JSON)",
+        interactive=False,
+        lines=10,
+        max_lines=20,
+    )
+
     gr.Markdown("### Stage 3: Attribute Extraction")
     with gr.Row():
         attributes_output = gr.Textbox(
@@ -602,6 +771,20 @@ Test the complete knowledge graph extraction pipeline with progressive stage upd
             interactive=False,
             lines=8,
         )
+
+    llm_stage3_output = gr.Textbox(
+        label="Raw LLM Outputs (Stage 3 - All Entities)",
+        interactive=False,
+        lines=10,
+        max_lines=20,
+    )
+
+    raw_stage3_output = gr.Textbox(
+        label="Processed Output → Stage 4 (JSON)",
+        interactive=False,
+        lines=10,
+        max_lines=20,
+    )
 
     gr.Markdown("### Stage 4: Summary Generation")
     with gr.Row():
@@ -617,12 +800,34 @@ Test the complete knowledge graph extraction pipeline with progressive stage upd
             lines=8,
         )
 
-    gr.Markdown("### Debug Information")
-    episode_output = gr.Textbox(
-        label="Episode Details",
+    llm_stage4_output = gr.Textbox(
+        label="Raw LLM Outputs (Stage 4 - All Entities)",
         interactive=False,
-        lines=8,
+        lines=10,
+        max_lines=20,
     )
+
+    raw_stage4_output = gr.Textbox(
+        label="Final Processed Output (JSON)",
+        interactive=False,
+        lines=10,
+        max_lines=20,
+    )
+
+    gr.Markdown("## Performance & Debug")
+
+    with gr.Row():
+        timing_output = gr.Textbox(
+            label="Pipeline Timing",
+            interactive=False,
+            lines=8,
+        )
+
+        episode_output = gr.Textbox(
+            label="Episode Details",
+            interactive=False,
+            lines=8,
+        )
 
     gr.Markdown("## Database Controls")
 
@@ -641,6 +846,7 @@ Test the complete knowledge graph extraction pipeline with progressive stage upd
 
     write_result_display = gr.Textbox(
         label="Write Result",
+        value="(waiting for write operation)",
         interactive=False,
         lines=6,
     )
@@ -655,7 +861,6 @@ Test the complete knowledge graph extraction pipeline with progressive stage upd
         outputs=[
             entity_list_output,
             stats_output,
-            uuid_map_output,
             episode_output,
             edge_list_output,
             edge_stats_output,
@@ -663,6 +868,15 @@ Test the complete knowledge graph extraction pipeline with progressive stage upd
             attributes_stats_output,
             summaries_output,
             summaries_stats_output,
+            llm_stage1_output,
+            raw_stage1_output,
+            llm_stage2_output,
+            raw_stage2_output,
+            llm_stage3_output,
+            raw_stage3_output,
+            llm_stage4_output,
+            raw_stage4_output,
+            timing_output,
             episode_state,
             nodes_state,
             uuid_map_state,

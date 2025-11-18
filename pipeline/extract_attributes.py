@@ -84,6 +84,7 @@ class ExtractAttributesOutput:
 
     nodes: list[EntityNode]  # Nodes with attributes populated
     metadata: dict[str, Any]
+    raw_llm_outputs: list[dict[str, Any]] = None  # Raw LLM responses for each entity (one per node)
 
 
 class AttributeExtractor(dspy.Module):
@@ -299,6 +300,7 @@ class ExtractAttributes:
         nodes_processed = 0
         nodes_skipped = 0
         attributes_extracted_by_type: dict[str, int] = {}
+        raw_llm_outputs = []  # Collect raw LLM outputs for each entity
 
         for node in nodes:
             if node.uuid == str(SELF_ENTITY_UUID):
@@ -344,6 +346,13 @@ class ExtractAttributes:
                 response_model=entity_model,
             )
 
+            # Capture raw LLM output for this entity
+            raw_llm_outputs.append({
+                "entity_name": node.name,
+                "entity_type": entity_type_name,
+                "attributes": extracted_attributes,
+            })
+
             entity_model(**extracted_attributes)
 
             node.attributes.update(extracted_attributes)
@@ -376,7 +385,7 @@ class ExtractAttributes:
             attributes_extracted_by_type,
         )
 
-        return ExtractAttributesOutput(nodes=nodes, metadata=metadata)
+        return ExtractAttributesOutput(nodes=nodes, metadata=metadata, raw_llm_outputs=raw_llm_outputs)
 
 
 __all__ = [

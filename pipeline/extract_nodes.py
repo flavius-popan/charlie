@@ -118,6 +118,7 @@ class ExtractNodesOutput:
     ]  # Consumed in Stage 5 for DUPLICATE_OF edges
     metadata: dict[str, Any]
     previous_episodes: list[EpisodicNode]  # For Stage 2 edge extraction context
+    raw_llm_output: ExtractedEntities | None = None  # Raw LLM response before EntityNode conversion
 
 
 class EntityExtractor(dspy.Module):
@@ -257,7 +258,7 @@ class ExtractNodes:
         if pronoun_detected:
             canonical_self = await fetch_self_entity(self.group_id)
 
-        provisional_nodes = self._extract_entities(
+        provisional_nodes, raw_extracted = self._extract_entities(
             episode, previous_episodes, entity_types
         )
         logger.info("Extracted %d provisional entities", len(provisional_nodes))
@@ -313,6 +314,7 @@ class ExtractNodes:
             duplicate_pairs=duplicate_pairs,
             metadata=metadata,
             previous_episodes=previous_episodes,
+            raw_llm_output=raw_extracted,
         )
 
     def _extract_entities(
@@ -320,11 +322,14 @@ class ExtractNodes:
         episode: EpisodicNode,
         previous_episodes: list[EpisodicNode],
         entity_types: dict | None,
-    ) -> list[EntityNode]:
+    ) -> tuple[list[EntityNode], ExtractedEntities]:
         """Extract entities via EntityExtractor module.
 
         Note: previous_episodes are fetched for future use (reflexion, classification)
         but NOT used in initial entity extraction, following graphiti-core's approach.
+
+        Returns:
+            Tuple of (converted EntityNode objects, raw ExtractedEntities from LLM)
         """
         entity_types_json = self._format_entity_types(entity_types)
 
@@ -350,7 +355,7 @@ class ExtractNodes:
             )
             nodes.append(node)
 
-        return nodes
+        return nodes, extracted
 
     def _handle_self_reference(
         self,
@@ -496,7 +501,8 @@ class ExtractNodes:
 
     def _extract_with_reflexion(self, episode, previous_episodes, entity_types):
         """TODO: Add reflexion loop (EntityReflexionSignature, max 3 iterations)."""
-        return self._extract_entities(episode, previous_episodes, entity_types)
+        nodes, _ = self._extract_entities(episode, previous_episodes, entity_types)
+        return nodes
 
     async def _collect_candidates_with_embeddings(self, provisional_nodes, group_id):
         """TODO: Hybrid search (embedding + text) when Qwen embedder lands."""
