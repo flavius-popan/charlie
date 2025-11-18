@@ -16,13 +16,13 @@ The v2 rewrite eliminates the concept of "stages" in favor of discrete operation
 
 The backend provides a clean API layer separating UI concerns from graph operations:
 
-**Episode Creation**: `create_episode(content, timestamp, metadata)` - Saves episode to database immediately, returns episode UUID. No processing performed. Enables bulk imports from various sources (markdown files, Day One exports, etc.) without blocking on LLM operations.
+**Episode Creation**: `add_journal_entry(content, reference_time, journal_id, name, source_description, uuid)` - Saves episode to database immediately, returns `EpisodicNode` object. No LLM processing performed. Supports multiple isolated journals via `journal_id` parameter (maps to `group_id` internally). Accepts pre-existing UUIDs for imports from Day One, Notion, Obsidian, etc. Automatically creates SELF entity for each journal on first entry.
 
-**Operation Triggers**: `enrich_episode(episode_uuid)` - Queues entity and relationship extraction for a saved episode. Background workers poll the queue and update episode state as operations complete.
+**Operation Triggers**: `enrich_episode(episode_uuid)` - Queues entity and relationship extraction for a saved episode. Background workers poll the queue and update episode state as operations complete. *(Not yet implemented)*
 
-**Query API**: `get_episodes_by_timerange(start, end)`, `get_entity_timeline(entity_uuid)`, `search_entities(query)` - All query operations are read-only and work against the current graph state.
+**Query API**: `get_episodes_by_timerange(start, end)`, `get_entity_timeline(entity_uuid)`, `search_entities(query)` - All query operations are read-only and work against the current graph state. *(Not yet implemented)*
 
-This separation allows the TUI to simply call `create_episode()` and display results as they arrive, while importers can batch-create episodes and trigger enrichment in the background.
+This separation allows the TUI to call `add_journal_entry()` to instantly persist entries, while importers can batch-create episodes and trigger enrichment in the background.
 
 ### Operations (formerly Stages 1 & 2)
 
@@ -57,19 +57,22 @@ Only implement custom DSPy modules for LLM extraction (entity extraction, edge e
 charlie/
 ├── charlie.py              # TUI application entry point
 ├── backend/                # Graph operations library
-│   ├── __init__.py         # Public API (create_episode, enrich_episode, queries)
-│   ├── extract_entities.py # Entity extraction + resolution
-│   ├── extract_edges.py    # Relationship extraction + resolution
-│   ├── queries.py          # Time-range and entity timeline queries
-│   ├── database.py         # FalkorDB-Lite driver
-│   └── models.py           # Data models and state definitions
-├── importers/              # Bulk import modules
+│   ├── __init__.py         # Public API: add_journal_entry() ✓
+│   ├── database.py         # FalkorDB-Lite driver + SELF entity ✓
+│   ├── extract_entities.py # Entity extraction + resolution (not yet implemented)
+│   ├── extract_edges.py    # Relationship extraction + resolution (not yet implemented)
+│   ├── queries.py          # Time-range and entity timeline queries (not yet implemented)
+│   └── models.py           # Data models and state definitions (not yet needed)
+├── importers/              # Bulk import modules (not yet implemented)
 │   └── markdown.py         # Import markdown files as episodes
 ├── pipeline/               # V1 reference (preserved, not imported)
+├── tests/test_backend/     # Backend API tests ✓
+│   ├── conftest.py         # Test fixtures (FalkorDB setup) ✓
+│   └── test_add_journal.py # Tests for add_journal_entry() ✓
 └── V2_PLAN.md              # This document
 ```
 
-Backend modules operate independently on existing episodic nodes. UI code and importers only interact through `backend/__init__.py`.
+Backend modules operate independently on existing episodic nodes. UI code and importers only interact through `backend/__init__.py`. Currently implemented: episode creation with SELF entity seeding and multi-journal support.
 
 ## Supported Queries
 
