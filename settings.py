@@ -31,7 +31,7 @@ GEPA_OUTPUT_DIR = PROMPTS_DIR / "gepa"
 GEPA_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # Model
-DEFAULT_MODEL_PATH = "mlx-community/Qwen3-4B-Instruct-2507-4bit-DWQ-2510"
+DEFAULT_MODEL_PATH = "unsloth/Qwen3-4B-Instruct-2507-GGUF"
 
 # PyInstaller: Set LLAMA_GPU_LAYERS=0 for CPU-only builds (macOS/Linux/Windows)
 LLAMA_CPP_GPU_LAYERS = int(os.getenv("LLAMA_GPU_LAYERS", "-1"))  # -1=auto GPU
@@ -76,3 +76,6 @@ GEPA_REFLECTION_MINIBATCH_SIZE = 3  # Number of examples per reflection iteratio
 
 # GEPA Optimization Configuration
 GEPA_MAX_FULL_EVALS = 3  # Standard tutorial value - enough budget for demo selection
+GEPA_NUM_THREADS = (
+    1  # Disable multiprocessing - llama.cpp models cannot be safely forked
+)

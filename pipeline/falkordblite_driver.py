@@ -346,7 +346,12 @@ def _send_signal(pid: int, sig: signal.Signals) -> None:
 
 
 def _ensure_redis_stopped(redis_client) -> None:
-    """Best-effort shutdown of the embedded redis-server process."""
+    """Best-effort shutdown of the embedded redis-server process.
+
+    Uses direct SIGTERM instead of the blocking shutdown() command to avoid
+    a known redis-py client timeout issue that causes 5-10 second delays.
+    See: https://github.com/redis/redis-py/issues/3704
+    """
     if redis_client is None:
         return
 
@@ -359,14 +364,6 @@ def _ensure_redis_stopped(redis_client) -> None:
     except Exception:  # noqa: BLE001
         logger.debug("Failed to disconnect redis connection pool cleanly", exc_info=True)
 
-    try:
-        redis_client.shutdown(save=True, now=True, force=True)
-    except Exception:  # noqa: BLE001
-        logger.debug("Redis SHUTDOWN command failed; will escalate", exc_info=True)
-    else:
-        if _wait_for_exit(pid, timeout=5.0):
-            return
-
     _send_signal(pid, signal.SIGTERM)
     if _wait_for_exit(pid, timeout=3.0):
         return
@@ -377,22 +374,21 @@ def _ensure_redis_stopped(redis_client) -> None:
 
 
 def _close_db():
-    """Ensure the embedded FalkorDB process shuts down cleanly."""
+    """Ensure the embedded FalkorDB process shuts down cleanly.
+
+    Skips db.close() because it calls client.shutdown() which has a
+    known blocking timeout issue. We handle shutdown directly via SIGTERM.
+    """
     global _db, _graph
     with _db_lock:
         if _db is None:
             return
         client = getattr(_db, "client", None)
         try:
-            _db.close()
-        except Exception:  # noqa: BLE001
-            logger.debug("Failed to close FalkorDBLite cleanly", exc_info=True)
+            _ensure_redis_stopped(client)
         finally:
-            try:
-                _ensure_redis_stopped(client)
-            finally:
-                _db = None
-                _graph = None
+            _db = None
+            _graph = None
 
 
 def shutdown_falkordb():
@@ -1030,7 +1026,13 @@ class FalkorLiteDriver(GraphDriver):
         index_queries.extend(fulltext_queries)
 
         for query in index_queries:
-            await self.execute_query(query)
+            try:
+                await self.execute_query(query)
+            except Exception as exc:
+                if "already indexed" in str(exc).lower():
+                    logger.debug("Index already exists, skipping: %s", exc)
+                else:
+                    raise
 
     async def delete_all_indexes(self):
         logger.debug("FalkorDB Lite does not expose index management APIs")

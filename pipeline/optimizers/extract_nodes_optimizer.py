@@ -30,6 +30,7 @@ from settings import (  # noqa: E402
     REFLECTION_MAX_TOKENS,
     GEPA_REFLECTION_MINIBATCH_SIZE,
     GEPA_MAX_FULL_EVALS,
+    GEPA_NUM_THREADS,
     GEPA_OUTPUT_DIR,
     PROMPTS_DIR,
 )
@@ -737,6 +738,7 @@ def main():
         reflection_minibatch_size=GEPA_REFLECTION_MINIBATCH_SIZE,
         track_stats=True,
         log_dir=str(log_dir),
+        num_threads=GEPA_NUM_THREADS,
     )
 
     optimized = gepa.compile(student=baseline, trainset=trainset, valset=valset)
