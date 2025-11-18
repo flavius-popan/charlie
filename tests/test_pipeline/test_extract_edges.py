@@ -50,7 +50,11 @@ class DeterministicEdgeExtractor:
         relation = "RELATES_TO"
         if "argued" in text_lower or "fight" in text_lower:
             relation = "ConflictsWith"
-        elif "support" in text_lower or "comfort" in text_lower or "sponsor" in text_lower:
+        elif (
+            "support" in text_lower
+            or "comfort" in text_lower
+            or "sponsor" in text_lower
+        ):
             relation = "Supports"
         elif "visit" in text_lower or "grounding" in text_lower:
             relation = "Visits"
@@ -182,7 +186,7 @@ class TestBuildEntityEdges:
         assert len(edges) == 1
         assert edges[0].source_node_uuid == "sarah-uuid"
         assert edges[0].target_node_uuid == "stanford-uuid"
-        assert edges[0].name == "WORKS_AT"
+        assert edges[0].name == "RELATES_TO"
         assert edges[0].fact == "Sarah works at Stanford as a researcher."
         assert edges[0].episodes == ["episode-123"]
         assert edges[0].group_id == "test"
@@ -205,9 +209,7 @@ class TestBuildEntityEdges:
             ]
         )
 
-        edges = build_entity_edges(
-            relationships, [target], "episode-123", "test"
-        )
+        edges = build_entity_edges(relationships, [target], "episode-123", "test")
 
         assert len(edges) == 0
 
@@ -229,9 +231,7 @@ class TestBuildEntityEdges:
             ]
         )
 
-        edges = build_entity_edges(
-            relationships, [source], "episode-123", "test"
-        )
+        edges = build_entity_edges(relationships, [source], "episode-123", "test")
 
         assert len(edges) == 0
 
@@ -358,7 +358,7 @@ def seed_edge(isolated_graph) -> callable:
             name: {db_utils.to_cypher_literal(name)},
             fact: {db_utils.to_cypher_literal(fact)},
             group_id: {db_utils.to_cypher_literal(group_id)},
-            created_at: {db_utils.to_cypher_literal('2024-01-01T00:00:00Z')},
+            created_at: {db_utils.to_cypher_literal("2024-01-01T00:00:00Z")},
             episodes: {db_utils.to_cypher_literal(json.dumps(episodes))}
         }}]->(target)
         """
@@ -555,11 +555,12 @@ async def test_extract_edges_deduplication(
     works_at_edges = [
         e
         for e in result.edges
-        if e.source_node_uuid == "sarah-uuid"
-        and e.target_node_uuid == "stanford-uuid"
+        if e.source_node_uuid == "sarah-uuid" and e.target_node_uuid == "stanford-uuid"
     ]
 
-    assert len(works_at_edges) >= 1, "Expected at least one edge between Sarah and Stanford"
+    assert len(works_at_edges) >= 1, (
+        "Expected at least one edge between Sarah and Stanford"
+    )
 
     if result.metadata["merged_count"] >= 1:
         edge = works_at_edges[0]

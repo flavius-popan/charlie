@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
+import _dspy_setup  # noqa: F401
 import dspy
 import gradio as gr
 from graphiti_core.nodes import EpisodeType, EpisodicNode

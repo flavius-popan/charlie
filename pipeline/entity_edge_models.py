@@ -1,16 +1,16 @@
 """Entity and edge schemas for journaling-focused Graphiti tests.
 
-This ontology is intentionally small and feelings-aware without being heavy:
+This ontology is intentionally small so Stage 3 only extracts attributes that
+carry real downstream value:
 
 - Core entity types: Person, Place, Organization, Activity.
-- Person entities carry light emotional context via closeness attribute (0-1 scale).
-- A small set of edges for relationships, time spent together, and activities.
-- A generic RELATES_TO fallback for all other relationships.
+- Person entities only capture relationship_type strings.
+- Activities keep a single `purpose` string for descriptive clustering.
+- Edge types use labels only (no attribute schema) to reduce JSON parsing.
 
 Exposed structures:
     * entity_types  – map of entity label → Pydantic model.
     * edge_meta     – map of edge type name → metadata (description + signatures).
-    * edge_types    – map of edge type name → Pydantic model for per-edge attributes.
     * edge_type_map – allowed edge types for every (source_type, target_type) pair.
 """
 
@@ -37,12 +37,6 @@ class Person(BaseModel):
             "(e.g., friend, partner, coworker, family, therapist)."
         ),
     )
-    closeness: Optional[float] = Field(
-        default=None,
-        ge=0.0,
-        le=1.0,
-        description="Overall sense of closeness with this person (0–1), if known.",
-    )
 
 
 class Place(BaseModel):
@@ -65,6 +59,11 @@ class Organization(BaseModel):
 
 class Activity(BaseModel):
     """An event, outing, or recurring routine."""
+
+    purpose: Optional[str] = Field(
+        default=None,
+        description="Short description of why/what the activity is (therapy, bike ride, etc.).",
+    )
 
 
 entity_types: Dict[str, type[BaseModel]] = {
@@ -147,94 +146,8 @@ edge_meta: Dict[str, EdgeMeta] = {
 
 
 # ---------------------------------------------------------------------------
-# Edge attribute schemas (Pydantic models per *custom* edge type)
-# ---------------------------------------------------------------------------
-
-
-class Knows(BaseModel):
-    """General relationship or familiarity between two people."""
-
-    closeness_score: Optional[float] = Field(
-        default=None,
-        ge=0.0,
-        le=1.0,
-        description="How close these people are overall (0–1), if known.",
-    )
-    primary_context: Optional[str] = Field(
-        default=None,
-        description="Context for how they know each other (work, school, family, online, etc.).",
-    )
-
-
-class SpendsTimeWith(BaseModel):
-    """Two people regularly spend meaningful time together."""
-
-    primary_activity: Optional[str] = Field(
-        default=None,
-        description="Main thing they tend to do together (e.g., climbing, talking, gaming).",
-    )
-
-
-class Supports(BaseModel):
-    """One person offers support to another."""
-
-    support_type: Optional[str] = Field(
-        default=None,
-        description="Kind of support (emotional, logistical, financial, mentoring, etc.).",
-    )
-    primary_emotion: Optional[str] = Field(
-        default=None,
-        description="Dominant emotion you feel about this support (grateful, reassured, etc.).",
-    )
-
-
-class ConflictsWith(BaseModel):
-    """Notable conflict or tension between two people."""
-
-    intensity: Optional[float] = Field(
-        default=None,
-        ge=0.0,
-        le=1.0,
-        description="How intense the conflict feels overall (0–1).",
-    )
-    primary_emotion: Optional[str] = Field(
-        default=None,
-        description="Emotion most associated with this conflict (anger, anxiety, resentment, etc.).",
-    )
-
-
-class ParticipatesIn(BaseModel):
-    """A person participates in or does an activity."""
-
-    role: Optional[str] = Field(
-        default=None,
-        description="Role in the activity, if any (host, guest, student, teammate, etc.).",
-    )
-
-
-class OccursAt(BaseModel):
-    """An activity occurs at or is associated with a place."""
-
-    note: Optional[str] = Field(
-        default=None,
-        description="Optional note about the location (e.g., usual venue, special place).",
-    )
-
-
-class Visits(BaseModel):
-    """A person visits or frequently spends time at a place."""
-
-
-# Only *custom* edge types go here. RELATES_TO is provided by Graphiti itself.
-edge_types: Dict[str, type[BaseModel]] = {
-    "Knows": Knows,
-    "SpendsTimeWith": SpendsTimeWith,
-    "Supports": Supports,
-    "ConflictsWith": ConflictsWith,
-    "ParticipatesIn": ParticipatesIn,
-    "OccursAt": OccursAt,
-    "Visits": Visits,
-}
+# No edge attribute schemas. Edges are label-only.
+edge_types: Dict[str, type[BaseModel]] = {}
 
 
 # ---------------------------------------------------------------------------
@@ -273,13 +186,6 @@ __all__ = [
     # Edge metadata / schemas
     "EdgeMeta",
     "edge_meta",
-    "Knows",
-    "SpendsTimeWith",
-    "Supports",
-    "ConflictsWith",
-    "ParticipatesIn",
-    "OccursAt",
-    "Visits",
     "edge_types",
     "edge_type_map",
 ]

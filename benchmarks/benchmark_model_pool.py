@@ -22,6 +22,7 @@ import time
 import os
 from typing import List
 
+from pipeline import _dspy_setup  # noqa: F401
 import dspy
 from pydantic import BaseModel, Field
 

@@ -15,11 +15,20 @@ def _env_flag(name: str, default: bool = False) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
-# Ensure DSPy uses a writable cache directory inside the repository.
-_DSPY_CACHE_DIR = Path(__file__).resolve().parent / "prompts" / ".dspy_cache"
+# Centralized prompt + cache directories live under pipeline/prompts so a single
+# `rm -rf pipeline/prompts` wipes every optimizer artifact.
+PROMPTS_DIR = Path(__file__).resolve().parent / "pipeline" / "prompts"
+PROMPTS_DIR.mkdir(parents=True, exist_ok=True)
+
+# Ensure DSPy uses a writable cache directory inside pipeline/prompts.
+_DSPY_CACHE_DIR = PROMPTS_DIR / ".dspy_cache"
 _DSPY_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 for _env_var in ("DSPY_CACHEDIR", "DSPY_CACHE_DIR", "DSPY_CACHE"):
     os.environ.setdefault(_env_var, str(_DSPY_CACHE_DIR))
+
+# Consolidated GEPA outputs live beneath pipeline/prompts as well.
+GEPA_OUTPUT_DIR = PROMPTS_DIR / "gepa"
+GEPA_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # Model
 DEFAULT_MODEL_PATH = "mlx-community/Qwen3-4B-Instruct-2507-4bit-DWQ-2510"

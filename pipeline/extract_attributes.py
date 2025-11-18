@@ -35,6 +35,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from pipeline import _dspy_setup  # noqa: F401
 import dspy
 from graphiti_core.nodes import EntityNode, EpisodicNode
 from pydantic import BaseModel

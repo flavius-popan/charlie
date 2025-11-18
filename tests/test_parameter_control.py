@@ -1,3 +1,4 @@
+from pipeline import _dspy_setup  # noqa: F401
 import dspy
 
 from mlx_runtime import MLXDspyLM

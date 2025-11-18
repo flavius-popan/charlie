@@ -257,11 +257,10 @@ async def test_extract_attributes_metadata_tracking(isolated_graph) -> None:
     assert result.metadata["attributes_extracted_by_type"]["Person"] == 1
 
 
-def test_attribute_metric_handles_numeric_tolerance() -> None:
-    """Metric should treat close float values as matches."""
-    example = SimpleNamespace(attributes={"closeness": 0.8, "relationship_type": "friend"})
-    # Predictor returns slightly different float plus correctly cased string.
-    prediction = {"closeness": 0.82, "relationship_type": "Friend"}
+def test_attribute_metric_handles_string_normalization() -> None:
+    """Metric should treat case/whitespace-insensitive string matches as correct."""
+    example = SimpleNamespace(attributes={"relationship_type": "friend"})
+    prediction = {"relationship_type": " Friend "}
 
     score = attribute_extraction_metric(example, prediction)
     assert score == 1.0

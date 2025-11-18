@@ -1,0 +1,165 @@
+{
+  "_predictors['Person'].predict": {
+    "traces": [],
+    "train": [],
+    "demos": [],
+    "signature": {
+      "instructions": "Extract Person attributes from journal entries.",
+      "fields": [
+        {
+          "prefix": "Episode Content:",
+          "description": "journal entry text"
+        },
+        {
+          "prefix": "Previous Episodes:",
+          "description": "prior entries as JSON"
+        },
+        {
+          "prefix": "Entity Name:",
+          "description": "entity name"
+        },
+        {
+          "prefix": "Entity Type:",
+          "description": "entity type"
+        },
+        {
+          "prefix": "Existing Attributes:",
+          "description": "current attributes as JSON"
+        },
+        {
+          "prefix": "Reasoning: Let's think step by step in order to",
+          "description": "${reasoning}"
+        },
+        {
+          "prefix": "Attributes:",
+          "description": "extracted attributes"
+        }
+      ]
+    },
+    "lm": null
+  },
+  "_predictors['Place'].predict": {
+    "traces": [],
+    "train": [],
+    "demos": [],
+    "signature": {
+      "instructions": "Extract Place attributes from journal entries.",
+      "fields": [
+        {
+          "prefix": "Episode Content:",
+          "description": "journal entry text"
+        },
+        {
+          "prefix": "Previous Episodes:",
+          "description": "prior entries as JSON"
+        },
+        {
+          "prefix": "Entity Name:",
+          "description": "entity name"
+        },
+        {
+          "prefix": "Entity Type:",
+          "description": "entity type"
+        },
+        {
+          "prefix": "Existing Attributes:",
+          "description": "current attributes as JSON"
+        },
+        {
+          "prefix": "Reasoning: Let's think step by step in order to",
+          "description": "${reasoning}"
+        },
+        {
+          "prefix": "Attributes:",
+          "description": "extracted attributes"
+        }
+      ]
+    },
+    "lm": null
+  },
+  "_predictors['Organization'].predict": {
+    "traces": [],
+    "train": [],
+    "demos": [],
+    "signature": {
+      "instructions": "Extract Organization attributes from journal entries.",
+      "fields": [
+        {
+          "prefix": "Episode Content:",
+          "description": "journal entry text"
+        },
+        {
+          "prefix": "Previous Episodes:",
+          "description": "prior entries as JSON"
+        },
+        {
+          "prefix": "Entity Name:",
+          "description": "entity name"
+        },
+        {
+          "prefix": "Entity Type:",
+          "description": "entity type"
+        },
+        {
+          "prefix": "Existing Attributes:",
+          "description": "current attributes as JSON"
+        },
+        {
+          "prefix": "Reasoning: Let's think step by step in order to",
+          "description": "${reasoning}"
+        },
+        {
+          "prefix": "Attributes:",
+          "description": "extracted attributes"
+        }
+      ]
+    },
+    "lm": null
+  },
+  "_predictors['Activity'].predict": {
+    "traces": [],
+    "train": [],
+    "demos": [],
+    "signature": {
+      "instructions": "Extract Activity attributes from journal entries.",
+      "fields": [
+        {
+          "prefix": "Episode Content:",
+          "description": "journal entry text"
+        },
+        {
+          "prefix": "Previous Episodes:",
+          "description": "prior entries as JSON"
+        },
+        {
+          "prefix": "Entity Name:",
+          "description": "entity name"
+        },
+        {
+          "prefix": "Entity Type:",
+          "description": "entity type"
+        },
+        {
+          "prefix": "Existing Attributes:",
+          "description": "current attributes as JSON"
+        },
+        {
+          "prefix": "Reasoning: Let's think step by step in order to",
+          "description": "${reasoning}"
+        },
+        {
+          "prefix": "Attributes:",
+          "description": "extracted attributes"
+        }
+      ]
+    },
+    "lm": null
+  },
+  "metadata": {
+    "dependency_versions": {
+      "python": "3.13",
+      "dspy": "3.0.4",
+      "cloudpickle": "3.1"
+    }
+  }
+}

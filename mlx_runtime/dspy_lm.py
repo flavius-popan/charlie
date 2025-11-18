@@ -6,6 +6,7 @@ import logging
 from types import SimpleNamespace
 from typing import Any
 
+from pipeline import _dspy_setup  # noqa: F401
 import dspy
 import mlx_lm
 from mlx_lm.sample_utils import make_sampler

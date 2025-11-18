@@ -167,7 +167,7 @@ extractor = ExtractNodes(group_id="user_123", entity_extractor=compiled)
 result = await extractor(content="...")
 ```
 
-**Important**: Stage 1 extracts entity names and types ONLY. Custom attributes (e.g., Person.relationship_type, Activity.activity_type) are extracted in Stage 3, following graphiti-core's separation of concerns.
+**Important**: Stage 1 extracts entity names and types ONLY. Custom attributes (e.g., Person.relationship_type, Activity.purpose) are extracted in Stage 3, following graphiti-core's separation of concerns.
 
 **Author anchoring**: When the current journal entry contains first-person pronouns, Stage 1 automatically injects a deterministic SELF entity (UUID `11111111-1111-1111-1111-111111111111`, name `Self`, labels `["Entity", "Person"]`). This ensures the author is always available for edge extraction without hallucinating when entries are third-person only.
 
@@ -262,8 +262,8 @@ result = await extractor(...)
 
 **Design**:
 - For each resolved entity from Stage 1, extract type-specific attributes:
-  - **Person**: `relationship_type` (e.g., "friend", "colleague", "family"), `closeness` (0-1 float), `overall_valence` (-1 to 1 float)
-  - **Activity**: `activity_type` (e.g., "walk", "therapy session")
+  - **Person**: `relationship_type` (e.g., "friend", "colleague", "family")
+  - **Activity**: `purpose` (short description like "therapy session", "walk")
   - **Place**: `category` (e.g., "park", "clinic")
   - **Organization**: `category` (e.g., "company", "nonprofit")
 - Pass entity's Pydantic model (from `entity_edge_models.py`) as `response_model` to LLM
@@ -319,8 +319,6 @@ EntityNode(
     labels=["Entity", "Person"],
     attributes={
         "relationship_type": "friend",  # Extracted from "my friend Sarah"
-        "closeness": 0.8,               # Emotional closeness
-        "overall_valence": 0.7          # Positive sentiment
     }
 )
 
@@ -328,7 +326,7 @@ EntityNode(
 EntityNode(
     name="morning walk",
     labels=["Entity", "Activity"],
-    attributes={"activity_type": "walk"}
+    attributes={"purpose": "morning walk"}
 )
 ```
 

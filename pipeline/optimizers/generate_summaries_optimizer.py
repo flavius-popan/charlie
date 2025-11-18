@@ -13,18 +13,16 @@ import json
 import os
 from pathlib import Path
 import logging
-import dspy
-from dspy.teleprompt import GEPA
-from dspy import Prediction
+from collections import defaultdict
 
-from mlx_runtime import MLXDspyLM
-from pipeline.generate_summaries import (
-    EntitySummary,
-    SummaryGenerator,
-    build_node_payload,
-    build_summary_context,
-)
-from settings import (
+# Allow running as `python pipeline/optimizers/...` by ensuring `settings` loads
+# (and configures DSPy caches) before the first DSPy import.
+if __package__ is None:
+    PROJECT_ROOT = Path(__file__).resolve().parents[2]
+    if str(PROJECT_ROOT) not in os.sys.path:
+        os.sys.path.insert(0, str(PROJECT_ROOT))
+
+from settings import (  # noqa: E402
     DEFAULT_MODEL_PATH,
     MODEL_CONFIG,
     REFLECTION_MODEL,
@@ -32,6 +30,20 @@ from settings import (
     REFLECTION_MAX_TOKENS,
     GEPA_REFLECTION_MINIBATCH_SIZE,
     GEPA_MAX_FULL_EVALS,
+    GEPA_OUTPUT_DIR,
+)
+
+from pipeline import _dspy_setup  # noqa: F401
+import dspy  # noqa: E402
+from dspy.teleprompt import GEPA  # noqa: E402
+from dspy import Prediction  # noqa: E402
+
+from mlx_runtime import MLXDspyLM
+from pipeline.generate_summaries import (
+    EntitySummary,
+    SummaryGenerator,
+    build_node_payload,
+    build_summary_context,
 )
 
 
@@ -78,7 +90,7 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
         )
         return json.dumps(context_dict, ensure_ascii=False)
 
-    def example(
+    def build_example(
         *,
         episode_content: str,
         previous_episodes: list[str],
@@ -88,7 +100,7 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
         attributes: dict,
         summary_text: str,
         key_phrases: list[str],
-    ) -> dspy.Example:
+    ) -> tuple[dspy.Example, str]:
         context_json = _context_json(
             episode_content=episode_content,
             previous_episodes=previous_episodes,
@@ -97,14 +109,15 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
             existing_summary=existing_summary,
             attributes=attributes,
         )
-        return dspy.Example(
+        ex = dspy.Example(
             summary_context=context_json,
             summary=summary_text,
             key_phrases=key_phrases,
         ).with_inputs("summary_context")
+        return ex, entity_type
 
-    all_examples = [
-        example(
+    typed_examples = [
+        build_example(
             episode_content=(
                 "Kai and I biked the Embarcadero at dawn. "
                 "He vented about finishing his art school portfolio."
@@ -117,12 +130,11 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
             existing_summary="",
             attributes={
                 "relationship_type": "friend",
-                "closeness": 0.78,
             },
             summary_text="I biked the Embarcadero at dawn with Kai and let him spill every anxious portfolio thought until he finally exhaled.",
             key_phrases=["sunrise ride", "portfolio jitters"],
         ),
-        example(
+        build_example(
             episode_content=(
                 "Sat with Grandma Rosa at St. Jude's while Dr. Yates walked her through tomorrow's surgery."
             ),
@@ -134,12 +146,11 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
             existing_summary="Recovering slowly from pneumonia.",
             attributes={
                 "relationship_type": "family",
-                "closeness": 0.92,
             },
             summary_text="I sat beside Grandma Rosa at St. Jude's while Dr. Yates explained tomorrow's surgery and tried to keep both our breaths steady.",
             key_phrases=["St. Jude's", "surgery prep"],
         ),
-        example(
+        build_example(
             episode_content=(
                 "Spent the morning at the 24th Street Community Garden building raised beds with three teen volunteers."
             ),
@@ -151,7 +162,7 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
             summary_text="I spent the morning at 24th Street Community Garden building raised beds with three tender teen volunteers and soaked up the buzz of community.",
             key_phrases=["raised beds", "teen volunteers", "community"],
         ),
-        example(
+        build_example(
             episode_content=(
                 "Snuck out for a night swim at Aquatic Park with Marco; the cold shock actually calmed me down."
             ),
@@ -161,11 +172,11 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
             entity_name="Night swim",
             entity_type="Activity",
             existing_summary="",
-            attributes={"activity_type": "night swim ritual"},
+            attributes={"purpose": "night swim ritual"},
             summary_text="I snuck into Aquatic Park for a night swim with Marco, let the cold shock hit, and felt the panic buzzing under my skin finally melt.",
             key_phrases=["Aquatic Park", "night swim", "calming shock"],
         ),
-        example(
+        build_example(
             episode_content=(
                 "Session with therapist Ines. She led long breathing ladders and assigned a new journal prompt."
             ),
@@ -175,12 +186,11 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
             existing_summary="Working with me on grounding skills.",
             attributes={
                 "relationship_type": "therapist",
-                "closeness": 0.58,
             },
             summary_text="I stretched session time with therapist Ines so we could climb slow breathing ladders and she left me holding a gentle journal prompt.",
             key_phrases=["breathing ladders", "journal prompt"],
         ),
-        example(
+        build_example(
             episode_content=(
                 "Been practicing patience while caring for Mom—slow paperwork, slow progress, just breathing through the delays."
             ),
@@ -190,11 +200,11 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
             entity_name="Caregiving patience practice",
             entity_type="Activity",
             existing_summary="",
-            attributes={"activity_type": "caregiving ritual"},
+            attributes={"purpose": "caregiving ritual"},
             summary_text="I practiced caregiving patience by breathing with Mom through slow paperwork, tiny wins, and the urge to rush.",
             key_phrases=["caregiving", "patience", "Mom"],
         ),
-        example(
+        build_example(
             episode_content=(
                 "Priya hosted a cozy potluck tonight and spread out her colored pens to map my training schedule."
             ),
@@ -206,12 +216,11 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
             existing_summary="Keeps me motivated for races.",
             attributes={
                 "relationship_type": "friend",
-                "closeness": 0.8,
             },
             summary_text="I felt completely seen when Priya hosted a cozy potluck, covered the table in rainbow pens, and re-mapped my training plan with me.",
             key_phrases=["potluck", "training plan", "colored pens"],
         ),
-        example(
+        build_example(
             episode_content=(
                 "Harbor Clinic smelled like mint tea today. Ben reorganized the pamphlets so folks could actually find resources."
             ),
@@ -223,7 +232,7 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
             summary_text="I noticed Harbor Clinic smelling like mint tea while Ben quietly reorganized pamphlets so anxious folks like me could grab resources faster.",
             key_phrases=["mint tea", "waiting room care"],
         ),
-        example(
+        build_example(
             episode_content="I biked slow loops near Crissy Field after therapy just to feel the fog on my face.",
             previous_episodes=[
                 "Crissy Field night rides used to be my go-to regulation trick."
@@ -233,12 +242,11 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
             existing_summary="",
             attributes={
                 "relationship_type": "author",
-                "closeness": 0.75,
             },
             summary_text="I biked lazy loops at Crissy Field after therapy so the wind could rinse off the leftover dread.",
             key_phrases=["Crissy Field", "therapy decompression"],
         ),
-        example(
+        build_example(
             episode_content="I staffed Mutual Aid Kitchen again and my hands smelled like cilantro for hours.",
             previous_episodes=[
                 "That volunteer crew keeps me accountable when I want to hide."
@@ -250,7 +258,7 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
             summary_text="I felt grounded at Mutual Aid Kitchen, chopping cilantro with the crew that refuses to let me disappear.",
             key_phrases=["Mutual Aid Kitchen", "cilantro", "grounded"],
         ),
-        example(
+        build_example(
             episode_content="I curled up in the window seat at Studio Norte and journaled through a monsoon of feelings.",
             previous_episodes=[
                 "Studio Norte is my creative co-op when I miss having coworkers."
@@ -264,8 +272,18 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
         ),
     ]
 
-    valset = all_examples[-3:]
-    trainset = all_examples[:-3]
+    buckets: dict[str, list[dspy.Example]] = defaultdict(list)
+    for example_obj, entity_type in typed_examples:
+        buckets[entity_type].append(example_obj)
+
+    trainset: list[dspy.Example] = []
+    valset: list[dspy.Example] = []
+    for entity_type, bucket in buckets.items():
+        if len(bucket) == 1:
+            trainset.extend(bucket)
+            continue
+        valset.append(bucket.pop())
+        trainset.extend(bucket)
     logger.info(
         "Built summary trainset with %d examples, valset with %d examples",
         len(trainset),
@@ -292,64 +310,78 @@ def _summary_text(value) -> str:
     return getattr(value, "summary", "")
 
 
-def calculate_keyword_score(summary_text: str, key_phrases: list[str]) -> float:
-    """Calculate keyword coverage score."""
-
-    if not summary_text.strip():
-        return 0.0
-
-    if not key_phrases:
-        return 1.0
-
-    summary_lower = summary_text.lower()
-    matches = sum(1 for phrase in key_phrases if phrase.lower() in summary_lower)
-    return matches / len(key_phrases)
-
-
-def generate_feedback(
+def judge_summary_score(
+    *,
     generated_summary: str,
     expected_key_phrases: list[str],
-    score: float,
-    judge_lm: dspy.LM
-) -> str:
-    """Use judge LM to generate actionable feedback."""
+    judge_lm: dspy.LM,
+    log_label: str | None = None,
+) -> tuple[float, str]:
+    """Request numeric score + textual guidance from the judge model."""
 
-    feedback_prompt = f"""Evaluate this journal summary and provide specific feedback:
+    feedback_prompt = f'''You are grading a journal entity summary.
 
-Generated summary: "{generated_summary}"
-Expected key phrases: {expected_key_phrases}
-Keyword coverage score: {score:.2f}
+Summary:
+"""
+{generated_summary}
+"""
 
-Provide feedback on:
-1. First-person narration: Does it maintain intimate, "I"-centered voice?
-2. Length/conciseness: Is it appropriately brief and human-readable?
-3. Missing elements: Which key phrases are absent?
+Key phrases (context only, no requirement to include them verbatim): {expected_key_phrases}
 
-Be specific and actionable."""
+Respond with ONLY valid JSON matching this schema:
+{{
+  "overall_score": <float between 0 and 1>,
+  "feedback": "<detailed coaching that highlights strengths, weaknesses, and missing nuance>"
+}}
 
-    logger.info("=" * 80)
-    logger.info("JUDGE EVALUATION REQUEST")
-    logger.info(f"Generated: {generated_summary}")
-    logger.info(f"Score: {score:.2f}")
+Score should reward intimate first-person narration, sensory/reflective detail, emotional nuance, and concise storytelling. Penalize generic or third-person summaries.
+'''
 
-    feedback = judge_lm(feedback_prompt)[0]
+    if log_label:
+        logger.info("=" * 80)
+        logger.info(f"JUDGE EVALUATION REQUEST ({log_label})")
+        logger.info(f"Generated: {generated_summary}")
 
-    logger.info("JUDGE FEEDBACK:")
-    logger.info(feedback)
-    logger.info("=" * 80)
+    response = judge_lm(feedback_prompt)[0]
 
-    return feedback
+    score = 0.0
+    feedback = response.strip()
+    try:
+        parsed = json.loads(response)
+        score = float(parsed.get("overall_score", 0.0))
+        feedback = str(parsed.get("feedback", "")).strip() or feedback
+    except (json.JSONDecodeError, TypeError, ValueError) as exc:
+        logger.warning("Failed to parse judge response (%s). Raw response: %s", exc, response)
+        feedback = f"Invalid judge response; defaulted to 0. Raw: {response}"
+
+    score = max(0.0, min(1.0, score))
+
+    if log_label:
+        logger.info(f"Score: {score:.2f}")
+        logger.info("JUDGE FEEDBACK:")
+        logger.info(feedback)
+        logger.info("=" * 80)
+
+    return score, feedback
 
 
-def evaluate(module: SummaryGenerator, dataset: list[dspy.Example]) -> float:
-    """Average keyword coverage across dataset."""
+def evaluate(
+    module: SummaryGenerator,
+    dataset: list[dspy.Example],
+    judge_lm: dspy.LM,
+) -> float:
+    """Average judge-derived score across dataset."""
 
     scores: list[float] = []
     for example in dataset:
         prediction = module(summary_context=example.summary_context)
         summary_text = _summary_text(prediction)
         key_phrases = getattr(example, "key_phrases", [])
-        score = calculate_keyword_score(summary_text, key_phrases)
+        score, _ = judge_summary_score(
+            generated_summary=summary_text,
+            expected_key_phrases=key_phrases,
+            judge_lm=judge_lm,
+        )
         scores.append(score)
 
     return sum(scores) / len(scores) if scores else 0.0
@@ -390,45 +422,31 @@ def main():
 
     # Create GEPA-compatible metric with judge_lm bound via closure
     def gepa_summary_metric(gold, pred, trace=None, pred_name=None, pred_trace=None) -> Prediction:
-        """GEPA-compatible metric that returns ScoreWithFeedback.
-
-        Note: Only calls expensive judge LM during GEPA reflection phase (pred_name != None).
-        Regular evaluations use simple feedback to save costs and time.
-        Alternative: Use max_full_evals instead of auto for budget control.
-        """
+        """GEPA metric driven entirely by judge scoring."""
 
         summary_text = _summary_text(pred)
         key_phrases = getattr(gold, "key_phrases", [])
-        score = calculate_keyword_score(summary_text, key_phrases)
+        score, feedback = judge_summary_score(
+            generated_summary=summary_text,
+            expected_key_phrases=key_phrases,
+            judge_lm=judge_lm,
+            log_label=pred_name,
+        )
 
-        # Only call expensive judge LM during GEPA reflection phase (when pred_name provided)
         if pred_name:
             logger.info("-" * 80)
-            logger.info(f"EVALUATING PREDICTOR: {pred_name}")
-
-            feedback = generate_feedback(
-                generated_summary=summary_text,
-                expected_key_phrases=key_phrases,
-                score=score,
-                judge_lm=judge_lm
-            )
-
             logger.info(f"METRIC SCORE: {score:.2f}")
             logger.info("-" * 80)
-        else:
-            # Simple feedback for regular evaluations (no expensive LLM call)
-            missing_count = len([p for p in key_phrases if p.lower() not in summary_text.lower()])
-            feedback = f"Score: {score:.2f}. Missing {missing_count}/{len(key_phrases)} key phrases."
 
         return Prediction(score=score, feedback=feedback)
 
     # Evaluate baseline
     baseline = SummaryGenerator()
-    baseline_score = evaluate(baseline, valset)
+    baseline_score = evaluate(baseline, valset, judge_lm)
     logger.info("Baseline score (valset): %.3f", baseline_score)
 
     # Create log directory for GEPA artifacts
-    log_dir = Path("debug") / "gepa_summaries"
+    log_dir = GEPA_OUTPUT_DIR / "generate_summaries"
     log_dir.mkdir(parents=True, exist_ok=True)
     logger.info("GEPA logs will be saved to: %s", log_dir)
 
@@ -450,7 +468,7 @@ def main():
     )
 
     # Evaluate optimized
-    optimized_score = evaluate(optimized, valset)
+    optimized_score = evaluate(optimized, valset, judge_lm)
     logger.info("Optimized score (valset): %.3f", optimized_score)
 
     # Save optimized prompts

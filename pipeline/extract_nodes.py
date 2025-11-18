@@ -37,6 +37,7 @@ from pathlib import Path
 from typing import Any
 import copy
 
+from pipeline import _dspy_setup  # noqa: F401
 import dspy
 from graphiti_core.nodes import EntityNode, EpisodeType, EpisodicNode
 from graphiti_core.utils.datetime_utils import ensure_utc, utc_now

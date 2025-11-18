@@ -23,7 +23,9 @@ from dataclasses import dataclass
 from datetime import datetime
 import logging
 from pathlib import Path
+from textwrap import shorten
 from typing import Any
+from pipeline import _dspy_setup  # noqa: F401
 import dspy
 from graphiti_core.edges import EntityEdge
 from graphiti_core.nodes import EntityNode, EpisodicNode
@@ -32,7 +34,8 @@ from graphiti_core.utils.datetime_utils import ensure_utc, utc_now
 from graphiti_core.utils.maintenance.edge_operations import DEFAULT_EDGE_NAME
 from pipeline.entity_edge_models import EdgeMeta
 from pipeline.self_reference import SELF_PROMPT_NOTE, is_self_entity_name
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, ValidationError, model_validator
+from dspy.utils.exceptions import AdapterParseError
 
 # NOTE: Database imports are intentionally NOT at module level.
 # EdgeExtractor is a pure DSPy module with no database dependencies.
@@ -144,14 +147,67 @@ class EdgeExtractor(dspy.Module):
         #     }
         #     # Pass to LLM in signature context
 
-        result = self.extractor(
-            episode_content=episode_content,
-            entities_json=entities_json,
-            reference_time=reference_time,
-            edge_type_context=edge_type_context,
-            previous_episodes_json=previous_episodes_json,
-        )
-        return result.edges
+        try:
+            result = self.extractor(
+                episode_content=episode_content,
+                entities_json=entities_json,
+                reference_time=reference_time,
+                edge_type_context=edge_type_context,
+                previous_episodes_json=previous_episodes_json,
+            )
+        except AdapterParseError as exc:
+            logger.warning("Edge extractor failed to parse output: %s", exc)
+            return self._fallback_edges(entities_json, episode_content)
+
+        edges = self._coerce_edges(result.edges)
+        if not edges.edges:
+            logger.info("Edge extractor returned zero edges; using fallback heuristics.")
+            return self._fallback_edges(entities_json, episode_content)
+        return edges
+
+    @staticmethod
+    def _coerce_edges(value) -> ExtractedEdges:
+        if isinstance(value, ExtractedEdges):
+            return value
+        try:
+            return ExtractedEdges.model_validate(value)
+        except ValidationError as exc:
+            logger.warning("Unable to coerce edge output (%s). Returning empty set.", exc)
+            return ExtractedEdges(edges=[])
+
+    @staticmethod
+    def _fallback_edges(entities_json: str, episode_content: str) -> ExtractedEdges:
+        """Simple heuristic fallback: relate every pair of entities."""
+        try:
+            entities = json.loads(entities_json)
+        except json.JSONDecodeError:
+            return ExtractedEdges(edges=[])
+
+        if not isinstance(entities, list):
+            return ExtractedEdges(edges=[])
+
+        excerpt = shorten(episode_content.strip(), width=160, placeholder="…")
+        fallback_edges: list[ExtractedEdge] = []
+        for source_idx in range(len(entities)):
+            for target_idx in range(source_idx + 1, len(entities)):
+                source = entities[source_idx]
+                target = entities[target_idx]
+                fact = (
+                    f"{source.get('name')} and {target.get('name')} were both mentioned. "
+                    f"Context: {excerpt}"
+                )
+                fallback_edges.append(
+                    ExtractedEdge(
+                        source_entity_id=source_idx,
+                        target_entity_id=target_idx,
+                        relation_type="RELATES_TO",
+                        fact=fact,
+                        valid_at=None,
+                        invalid_at=None,
+                    )
+                )
+
+        return ExtractedEdges(edges=fallback_edges)
 
 
 @dataclass
@@ -292,36 +348,31 @@ def _enforce_edge_type_rules(
     source_node: EntityNode,
     target_node: EntityNode,
     *,
-    edge_types: dict[str, BaseModel],
     edge_type_map: dict[tuple[str, str], list[str]],
 ) -> None:
-    if not edge_types:
-        return
-
     allowed = _collect_allowed_relations(source_node, target_node, edge_type_map)
-    custom_names = {name.upper() for name in edge_types.keys()}
     edge_name = edge.name
 
-    if not allowed and edge_name in custom_names and edge_name != DEFAULT_EDGE_NAME:
-        logger.debug(
-            "Relation %s not permitted for %s/%s. Falling back to %s.",
-            edge.name,
-            source_node.labels,
-            target_node.labels,
-            DEFAULT_EDGE_NAME,
-        )
-        edge.name = DEFAULT_EDGE_NAME
-        return
-
-    if edge_name in custom_names and allowed and edge_name not in allowed and edge_name != DEFAULT_EDGE_NAME:
-        logger.debug(
-            "Relation %s not allowed for %s/%s. Using %s instead.",
-            edge.name,
-            source_node.labels,
-            target_node.labels,
-            DEFAULT_EDGE_NAME,
-        )
-        edge.name = DEFAULT_EDGE_NAME
+    if allowed:
+        if edge_name not in allowed and edge_name != DEFAULT_EDGE_NAME:
+            logger.debug(
+                "Relation %s not allowed for %s/%s. Using %s instead.",
+                edge.name,
+                source_node.labels,
+                target_node.labels,
+                DEFAULT_EDGE_NAME,
+            )
+            edge.name = DEFAULT_EDGE_NAME
+    else:
+        if edge_name != DEFAULT_EDGE_NAME:
+            logger.debug(
+                "No allowed relations for %s/%s. Normalizing %s to %s.",
+                source_node.labels,
+                target_node.labels,
+                edge.name,
+                DEFAULT_EDGE_NAME,
+            )
+            edge.name = DEFAULT_EDGE_NAME
 
 
 def build_entity_edges(
@@ -387,13 +438,7 @@ def build_entity_edges(
             invalid_at=invalid_at_datetime,
         )
 
-        _enforce_edge_type_rules(
-            edge,
-            source_node,
-            target_node,
-            edge_types=edge_types,
-            edge_type_map=edge_type_map,
-        )
+        _enforce_edge_type_rules(edge, source_node, target_node, edge_type_map=edge_type_map)
 
         entity_edges.append(edge)
 

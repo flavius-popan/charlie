@@ -10,13 +10,33 @@ Usage:
 from __future__ import annotations
 
 import json
+import logging
 import os
 from pathlib import Path
 from typing import Any
-import logging
-import dspy
-from dspy.teleprompt import GEPA
-from dspy import Prediction
+
+# Script execution (`python pipeline/optimizers/...`) needs the repo root on sys.path
+# so `settings` loads before DSPy and sets cache env vars deterministically.
+if __package__ is None:
+    PROJECT_ROOT = Path(__file__).resolve().parents[2]
+    if str(PROJECT_ROOT) not in os.sys.path:
+        os.sys.path.insert(0, str(PROJECT_ROOT))
+
+from pipeline import _dspy_setup  # noqa: F401
+import dspy  # noqa: E402
+from dspy.teleprompt import GEPA  # noqa: E402
+from dspy import Prediction  # noqa: E402
+
+from settings import (  # noqa: E402
+    DEFAULT_MODEL_PATH,
+    MODEL_CONFIG,
+    REFLECTION_MODEL,
+    REFLECTION_TEMPERATURE,
+    REFLECTION_MAX_TOKENS,
+    GEPA_REFLECTION_MINIBATCH_SIZE,
+    GEPA_MAX_FULL_EVALS,
+    GEPA_OUTPUT_DIR,
+)
 
 from mlx_runtime import MLXDspyLM
 from pipeline.entity_edge_models import (
@@ -31,15 +51,6 @@ from pipeline.extract_edges import (
     _build_edge_type_context,
 )
 from pipeline.self_reference import SELF_PROMPT_NOTE
-from settings import (
-    DEFAULT_MODEL_PATH,
-    MODEL_CONFIG,
-    REFLECTION_MODEL,
-    REFLECTION_TEMPERATURE,
-    REFLECTION_MAX_TOKENS,
-    GEPA_REFLECTION_MINIBATCH_SIZE,
-    GEPA_MAX_FULL_EVALS,
-)
 
 
 PROMPT_OUTPUT = Path(__file__).parent.parent / "prompts" / "extract_edges.json"
@@ -499,12 +510,37 @@ def configure_dspy():
 def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
     """Build relationship extraction examples rooted in personal journals."""
 
-    all_examples: list[dspy.Example] = []
+    examples_with_relations: list[tuple[dspy.Example, set[str]]] = []
     for payload in RAW_EXAMPLES:
-        all_examples.append(_make_example(payload))
+        relations = {rel["relation"] for rel in payload["relationships"]}
+        examples_with_relations.append((_make_example(payload), relations))
 
-    trainset = all_examples[:8]
-    valset = all_examples[8:]
+    split_idx = min(8, len(examples_with_relations))
+    train_examples = examples_with_relations[:split_idx]
+    val_examples = examples_with_relations[split_idx:]
+
+    def relation_coverage(examples: list[tuple[dspy.Example, set[str]]]) -> set[str]:
+        covered: set[str] = set()
+        for _, relations in examples:
+            covered.update(relations)
+        return covered
+
+    required_relations = set(DEFAULT_EDGE_META.keys())
+    missing = required_relations - relation_coverage(train_examples)
+    while missing:
+        relation = missing.pop()
+        idx = next(
+            (i for i, (_, rels) in enumerate(val_examples) if relation in rels),
+            None,
+        )
+        if idx is None:
+            logger.warning("Training set lacks coverage for relation %s", relation)
+            continue
+        train_examples.append(val_examples.pop(idx))
+        missing = required_relations - relation_coverage(train_examples)
+
+    trainset = [example for example, _ in train_examples]
+    valset = [example for example, _ in val_examples]
     logger.info(
         "Built relationship trainset with %d examples, valset with %d examples",
         len(trainset),
@@ -728,7 +764,7 @@ def main():
     logger.info("Baseline score (valset): %.3f", baseline_score)
 
     # Create log directory for GEPA artifacts
-    log_dir = Path("debug") / "gepa_edges"
+    log_dir = GEPA_OUTPUT_DIR / "extract_edges"
     log_dir.mkdir(parents=True, exist_ok=True)
     logger.info("GEPA logs will be saved to: %s", log_dir)
 

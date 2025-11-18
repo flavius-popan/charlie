@@ -9,18 +9,20 @@ Usage:
 """
 
 from __future__ import annotations
-from pathlib import Path
-import logging
-import json
-import os
-import dspy
-from dspy.teleprompt import GEPA
-from dspy import Prediction
 
-from mlx_runtime import MLXDspyLM
-from pipeline.extract_nodes import EntityExtractor
-from pipeline.extract_nodes import ExtractedEntity, ExtractedEntities
-from settings import (
+import json
+import logging
+import os
+from pathlib import Path
+
+# When executed as `python pipeline/optimizers/...`, this ensures we can import
+# `settings` before DSPy initializes so cache/env configuration is applied first.
+if __package__ is None:
+    PROJECT_ROOT = Path(__file__).resolve().parents[2]
+    if str(PROJECT_ROOT) not in os.sys.path:
+        os.sys.path.insert(0, str(PROJECT_ROOT))
+
+from settings import (  # noqa: E402
     DEFAULT_MODEL_PATH,
     MODEL_CONFIG,
     REFLECTION_MODEL,
@@ -28,12 +30,29 @@ from settings import (
     REFLECTION_MAX_TOKENS,
     GEPA_REFLECTION_MINIBATCH_SIZE,
     GEPA_MAX_FULL_EVALS,
+    GEPA_OUTPUT_DIR,
+    PROMPTS_DIR,
 )
 
+from pipeline import _dspy_setup  # noqa: F401
+import dspy  # noqa: E402
+from dspy.teleprompt import GEPA  # noqa: E402
+from dspy import Prediction  # noqa: E402
 
-PROMPT_OUTPUT = Path(__file__).parent.parent / "prompts" / "extract_nodes.json"
+from mlx_runtime import MLXDspyLM
+from pipeline.extract_nodes import EntityExtractor
+from pipeline.extract_nodes import ExtractedEntity, ExtractedEntities
+
+PROMPT_OUTPUT = PROMPTS_DIR / "extract_nodes.json"
 logger = logging.getLogger(__name__)
 
+ENTITY_TYPE_ID_TO_LABEL = {
+    1: "Person",
+    2: "Place",
+    3: "Organization",
+    4: "Activity",
+}
+REQUIRED_ENTITY_TYPES = set(ENTITY_TYPE_ID_TO_LABEL.values())
 
 def configure_dspy():
     """Configure DSPy with the MLX-backed LM used in production."""
@@ -380,8 +399,40 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
         ).with_inputs("episode_content", "entity_types")
     )
 
-    valset = all_examples[-3:]
-    trainset = all_examples[:-3]
+    examples_with_types: list[tuple[dspy.Example, set[str]]] = []
+    for example in all_examples:
+        type_names = {
+            ENTITY_TYPE_ID_TO_LABEL.get(entity.entity_type_id)
+            for entity in example.extracted_entities.extracted_entities
+            if ENTITY_TYPE_ID_TO_LABEL.get(entity.entity_type_id)
+        }
+        examples_with_types.append((example, type_names))
+
+    if len(examples_with_types) <= 3:
+        trainset = [example for example, _ in examples_with_types]
+        valset: list[dspy.Example] = []
+    else:
+        train_examples = examples_with_types[:-3]
+        val_examples = examples_with_types[-3:]
+
+        def coverage(examples: list[tuple[dspy.Example, set[str]]]) -> set[str]:
+            cov: set[str] = set()
+            for _, types in examples:
+                cov.update(types)
+            return cov
+
+        missing = REQUIRED_ENTITY_TYPES - coverage(train_examples)
+        for type_name in list(missing):
+            idx = next(
+                (i for i, (_, types) in enumerate(val_examples) if type_name in types),
+                None,
+            )
+            if idx is None:
+                continue
+            train_examples.append(val_examples.pop(idx))
+
+        trainset = [example for example, _ in train_examples]
+        valset = [example for example, _ in val_examples]
 
     logger.info(
         "Built trainset with %d examples, valset with %d examples",
@@ -671,7 +722,7 @@ def main():
     logger.info("Baseline score (valset): %.3f", baseline_score)
 
     # Create log directory for GEPA artifacts
-    log_dir = Path("debug") / "gepa_nodes"
+    log_dir = GEPA_OUTPUT_DIR / "extract_nodes"
     log_dir.mkdir(parents=True, exist_ok=True)
     logger.info("GEPA logs will be saved to: %s", log_dir)
 

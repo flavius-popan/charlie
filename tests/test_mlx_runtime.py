@@ -5,6 +5,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from pipeline import _dspy_setup  # noqa: F401
 import dspy
 
 from mlx_runtime import MLX_LOCK, MLXDspyLM, load_mlx_model
