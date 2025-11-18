@@ -65,8 +65,8 @@ charlie/
 │   └── models.py           # Data models and state definitions
 ├── importers/              # Bulk import modules
 │   └── markdown.py         # Import markdown files as episodes
-├── pipeline_archived/      # V1 reference (preserved, not imported)
-└── V2_PLAN.md             # This document
+├── pipeline/               # V1 reference (preserved, not imported)
+└── V2_PLAN.md              # This document
 ```
 
 Backend modules operate independently on existing episodic nodes. UI code and importers only interact through `backend/__init__.py`.
