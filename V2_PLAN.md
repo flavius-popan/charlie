@@ -16,13 +16,15 @@ The v2 rewrite eliminates the concept of "stages" in favor of discrete operation
 
 The backend provides a clean API layer separating UI concerns from graph operations:
 
-**Episode Creation**: `create_episode(content, timestamp, metadata)` - Saves episode to database immediately, returns episode UUID. No processing performed. Enables bulk imports from various sources (markdown files, Day One exports, etc.) without blocking on LLM operations.
+**Episode Creation**: `add_journal_entry(content, reference_time, journal, title, source_description, uuid)` - Saves episode to database immediately, returns episode UUID string. No LLM processing performed. Supports multiple isolated journals via `journal` parameter (maps to `group_id` internally). Auto-generates human-readable titles ("Tuesday Nov 18, 2024") when not provided. Accepts pre-existing UUIDs for imports from Day One, Notion, Obsidian, etc. Automatically creates SELF entity for each journal on first entry.
 
-**Operation Triggers**: `enrich_episode(episode_uuid)` - Queues entity and relationship extraction for a saved episode. Background workers poll the queue and update episode state as operations complete.
+**Validation**: Content validated for null bytes (rejected), max length (100k chars), and non-empty. Naive datetimes (no timezone) are normalized to UTC for import-friendly handling - markdown files and simple formats can pass file creation timestamps directly. Journal names restricted to alphanumeric, underscores, and hyphens (max 64 chars) for filesystem safety.
 
-**Query API**: `get_episodes_by_timerange(start, end)`, `get_entity_timeline(entity_uuid)`, `search_entities(query)` - All query operations are read-only and work against the current graph state.
+**Operation Triggers**: `enrich_episode(episode_uuid)` - Queues entity and relationship extraction for a saved episode. Background workers poll the queue and update episode state as operations complete. *(Not yet implemented)*
 
-This separation allows the TUI to simply call `create_episode()` and display results as they arrive, while importers can batch-create episodes and trigger enrichment in the background.
+**Query API**: `get_episodes_by_timerange(start, end)`, `get_entity_timeline(entity_uuid)`, `search_entities(query)` - All query operations are read-only and work against the current graph state. *(Not yet implemented)*
+
+This separation allows the TUI to call `add_journal_entry()` to instantly persist entries, while importers can batch-create episodes and trigger enrichment in the background.
 
 ### Operations (formerly Stages 1 & 2)
 
@@ -57,19 +59,27 @@ Only implement custom DSPy modules for LLM extraction (entity extraction, edge e
 charlie/
 ├── charlie.py              # TUI application entry point
 ├── backend/                # Graph operations library
-│   ├── __init__.py         # Public API (create_episode, enrich_episode, queries)
-│   ├── extract_entities.py # Entity extraction + resolution
-│   ├── extract_edges.py    # Relationship extraction + resolution
-│   ├── queries.py          # Time-range and entity timeline queries
-│   ├── database.py         # FalkorDB-Lite driver
-│   └── models.py           # Data models and state definitions
-├── importers/              # Bulk import modules
+│   ├── __init__.py         # Public API: add_journal_entry() ✓
+│   ├── settings.py         # Backend configuration ✓
+│   ├── database/           # Database layer ✓
+│   │   ├── redis_ops.py    # Global Redis operations for metadata/stats ✓
+│   │   └── ...             # lifecycle, driver, persistence, queries
+│   ├── extract_entities.py # Entity extraction + resolution (not yet implemented)
+│   ├── extract_edges.py    # Relationship extraction + resolution (not yet implemented)
+│   ├── queries.py          # Time-range and entity timeline queries (not yet implemented)
+│   └── models.py           # Data models and state definitions (not yet needed)
+├── importers/              # Bulk import modules (not yet implemented)
 │   └── markdown.py         # Import markdown files as episodes
 ├── pipeline/               # V1 reference (preserved, not imported)
+├── tests/test_backend/     # Backend API tests ✓
+│   ├── conftest.py         # Test fixtures ✓
+│   ├── test_add_journal.py # API tests ✓
+│   ├── test_database.py    # Database layer tests ✓
+│   └── test_redis_ops.py   # Redis operations tests ✓
 └── V2_PLAN.md              # This document
 ```
 
-Backend modules operate independently on existing episodic nodes. UI code and importers only interact through `backend/__init__.py`.
+Backend modules operate independently on existing episodic nodes. UI code and importers only interact through `backend/__init__.py`. Currently implemented: episode creation with SELF entity seeding, multi-journal support, and global Redis operations for application metadata.
 
 ## Supported Queries
 
