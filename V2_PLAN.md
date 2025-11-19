@@ -61,7 +61,9 @@ charlie/
 ├── backend/                # Graph operations library
 │   ├── __init__.py         # Public API: add_journal_entry() ✓
 │   ├── settings.py         # Backend configuration ✓
-│   ├── database.py         # FalkorDB-Lite driver + SELF entity ✓
+│   ├── database/           # Database layer ✓
+│   │   ├── redis_ops.py    # Global Redis operations for metadata/stats ✓
+│   │   └── ...             # lifecycle, driver, persistence, queries
 │   ├── extract_entities.py # Entity extraction + resolution (not yet implemented)
 │   ├── extract_edges.py    # Relationship extraction + resolution (not yet implemented)
 │   ├── queries.py          # Time-range and entity timeline queries (not yet implemented)
@@ -72,11 +74,12 @@ charlie/
 ├── tests/test_backend/     # Backend API tests ✓
 │   ├── conftest.py         # Test fixtures ✓
 │   ├── test_add_journal.py # API tests ✓
-│   └── test_database.py    # Database layer tests ✓
+│   ├── test_database.py    # Database layer tests ✓
+│   └── test_redis_ops.py   # Redis operations tests ✓
 └── V2_PLAN.md              # This document
 ```
 
-Backend modules operate independently on existing episodic nodes. UI code and importers only interact through `backend/__init__.py`. Currently implemented: episode creation with SELF entity seeding and multi-journal support.
+Backend modules operate independently on existing episodic nodes. UI code and importers only interact through `backend/__init__.py`. Currently implemented: episode creation with SELF entity seeding, multi-journal support, and global Redis operations for application metadata.
 
 ## Supported Queries
 

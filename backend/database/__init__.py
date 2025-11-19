@@ -23,6 +23,7 @@ from backend.database.persistence import (
     update_episode,
 )
 from backend.database.queries import get_episode
+from backend.database.redis_ops import redis_ops
 from backend.database.utils import (
     SELF_ENTITY_LABELS,
     SELF_ENTITY_NAME,
@@ -54,6 +55,8 @@ __all__ = [
     "delete_episode",
     # Query operations
     "get_episode",
+    # Redis operations
+    "redis_ops",
     # Driver access
     "FalkorLiteDriver",
     "get_driver",

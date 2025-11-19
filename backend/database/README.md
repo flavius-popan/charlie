@@ -12,6 +12,8 @@
 
 **queries.py** - Read operations (get episode by UUID; future: time-range queries, entity timelines, search)
 
+**redis_ops.py** - Global Redis operations for app metadata, stats, and housekeeping (non-graph data)
+
 ## Adding New Code
 
 - Read operations → `queries.py`
@@ -19,6 +21,7 @@
 - Type conversion (FalkorDB ↔ Python) → `utils.py`
 - DB reset/maintenance → `persistence.py`
 - Connection pooling → `lifecycle.py`
+- Global metadata/stats → `redis_ops.py`
 
 ## Notes
 
