@@ -106,7 +106,7 @@ class HomeScreen(Screen):
 
     BINDINGS = [
         Binding("n", "new_entry", "New", show=True),
-        Binding("e", "edit_entry", "Edit", show=True),
+        Binding("space", "view_entry", "View", show=True),
         Binding("d", "delete_entry", "Delete", show=True),
         Binding("q", "quit", "Quit", show=True),
         Binding("j", "cursor_down", "Down", show=False),
@@ -206,16 +206,16 @@ class HomeScreen(Screen):
     def action_new_entry(self):
         self.app.push_screen(EditScreen())
 
-    def action_edit_entry(self):
+    def action_view_entry(self):
         try:
             if not self.episodes:
                 return
             list_view = self.query_one("#episodes-list", ListView)
-            if list_view.index is not None and self.episodes:
+            if list_view.index is not None:
                 episode = self.episodes[list_view.index]
-                self.app.push_screen(EditScreen(episode["uuid"]))
+                self.app.push_screen(ViewScreen(episode["uuid"]))
         except Exception as e:
-            logger.error(f"Failed to open edit screen: {e}", exc_info=True)
+            logger.error(f"Failed to open view screen: {e}", exc_info=True)
 
     async def action_delete_entry(self):
         try:
@@ -264,6 +264,8 @@ class ViewScreen(Screen):
         Binding("e", "edit_entry", "Edit", show=True),
         Binding("q", "back", "Back", show=True),
         Binding("escape", "back", "Back", show=False),
+        Binding("space", "back", "Back", show=False),
+        Binding("enter", "back", "Back", show=False),
     ]
 
     def __init__(self, episode_uuid: str):
@@ -276,6 +278,10 @@ class ViewScreen(Screen):
         yield Footer()
 
     async def on_mount(self):
+        await self.load_episode()
+
+    async def on_screen_resume(self):
+        """Called when returning to this screen."""
         await self.load_episode()
 
     async def load_episode(self):
