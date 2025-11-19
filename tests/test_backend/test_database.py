@@ -569,6 +569,130 @@ async def test_get_episode_nonexistent_uuid(isolated_graph):
 
 
 @pytest.mark.asyncio
+async def test_get_all_episodes_empty_journal(isolated_graph):
+    """Test that get_all_episodes returns empty list when no episodes exist."""
+    from backend.database import get_all_episodes
+
+    episodes = await get_all_episodes()
+
+    assert episodes == []
+
+
+@pytest.mark.asyncio
+async def test_get_all_episodes_single_episode(isolated_graph):
+    """Test that get_all_episodes returns one-element list for single episode."""
+    from backend import add_journal_entry
+    from backend.database import get_all_episodes
+
+    content = "Single episode content"
+    title = "Single Episode"
+    uuid_str = await add_journal_entry(content, title=title)
+
+    episodes = await get_all_episodes()
+
+    assert len(episodes) == 1
+    assert episodes[0]['uuid'] == uuid_str
+    assert episodes[0]['content'] == content
+    assert episodes[0]['name'] == title
+
+
+@pytest.mark.asyncio
+async def test_get_all_episodes_multiple_episodes(isolated_graph):
+    """Test that get_all_episodes returns all episodes."""
+    from backend import add_journal_entry
+    from backend.database import get_all_episodes
+
+    uuid1 = await add_journal_entry("First entry", title="First")
+    uuid2 = await add_journal_entry("Second entry", title="Second")
+    uuid3 = await add_journal_entry("Third entry", title="Third")
+
+    episodes = await get_all_episodes()
+
+    assert len(episodes) == 3
+    episode_uuids = {ep['uuid'] for ep in episodes}
+    assert episode_uuids == {uuid1, uuid2, uuid3}
+
+
+@pytest.mark.asyncio
+async def test_get_all_episodes_ordering(isolated_graph):
+    """Test that get_all_episodes returns episodes ordered by valid_at DESC (newest first)."""
+    from backend import add_journal_entry
+    from backend.database import get_all_episodes
+    from datetime import datetime, timezone, timedelta
+
+    base_time = datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+
+    uuid1 = await add_journal_entry(
+        "Oldest entry",
+        title="First",
+        reference_time=base_time
+    )
+    uuid2 = await add_journal_entry(
+        "Middle entry",
+        title="Second",
+        reference_time=base_time + timedelta(hours=1)
+    )
+    uuid3 = await add_journal_entry(
+        "Newest entry",
+        title="Third",
+        reference_time=base_time + timedelta(hours=2)
+    )
+
+    episodes = await get_all_episodes()
+
+    assert len(episodes) == 3
+    assert episodes[0]['uuid'] == uuid3
+    assert episodes[1]['uuid'] == uuid2
+    assert episodes[2]['uuid'] == uuid1
+
+
+@pytest.mark.asyncio
+async def test_get_all_episodes_multiple_journals(isolated_graph):
+    """Test that episodes are isolated by journal name."""
+    from backend import add_journal_entry
+    from backend.database import get_all_episodes
+    from backend.settings import DEFAULT_JOURNAL
+
+    default_uuid = await add_journal_entry("Default journal entry")
+
+    other_uuid = await add_journal_entry("Other journal entry", journal="other_journal")
+
+    default_episodes = await get_all_episodes(journal=DEFAULT_JOURNAL)
+    other_episodes = await get_all_episodes(journal="other_journal")
+
+    assert len(default_episodes) == 1
+    assert default_episodes[0]['uuid'] == default_uuid
+
+    assert len(other_episodes) == 1
+    assert other_episodes[0]['uuid'] == other_uuid
+
+
+@pytest.mark.asyncio
+async def test_get_all_episodes_field_completeness(isolated_graph):
+    """Test that all expected fields are present in returned episode dicts."""
+    from backend import add_journal_entry
+    from backend.database import get_all_episodes
+
+    await add_journal_entry("Test content", title="Test Title")
+
+    episodes = await get_all_episodes()
+
+    assert len(episodes) == 1
+    episode = episodes[0]
+
+    expected_fields = {
+        'uuid', 'name', 'content', 'valid_at', 'created_at',
+        'source', 'source_description', 'group_id', 'entity_edges', 'labels'
+    }
+    assert set(episode.keys()) == expected_fields
+
+    assert episode['content'] == "Test content"
+    assert episode['name'] == "Test Title"
+    assert episode['valid_at'] is not None
+    assert episode['created_at'] is not None
+
+
+@pytest.mark.asyncio
 async def test_update_episode_content(isolated_graph):
     """Test updating episode content."""
     from backend import add_journal_entry

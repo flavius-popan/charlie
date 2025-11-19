@@ -11,7 +11,13 @@ from threading import Lock
 from typing import Any
 
 from backend.database.utils import FalkorGraph, validate_journal_name
-from backend.settings import DB_PATH, ENABLE_TCP_SERVER, TCP_HOST, TCP_PASSWORD, TCP_PORT
+from backend.settings import (
+    DB_PATH,
+    ENABLE_TCP_SERVER,
+    TCP_HOST,
+    TCP_PASSWORD,
+    TCP_PORT,
+)
 
 try:
     from redislite.falkordb_client import FalkorDB
@@ -161,7 +167,9 @@ def _send_signal(pid: int, sig: signal.Signals) -> None:
         try:
             process.send_signal(sig)
         except Exception:
-            logger.debug("Failed to send %s to redis pid %s", sig.name, pid, exc_info=True)
+            logger.debug(
+                "Failed to send %s to redis pid %s", sig.name, pid, exc_info=True
+            )
         return
     try:
         os.kill(pid, sig.value)
@@ -186,7 +194,9 @@ def _ensure_redis_stopped(redis_client) -> None:
     try:
         redis_client.connection_pool.disconnect()
     except Exception:
-        logger.debug("Failed to disconnect redis connection pool cleanly", exc_info=True)
+        logger.debug(
+            "Failed to disconnect redis connection pool cleanly", exc_info=True
+        )
 
     _send_signal(pid, signal.SIGTERM)
     if _wait_for_exit(pid, timeout=3.0):

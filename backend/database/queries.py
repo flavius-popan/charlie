@@ -30,9 +30,28 @@ async def get_episode(episode_uuid: str, journal: str = DEFAULT_JOURNAL) -> dict
         episode_node = await EpisodicNode.get_by_uuid(driver, episode_uuid)
         return episode_node.model_dump()
     except NodeNotFoundError:
-        # Episode doesn't exist - return None per API contract
         return None
-    # Other exceptions (database errors, validation errors, etc.) propagate to caller
+
+
+async def get_all_episodes(journal: str = DEFAULT_JOURNAL) -> list[dict]:
+    """Retrieve all episodes for a journal, ordered by valid_at DESC (newest first).
+
+    Args:
+        journal: Journal name (defaults to DEFAULT_JOURNAL)
+
+    Returns:
+        List of episode dicts with all fields (uuid, name, content, valid_at, created_at,
+        source, source_description, group_id, entity_edges, labels), ordered by valid_at DESC
+
+    Note:
+        Uses graphiti-core's EpisodicNode.get_by_group_ids for retrieval.
+        The graphiti-core method orders by uuid DESC internally, but we sort by valid_at
+        for chronological ordering (newest first).
+    """
+    driver = get_driver(journal)
+    episode_nodes = await EpisodicNode.get_by_group_ids(driver, group_ids=[journal])
+    episodes = [node.model_dump() for node in episode_nodes]
+    return sorted(episodes, key=lambda ep: ep['valid_at'], reverse=True)
 
 
 # Future query operations:
@@ -40,4 +59,4 @@ async def get_episode(episode_uuid: str, journal: str = DEFAULT_JOURNAL) -> dict
 # - Entity timelines
 # - Search operations
 
-__all__ = ["get_episode"]
+__all__ = ["get_episode", "get_all_episodes"]
