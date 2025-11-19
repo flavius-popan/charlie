@@ -1,18 +1,28 @@
 import logging
 from pathlib import Path
+
 from textual.app import App, ComposeResult
-from textual.screen import Screen
-from textual.widgets import Footer, Static, ListView, ListItem, Label, Markdown, TextArea
 from textual.binding import Binding
+from textual.screen import Screen
+from textual.widgets import (
+    Footer,
+    Label,
+    ListItem,
+    ListView,
+    Markdown,
+    Static,
+    TextArea,
+)
+
+from backend import add_journal_entry
 from backend.database import (
+    delete_episode,
     ensure_database_ready,
     get_all_episodes,
     get_episode,
-    update_episode,
-    delete_episode,
     shutdown_database,
+    update_episode,
 )
-from backend import add_journal_entry
 from backend.settings import DEFAULT_JOURNAL
 
 LOGS_DIR = Path("logs")
@@ -20,13 +30,13 @@ LOGS_DIR.mkdir(exist_ok=True)
 
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     handlers=[
-        logging.FileHandler(LOGS_DIR / 'charlie.log'),
-    ]
+        logging.FileHandler(LOGS_DIR / "charlie.log"),
+    ],
 )
 
-logger = logging.getLogger('charlie')
+logger = logging.getLogger("charlie")
 
 
 def extract_title(content: str) -> str | None:
@@ -46,10 +56,10 @@ def extract_title(content: str) -> str | None:
         >>> extract_title("  # Trimmed  \\n")
         'Trimmed'
     """
-    lines = content.split('\n')
+    lines = content.split("\n")
     for line in lines:
         stripped = line.strip()
-        if stripped.startswith('# '):
+        if stripped.startswith("# "):
             return stripped[2:].strip()
     return None
 
@@ -70,14 +80,14 @@ def get_display_title(episode: dict, max_chars: int = 50) -> str:
         >>> get_display_title({'content': 'Plain text', 'name': 'default'})
         'Plain text'
     """
-    content = episode.get('content', '')
+    content = episode.get("content", "")
 
     title = extract_title(content)
     if title:
         return title[:max_chars]
 
-    preview = content.replace('\n', ' ').strip()
-    return preview[:max_chars] if preview else episode.get('name', 'Untitled')
+    preview = content.replace("\n", " ").strip()
+    return preview[:max_chars] if preview else episode.get("name", "Untitled")
 
 
 EMPTY_STATE_CAT = r"""
@@ -114,10 +124,14 @@ class HomeScreen(Screen):
         else:
             yield ListView(
                 *[
-                    ListItem(Label(f"{episode['valid_at'].strftime('%Y-%m-%d')} - {get_display_title(episode)}"))
+                    ListItem(
+                        Label(
+                            f"{episode['valid_at'].strftime('%Y-%m-%d')} - {get_display_title(episode)}"
+                        )
+                    )
                     for episode in self.episodes
                 ],
-                id="episodes-list"
+                id="episodes-list",
             )
         yield Footer()
 
@@ -131,8 +145,32 @@ class HomeScreen(Screen):
     async def load_episodes(self):
         try:
             self.episodes = await get_all_episodes()
-            await self.recompose()
-            self.refresh()
+
+            if not self.episodes:
+                await self.recompose()
+            else:
+                try:
+                    list_view = self.query_one("#episodes-list", ListView)
+                    old_index = list_view.index if list_view.index is not None else 0
+
+                    await list_view.clear()
+
+                    items = [
+                        ListItem(
+                            Label(
+                                f"{episode['valid_at'].strftime('%Y-%m-%d')} - {get_display_title(episode)}"
+                            )
+                        )
+                        for episode in self.episodes
+                    ]
+                    if items:
+                        await list_view.extend(items)
+
+                    if len(self.episodes) > 0:
+                        new_index = min(old_index, len(self.episodes) - 1)
+                        list_view.index = new_index
+                except Exception:
+                    await self.recompose()
         except Exception as e:
             logger.error(f"Failed to load episodes: {e}", exc_info=True)
             self.notify("Error loading episodes", severity="error")
@@ -147,7 +185,7 @@ class HomeScreen(Screen):
             list_view = self.query_one("#episodes-list", ListView)
             if list_view.index is not None and self.episodes:
                 episode = self.episodes[list_view.index]
-                self.app.push_screen(EditScreen(episode['uuid']))
+                self.app.push_screen(EditScreen(episode["uuid"]))
         except Exception as e:
             logger.error(f"Failed to open edit screen: {e}", exc_info=True)
 
@@ -158,7 +196,7 @@ class HomeScreen(Screen):
             list_view = self.query_one("#episodes-list", ListView)
             if list_view.index is not None and self.episodes:
                 episode = self.episodes[list_view.index]
-                self.app.push_screen(ViewScreen(episode['uuid']))
+                self.app.push_screen(ViewScreen(episode["uuid"]))
         except Exception as e:
             logger.error(f"Failed to open view screen: {e}", exc_info=True)
 
@@ -169,7 +207,7 @@ class HomeScreen(Screen):
             list_view = self.query_one("#episodes-list", ListView)
             if list_view.index is not None and self.episodes:
                 episode = self.episodes[list_view.index]
-                await delete_episode(episode['uuid'])
+                await delete_episode(episode["uuid"])
                 await self.load_episodes()
         except Exception as e:
             logger.error(f"Failed to delete entry: {e}", exc_info=True)
@@ -183,14 +221,14 @@ class HomeScreen(Screen):
         try:
             list_view = self.query_one("#episodes-list", ListView)
             list_view.action_cursor_down()
-        except:
+        except Exception:
             pass
 
     def action_cursor_up(self):
         try:
             list_view = self.query_one("#episodes-list", ListView)
             list_view.action_cursor_up()
-        except:
+        except Exception:
             pass
 
 
@@ -221,7 +259,7 @@ class ViewScreen(Screen):
 
             if self.episode:
                 markdown = self.query_one("#content", Markdown)
-                await markdown.update(self.episode['content'])
+                await markdown.update(self.episode["content"])
             else:
                 logger.error(f"Episode not found: {self.episode_uuid}")
                 self.notify("Entry not found", severity="error")
@@ -269,7 +307,7 @@ class EditScreen(Screen):
 
             if self.episode:
                 editor = self.query_one("#editor", TextArea)
-                editor.text = self.episode['content']
+                editor.text = self.episode["content"]
             else:
                 logger.error(f"Episode not found: {self.episode_uuid}")
                 self.notify("Entry not found", severity="error")
