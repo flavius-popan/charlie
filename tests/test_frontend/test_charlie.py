@@ -3,12 +3,27 @@
 These tests use Textual's headless testing mode to validate UI functionality
 without requiring a terminal. All database operations are mocked.
 
-Key pattern: Use pilot.pause() after initialization to allow async operations
-to complete. Workers are automatically managed by Textual during cleanup.
+Testing patterns demonstrated here:
+- Use app.query_one() to assert widget state (not stdout)
+- Use pilot.pause() after initialization for async operations
+- Use pytest-textual-snapshot for visual testing (generates readable SVG files)
+
+Workers are automatically managed by Textual during cleanup.
 
 Known issue: Textual 6.6.0 raises CancelledError during test shutdown when
 cleaning up screens. This is a framework issue during test cleanup and does
 not affect test correctness. The app_test_context helper suppresses this error.
+
+## Snapshot Testing Commands
+
+Generate/update snapshot baselines (run after intentional UI changes):
+    pytest --snapshot-update
+
+Update specific test snapshot:
+    pytest --snapshot-update -k test_home_empty_state_snapshot
+
+Compare against baselines (normal test run):
+    pytest tests/test_frontend/test_charlie.py
 """
 
 import asyncio
@@ -164,6 +179,11 @@ class TestHomeScreen:
             home_screen = app.screen
             assert isinstance(home_screen, HomeScreen)
             assert len(home_screen.episodes) == 1
+
+    def test_home_empty_state_snapshot(self, snap_compare, mock_database):
+        """Visual regression test: empty home screen with no entries."""
+        mock_database['get_all'].return_value = []
+        assert snap_compare(CharlieApp())
 
 
 class TestViewScreen:
