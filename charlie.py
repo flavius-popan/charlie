@@ -136,7 +136,15 @@ class HomeScreen(Screen):
         yield Footer()
 
     async def on_mount(self):
-        await self.load_episodes()
+        self.run_worker(self._init_and_load(), exclusive=True)
+
+    async def _init_and_load(self):
+        try:
+            await ensure_database_ready(DEFAULT_JOURNAL)
+            await self.load_episodes()
+        except Exception as e:
+            logger.error(f"Database initialization failed: {e}", exc_info=True)
+            self.notify("Failed to initialize database", severity="error")
 
     async def on_screen_resume(self):
         """Called when returning to this screen."""
@@ -355,13 +363,7 @@ class CharlieApp(App):
     TITLE = "Charlie"
 
     async def on_mount(self):
-        try:
-            await ensure_database_ready(DEFAULT_JOURNAL)
-            self.push_screen(HomeScreen())
-        except Exception as e:
-            logger.error(f"Fatal: Database initialization failed: {e}", exc_info=True)
-            self.notify("Failed to initialize database", severity="error")
-            self.exit(1)
+        self.push_screen(HomeScreen())
 
 
 CharlieApp.CSS = """
