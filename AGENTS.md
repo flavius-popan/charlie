@@ -1,0 +1,1 @@
+- Attempting to run a Textual application directly (e.g., `python charlie.py`) inside a non-interactive shell or agent environment will hang or output raw terminal control codes. You MUST run it headlessly.
