@@ -4,14 +4,17 @@ from pathlib import Path
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.screen import Screen
+from textual.containers import Vertical
+from textual.screen import ModalScreen, Screen
 from textual.widgets import (
     Footer,
+    Header,
     Label,
     ListItem,
     ListView,
     Markdown,
     Static,
+    Switch,
     TextArea,
 )
 
@@ -101,6 +104,33 @@ EMPTY_STATE_CAT = r"""
 """
 
 
+class SettingsScreen(ModalScreen):
+    """Modal screen for application settings."""
+
+    BINDINGS = [
+        Binding("s", "dismiss_modal", "Close", show=True),
+        Binding("escape", "dismiss_modal", "Close", show=False),
+        Binding("j,down", "app.focus_next", "Next", show=False),
+        Binding("k,up", "app.focus_previous", "Previous", show=False),
+    ]
+
+    def compose(self) -> ComposeResult:
+        yield Vertical(
+            Label("Settings", id="settings-title"),
+            Label(""),
+            Label("Example Toggle 1:"),
+            Switch(id="toggle1", value=False),
+            Label(""),
+            Label("Example Toggle 2:"),
+            Switch(id="toggle2", value=True),
+            id="settings-dialog",
+        )
+        yield Footer()
+
+    def action_dismiss_modal(self) -> None:
+        self.dismiss()
+
+
 class HomeScreen(Screen):
     """Main screen showing list of journal entries."""
 
@@ -108,6 +138,7 @@ class HomeScreen(Screen):
         Binding("n", "new_entry", "New", show=True),
         Binding("space", "view_entry", "View", show=True),
         Binding("d", "delete_entry", "Delete", show=True),
+        Binding("s", "open_settings", "Settings", show=True),
         Binding("q", "quit", "Quit", show=True),
         Binding("j", "cursor_down", "Down", show=False),
         Binding("k", "cursor_up", "Up", show=False),
@@ -118,6 +149,7 @@ class HomeScreen(Screen):
         self.episodes = []
 
     def compose(self) -> ComposeResult:
+        yield Header(show_clock=False, icon="")
         if not self.episodes:
             empty = Static(EMPTY_STATE_CAT, id="empty-state")
             empty.can_focus = True
@@ -252,6 +284,9 @@ class HomeScreen(Screen):
         except Exception as e:
             logger.debug(f"cursor_up failed: {e}")
 
+    def action_open_settings(self):
+        self.app.push_screen(SettingsScreen())
+
 
 class ViewScreen(Screen):
     """Screen for viewing a journal entry in read-only mode.
@@ -274,6 +309,7 @@ class ViewScreen(Screen):
         self.episode = None
 
     def compose(self) -> ComposeResult:
+        yield Header(show_clock=False, icon="")
         yield Markdown("Loading...", id="content")
         yield Footer()
 
@@ -326,6 +362,7 @@ class EditScreen(Screen):
         self.episode = None
 
     def compose(self) -> ComposeResult:
+        yield Header(show_clock=False, icon="")
         yield TextArea("", id="editor")
         yield Footer()
 
@@ -391,6 +428,7 @@ class CharlieApp(App):
 
     async def on_mount(self):
         self.theme = "catppuccin-mocha"
+        self.title = "Charlie"
         self.push_screen(HomeScreen())
 
 
@@ -421,6 +459,25 @@ Footer {
 
 Footer .footer--key {
     color: $text-muted;
+}
+
+#settings-dialog {
+    width: 60;
+    height: auto;
+    padding: 2 4;
+    background: $panel;
+    border: thick $primary;
+}
+
+#settings-title {
+    text-align: center;
+    text-style: bold;
+    color: $text;
+    padding-bottom: 1;
+}
+
+SettingsScreen {
+    align: center middle;
 }
 """
 
