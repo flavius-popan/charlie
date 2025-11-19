@@ -120,7 +120,9 @@ class HomeScreen(Screen):
 
     def compose(self) -> ComposeResult:
         if not self.episodes:
-            yield Static(EMPTY_STATE_CAT, id="empty-state")
+            empty = Static(EMPTY_STATE_CAT, id="empty-state")
+            empty.can_focus = True
+            yield empty
         else:
             yield ListView(
                 *[
@@ -156,6 +158,8 @@ class HomeScreen(Screen):
 
             if not self.episodes:
                 await self.recompose()
+                empty_state = self.query_one("#empty-state", Static)
+                empty_state.focus()
             else:
                 try:
                     list_view = self.query_one("#episodes-list", ListView)
@@ -177,6 +181,7 @@ class HomeScreen(Screen):
                     if len(self.episodes) > 0:
                         new_index = min(old_index, len(self.episodes) - 1)
                         list_view.index = new_index
+                        list_view.focus()
                 except Exception:
                     await self.recompose()
         except Exception as e:
@@ -363,6 +368,7 @@ class CharlieApp(App):
     TITLE = "Charlie"
 
     async def on_mount(self):
+        self.theme = "catppuccin-mocha"
         self.push_screen(HomeScreen())
 
 
