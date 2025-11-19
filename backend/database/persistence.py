@@ -247,6 +247,136 @@ async def persist_episode(episode: EpisodicNode, journal: str) -> None:
         raise RuntimeError(f"Persistence failed: {exc}") from exc
 
 
+async def update_episode(
+    episode_uuid: str,
+    journal: str = DEFAULT_JOURNAL,
+    *,
+    content: str | None = None,
+    name: str | None = None,
+    valid_at: Any | None = None,
+) -> None:
+    """Update episode fields (content, name, valid_at only).
+
+    Args:
+        episode_uuid: Episode UUID string
+        journal: Journal name (defaults to DEFAULT_JOURNAL)
+        content: New content (optional)
+        name: New title/name (optional)
+        valid_at: New reference time as timezone-aware datetime object (optional)
+                  Accepts datetime objects or ISO 8601 strings (converted to datetime)
+
+    Raises:
+        ValueError: If episode not found, no fields provided, or invalid datetime format
+
+    Note:
+        Uses graphiti-core's EpisodicNode for update operations.
+        Only updates user-editable fields (content, name, valid_at).
+        Immutable fields: uuid, group_id, created_at, source, source_description, entity_edges, labels.
+
+        Datetime Handling:
+        - Accepts timezone-aware datetime objects directly
+        - Accepts ISO 8601 strings (e.g., "2024-01-15T10:30:00+00:00") - parsed to datetime
+        - Naive datetimes are rejected with clear error (prevents timezone bugs)
+        - Storage format is ISO 8601 string in database
+        - Retrieval returns timezone-aware datetime objects (graphiti-core handles conversion)
+    """
+    from datetime import datetime
+    from graphiti_core.errors import NodeNotFoundError
+    from backend.database.driver import get_driver
+
+    driver = get_driver(journal)
+
+    # Retrieve the episode first (fail fast if not found)
+    try:
+        episode = await EpisodicNode.get_by_uuid(driver, episode_uuid)
+    except NodeNotFoundError as exc:
+        raise ValueError(f"Episode {episode_uuid} not found") from exc
+
+    # Validate that at least one field is being updated
+    if content is None and name is None and valid_at is None:
+        raise ValueError("At least one field must be provided for update")
+
+    # Update only the provided fields
+    if content is not None:
+        episode.content = content
+
+    if name is not None:
+        episode.name = name
+
+    if valid_at is not None:
+        # Handle datetime conversion with clear semantics
+        if isinstance(valid_at, datetime):
+            # Reject naive datetimes to prevent timezone bugs
+            if valid_at.tzinfo is None:
+                raise ValueError(
+                    "Naive datetime not allowed for valid_at. "
+                    "Use timezone-aware datetime (e.g., datetime(..., tzinfo=timezone.utc))"
+                )
+            episode.valid_at = valid_at
+        elif isinstance(valid_at, str):
+            # Parse ISO 8601 string to datetime
+            try:
+                parsed_dt = datetime.fromisoformat(valid_at)
+            except ValueError as exc:
+                raise ValueError(
+                    f"Invalid ISO 8601 datetime string: {valid_at}. "
+                    f"Expected format: 'YYYY-MM-DDTHH:MM:SS+HH:MM'"
+                ) from exc
+
+            # Check for timezone after successful parsing
+            if parsed_dt.tzinfo is None:
+                raise ValueError(
+                    f"ISO string '{valid_at}' is timezone-naive. "
+                    "Provide timezone info (e.g., '2024-01-15T10:30:00+00:00')"
+                )
+            episode.valid_at = parsed_dt
+        else:
+            raise ValueError(
+                f"valid_at must be timezone-aware datetime or ISO 8601 string, "
+                f"got {type(valid_at).__name__}"
+            )
+
+    # Save back to database
+    await episode.save(driver)
+    logger.info("Updated episode %s in journal %s", episode_uuid, journal)
+
+
+async def delete_episode(episode_uuid: str, journal: str = DEFAULT_JOURNAL) -> None:
+    """Delete an episode from the graph.
+
+    Args:
+        episode_uuid: Episode UUID string
+        journal: Journal name (defaults to DEFAULT_JOURNAL)
+
+    Raises:
+        ValueError: If episode not found
+
+    Note:
+        Uses graphiti-core's EpisodicNode.delete for deletion.
+        This removes only the episode node itself.
+        Orphaned entity/edge cleanup will be implemented when extraction operations are added.
+
+    Warning:
+        This does not clean up entities or edges that were extracted from this episode.
+        Use this for simple episode deletion during development/testing.
+        Full cleanup (with entity/edge orphan detection) will be added in future iterations.
+    """
+    from graphiti_core.errors import NodeNotFoundError
+    from backend.database.driver import get_driver
+
+    driver = get_driver(journal)
+
+    # Retrieve the episode
+    try:
+        episode = await EpisodicNode.get_by_uuid(driver, episode_uuid)
+    except NodeNotFoundError as exc:
+        raise ValueError(f"Episode {episode_uuid} not found") from exc
+
+    # Delete the episode
+    await episode.delete(driver)
+    logger.info("Deleted episode %s from journal %s", episode_uuid, journal)
+
+
 def reset_persistence_state() -> None:
     """Reset persistence state (for testing)."""
     global _graph_initialized, _seeded_self_groups
@@ -259,5 +389,7 @@ __all__ = [
     "ensure_graph_ready",
     "ensure_self_entity",
     "persist_episode",
+    "update_episode",
+    "delete_episode",
     "reset_persistence_state",
 ]

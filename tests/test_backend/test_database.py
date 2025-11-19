@@ -311,6 +311,117 @@ def test_to_cypher_literal():
     assert '"key"' in db_utils.to_cypher_literal({"key": "value"})
 
 
+def test_to_cypher_array():
+    """Test conversion of Python lists to Cypher array literals."""
+    from backend.database.utils import _to_cypher_array
+
+    # Test empty array
+    assert _to_cypher_array([]) == "[]"
+
+    # Test array with strings
+    assert _to_cypher_array(["a", "b", "c"]) == "['a', 'b', 'c']"
+
+    # Test array with numbers
+    assert _to_cypher_array([1, 2, 3]) == "[1, 2, 3]"
+
+    # Test array with mixed types
+    result = _to_cypher_array(["text", 42, True])
+    assert "'text'" in result
+    assert "42" in result
+    assert "true" in result
+
+    # Test array with strings requiring escaping
+    result = _to_cypher_array(["it's", "a test"])
+    assert "it\\'s" in result
+    assert "a test" in result
+
+
+def test_decode_value_with_falkordb_types():
+    """Test decoding FalkorDB native type format."""
+    from backend.database.utils import _decode_value
+
+    # Test type 1: null
+    assert _decode_value([1, None]) is None
+
+    # Test type 2: string (bytes)
+    assert _decode_value([2, b"hello"]) == "hello"
+    assert _decode_value([2, "world"]) == "world"
+
+    # Test type 3: integer
+    assert _decode_value([3, 42]) == 42
+    assert _decode_value([3, "123"]) == 123
+
+    # Test type 4: boolean
+    assert _decode_value([4, 1]) is True
+    assert _decode_value([4, 0]) is False
+
+    # Test type 5: double
+    assert _decode_value([5, 3.14]) == 3.14
+    assert _decode_value([5, "2.71"]) == 2.71
+
+    # Test type 6: array (empty)
+    assert _decode_value([6, []]) == []
+
+    # Test type 6: array with elements
+    result = _decode_value([6, [[2, b"a"], [2, b"b"], [2, b"c"]]])
+    assert result == ["a", "b", "c"]
+
+    # Test type 6: nested array with mixed types
+    result = _decode_value([6, [[2, b"text"], [3, 42], [4, 1]]])
+    assert result == ["text", 42, True]
+
+    # Test fallback for non-typed values
+    assert _decode_value("plain_string") == "plain_string"
+    assert _decode_value(42) == 42
+    assert _decode_value(b"bytes") == "bytes"
+
+
+def test_native_array_storage_and_retrieval(isolated_graph):
+    """Test that arrays are stored and retrieved as native FalkorDB arrays."""
+    from backend.database.utils import _to_cypher_array, to_cypher_literal
+
+    # Create a node with array properties
+    uuid_val = "test-arrays-123"
+    edges = ["edge1", "edge2", "edge3"]
+    labels = ["Label1", "Label2"]
+
+    query = f"""
+    CREATE (n:TestArrayNode {{
+        uuid: {to_cypher_literal(uuid_val)},
+        edges: {_to_cypher_array(edges)},
+        labels: {_to_cypher_array(labels)},
+        empty: {_to_cypher_array([])}
+    }})
+    RETURN n.edges, n.labels, n.empty
+    """
+
+    isolated_graph.query(query)
+
+    # Retrieve and verify
+    result = isolated_graph.query(f"""
+        MATCH (n:TestArrayNode {{uuid: {to_cypher_literal(uuid_val)}}})
+        RETURN n.edges AS edges, n.labels AS labels, n.empty AS empty
+    """)
+
+    raw = getattr(result, "_raw_response", None)
+    assert raw is not None
+
+    # Parse the results using our decode logic
+    from backend.database.utils import _decode_value
+    header = [_decode_value(col[1]) for col in raw[0]]
+    row = raw[1][0]
+
+    retrieved = {}
+    for idx, field_name in enumerate(header):
+        value = row[idx][1] if idx < len(row) else None
+        retrieved[field_name] = _decode_value(value)
+
+    # Verify arrays are properly decoded
+    assert retrieved["edges"] == edges
+    assert retrieved["labels"] == labels
+    assert retrieved["empty"] == []
+
+
 @pytest.mark.asyncio
 async def test_driver_build_indices(isolated_graph):
     """Test that driver can build indices without errors."""
@@ -421,3 +532,316 @@ async def test_shutdown_rejects_new_operations(isolated_graph):
 
     # Reset flag for test cleanup
     lifecycle._shutdown_requested = False
+
+
+@pytest.mark.asyncio
+async def test_get_episode_by_uuid(isolated_graph):
+    """Test retrieving an episode by UUID."""
+    from backend import add_journal_entry
+    import backend.database as db
+
+    # Create an episode
+    content = "Test entry for retrieval"
+    title = "Custom Title"
+    uuid_str = await add_journal_entry(content, title=title)
+    assert uuid_str is not None
+
+    # Retrieve the episode
+    episode = await db.get_episode(uuid_str)
+
+    assert episode is not None
+    assert episode['uuid'] == uuid_str
+    assert episode['content'] == content
+    assert episode['name'] == title
+
+
+@pytest.mark.asyncio
+async def test_get_episode_nonexistent_uuid(isolated_graph):
+    """Test retrieving a nonexistent episode returns None."""
+    import backend.database as db
+    from uuid import uuid4
+
+    # Try to get an episode that doesn't exist
+    nonexistent_uuid = str(uuid4())
+    episode = await db.get_episode(nonexistent_uuid)
+
+    assert episode is None
+
+
+@pytest.mark.asyncio
+async def test_update_episode_content(isolated_graph):
+    """Test updating episode content."""
+    from backend import add_journal_entry
+    import backend.database as db
+
+    # Create an episode
+    original_content = "Original content"
+    uuid_str = await add_journal_entry(original_content)
+
+    # Update the content
+    new_content = "Updated content with more details"
+    await db.update_episode(uuid_str, content=new_content)
+
+    # Verify the update
+    episode = await db.get_episode(uuid_str)
+    assert episode['content'] == new_content
+
+
+@pytest.mark.asyncio
+async def test_update_episode_title(isolated_graph):
+    """Test updating episode title (name)."""
+    from backend import add_journal_entry
+    import backend.database as db
+
+    # Create an episode
+    uuid_str = await add_journal_entry("Some content", title="Original Title")
+
+    # Update the title
+    new_title = "Updated Title"
+    await db.update_episode(uuid_str, name=new_title)
+
+    # Verify the update
+    episode = await db.get_episode(uuid_str)
+    assert episode['name'] == new_title
+
+
+@pytest.mark.asyncio
+async def test_update_episode_valid_at(isolated_graph):
+    """Test updating episode date (valid_at)."""
+    from backend import add_journal_entry
+    import backend.database as db
+    from datetime import datetime, timezone
+
+    # Create an episode
+    original_date = datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+    uuid_str = await add_journal_entry("Content", reference_time=original_date)
+
+    # Update the date
+    new_date = datetime(2024, 6, 15, 18, 30, 0, tzinfo=timezone.utc)
+    await db.update_episode(uuid_str, valid_at=new_date)
+
+    # Verify the update
+    episode = await db.get_episode(uuid_str)
+    # graphiti-core returns datetime objects, not ISO strings
+    assert episode['valid_at'] == new_date
+
+
+@pytest.mark.asyncio
+async def test_update_episode_multiple_fields(isolated_graph):
+    """Test updating multiple episode fields at once."""
+    from backend import add_journal_entry
+    import backend.database as db
+    from datetime import datetime, timezone
+
+    # Create an episode
+    uuid_str = await add_journal_entry("Original", title="Old Title")
+
+    # Update multiple fields at once
+    new_content = "Completely rewritten content"
+    new_title = "New Title"
+    new_date = datetime(2024, 12, 25, 10, 0, 0, tzinfo=timezone.utc)
+
+    await db.update_episode(
+        uuid_str,
+        content=new_content,
+        name=new_title,
+        valid_at=new_date
+    )
+
+    # Verify all updates
+    episode = await db.get_episode(uuid_str)
+    assert episode['content'] == new_content
+    assert episode['name'] == new_title
+    assert episode['valid_at'] == new_date
+
+
+@pytest.mark.asyncio
+async def test_update_episode_nonexistent_uuid(isolated_graph):
+    """Test that updating a nonexistent episode raises an error."""
+    import backend.database as db
+    from uuid import uuid4
+
+    nonexistent_uuid = str(uuid4())
+
+    # Should raise ValueError when trying to update nonexistent episode
+    with pytest.raises(ValueError, match="Episode .* not found"):
+        await db.update_episode(nonexistent_uuid, content="New content")
+
+
+@pytest.mark.asyncio
+async def test_update_episode_preserves_immutable_fields(isolated_graph):
+    """Test that update doesn't change immutable fields like uuid, group_id, created_at, source_description."""
+    from backend import add_journal_entry
+    import backend.database as db
+    from backend.settings import DEFAULT_JOURNAL
+
+    # Create an episode
+    uuid_str = await add_journal_entry("Original content", source_description="Original source")
+    original_episode = await db.get_episode(uuid_str)
+
+    original_uuid = original_episode['uuid']
+    original_group_id = original_episode['group_id']
+    original_created_at = original_episode['created_at']
+    original_source_description = original_episode['source_description']
+
+    # Update content
+    await db.update_episode(uuid_str, content="Updated content")
+
+    # Verify immutable fields haven't changed
+    updated_episode = await db.get_episode(uuid_str)
+    assert updated_episode['uuid'] == original_uuid
+    assert updated_episode['group_id'] == original_group_id
+    assert updated_episode['created_at'] == original_created_at
+    assert updated_episode['source_description'] == original_source_description
+
+
+@pytest.mark.asyncio
+async def test_delete_episode(isolated_graph):
+    """Test deleting an episode."""
+    from backend import add_journal_entry
+    import backend.database as db
+
+    # Create an episode
+    uuid_str = await add_journal_entry("Episode to delete")
+
+    # Verify it exists
+    episode = await db.get_episode(uuid_str)
+    assert episode is not None
+
+    # Delete it
+    await db.delete_episode(uuid_str)
+
+    # Verify it's gone
+    episode = await db.get_episode(uuid_str)
+    assert episode is None
+
+
+@pytest.mark.asyncio
+async def test_delete_episode_nonexistent_uuid(isolated_graph):
+    """Test that deleting a nonexistent episode raises an error."""
+    import backend.database as db
+    from uuid import uuid4
+
+    nonexistent_uuid = str(uuid4())
+
+    # Should raise ValueError when trying to delete nonexistent episode
+    with pytest.raises(ValueError, match="Episode .* not found"):
+        await db.delete_episode(nonexistent_uuid)
+
+
+@pytest.mark.asyncio
+async def test_delete_episode_from_specific_journal(isolated_graph):
+    """Test deleting an episode from a specific journal."""
+    from backend import add_journal_entry
+    import backend.database as db
+
+    # Create episodes in different journals
+    uuid1 = await add_journal_entry("Entry in journal1", journal="journal1")
+    uuid2 = await add_journal_entry("Entry in journal2", journal="journal2")
+
+    # Delete from journal1
+    await db.delete_episode(uuid1, journal="journal1")
+
+    # Verify journal1 episode is gone
+    episode1 = await db.get_episode(uuid1, journal="journal1")
+    assert episode1 is None
+
+    # Verify journal2 episode still exists
+    episode2 = await db.get_episode(uuid2, journal="journal2")
+    assert episode2 is not None
+
+
+@pytest.mark.asyncio
+async def test_update_episode_naive_datetime_rejected(isolated_graph):
+    """Test that naive datetimes are rejected with clear error."""
+    from backend import add_journal_entry
+    import backend.database as db
+    from datetime import datetime
+
+    # Create an episode
+    uuid_str = await add_journal_entry("Content")
+
+    # Try to update with naive datetime
+    naive_dt = datetime(2024, 6, 15, 10, 30, 0)  # No tzinfo
+
+    with pytest.raises(ValueError, match="Naive datetime not allowed"):
+        await db.update_episode(uuid_str, valid_at=naive_dt)
+
+
+@pytest.mark.asyncio
+async def test_update_episode_iso_string_valid(isolated_graph):
+    """Test updating with valid ISO 8601 string."""
+    from backend import add_journal_entry
+    import backend.database as db
+    from datetime import datetime, timezone
+
+    # Create an episode
+    uuid_str = await add_journal_entry("Content")
+
+    # Update with ISO string (timezone-aware)
+    iso_string = "2024-06-15T10:30:00+00:00"
+    await db.update_episode(uuid_str, valid_at=iso_string)
+
+    # Verify the update
+    episode = await db.get_episode(uuid_str)
+    expected_dt = datetime(2024, 6, 15, 10, 30, 0, tzinfo=timezone.utc)
+    assert episode['valid_at'] == expected_dt
+
+
+@pytest.mark.asyncio
+async def test_update_episode_iso_string_naive_rejected(isolated_graph):
+    """Test that naive ISO strings are rejected."""
+    from backend import add_journal_entry
+    import backend.database as db
+
+    # Create an episode
+    uuid_str = await add_journal_entry("Content")
+
+    # Try to update with naive ISO string (no timezone)
+    naive_iso = "2024-06-15T10:30:00"
+
+    with pytest.raises(ValueError, match="timezone-naive"):
+        await db.update_episode(uuid_str, valid_at=naive_iso)
+
+
+@pytest.mark.asyncio
+async def test_update_episode_iso_string_invalid_format(isolated_graph):
+    """Test that invalid ISO strings raise clear error."""
+    from backend import add_journal_entry
+    import backend.database as db
+
+    # Create an episode
+    uuid_str = await add_journal_entry("Content")
+
+    # Try to update with invalid ISO string
+    invalid_iso = "not-a-valid-datetime"
+
+    with pytest.raises(ValueError, match="Invalid ISO 8601 datetime string"):
+        await db.update_episode(uuid_str, valid_at=invalid_iso)
+
+
+@pytest.mark.asyncio
+async def test_update_episode_valid_at_wrong_type(isolated_graph):
+    """Test that wrong type for valid_at raises clear error."""
+    from backend import add_journal_entry
+    import backend.database as db
+
+    # Create an episode
+    uuid_str = await add_journal_entry("Content")
+
+    # Try to update with wrong type
+    with pytest.raises(ValueError, match="must be timezone-aware datetime or ISO 8601 string"):
+        await db.update_episode(uuid_str, valid_at=12345)
+
+
+@pytest.mark.asyncio
+async def test_update_episode_no_fields_error_before_not_found(isolated_graph):
+    """Test that 'episode not found' error takes precedence over 'no fields' error."""
+    import backend.database as db
+    from uuid import uuid4
+
+    nonexistent_uuid = str(uuid4())
+
+    # Should raise "not found" error, not "no fields" error
+    with pytest.raises(ValueError, match="not found"):
+        await db.update_episode(nonexistent_uuid)  # No fields provided

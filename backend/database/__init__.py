@@ -14,12 +14,15 @@ from backend.database.lifecycle import (
     reset_lifecycle_state,
 )
 from backend.database.persistence import (
+    delete_episode,
     ensure_database_ready,
     ensure_graph_ready,
     ensure_self_entity,
     persist_episode,
     reset_persistence_state,
+    update_episode,
 )
+from backend.database.queries import get_episode
 from backend.database.utils import (
     SELF_ENTITY_LABELS,
     SELF_ENTITY_NAME,
@@ -47,6 +50,10 @@ __all__ = [
     "ensure_graph_ready",
     "ensure_self_entity",
     "persist_episode",
+    "update_episode",
+    "delete_episode",
+    # Query operations
+    "get_episode",
     # Driver access
     "FalkorLiteDriver",
     "get_driver",

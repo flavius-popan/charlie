@@ -75,7 +75,40 @@ SELF_UUID_LITERAL = to_cypher_literal(str(SELF_ENTITY_UUID))
 
 
 def _decode_value(value: Any) -> Any:
-    """Decode FalkorDB result cells to Python primitives."""
+    """Decode FalkorDB result cells to Python primitives.
+
+    FalkorDB returns values as [type_id, value] pairs:
+    - type 1: null
+    - type 2: string (bytes)
+    - type 3: integer
+    - type 4: boolean
+    - type 5: double
+    - type 6: array (list of [type_id, value] pairs)
+    - type 7: edge
+    - type 8: node
+    - type 9: path
+    """
+    # Handle [type_id, value] pair format
+    if isinstance(value, (list, tuple)) and len(value) == 2:
+        type_id, data = value
+        if isinstance(type_id, int):
+            if type_id == 1:  # null
+                return None
+            elif type_id == 2:  # string
+                return data.decode("utf-8") if isinstance(data, bytes) else data
+            elif type_id == 3:  # integer
+                return int(data)
+            elif type_id == 4:  # boolean
+                return bool(data)
+            elif type_id == 5:  # double
+                return float(data)
+            elif type_id == 6:  # array
+                if isinstance(data, list):
+                    return [_decode_value(item) for item in data]
+                return []
+            # Types 7-9 (edge, node, path) handled by default return
+
+    # Fallback for non-typed values
     if isinstance(value, bytes):
         try:
             return value.decode("utf-8")
@@ -109,19 +142,39 @@ class FalkorGraph(Protocol):
         ...
 
 
+def _to_cypher_array(items: list) -> str:
+    """Convert Python list to Cypher array literal for FalkorDB.
+
+    Args:
+        items: List of values to convert
+
+    Returns:
+        Cypher array literal string (e.g., "['a', 'b', 'c']" or "[]")
+    """
+    if not items:
+        return "[]"
+    # Convert each item to a Cypher literal and join with commas
+    elements = [to_cypher_literal(item) for item in items]
+    return f"[{', '.join(elements)}]"
+
+
 def _merge_episode_sync(graph: FalkorGraph, episode: dict[str, Any]) -> None:
     """Synchronous episode merge for use in asyncio.to_thread.
 
     Args:
         graph: FalkorDB graph instance
         episode: Episode dict (graphiti-core converts EpisodicNode to dict before calling)
+
+    Note:
+        Uses FalkorDB native array types for entity_edges and labels.
     """
     # graphiti-core converts EpisodicNode to dict and removes 'labels' field (bulk_utils.py line 160-162)
     episode.setdefault('entity_edges', [])
     episode.setdefault('labels', [])
 
-    entity_edges_json = json.dumps(episode['entity_edges'])
-    labels_json = json.dumps(episode['labels'])
+    # Convert arrays to native FalkorDB array syntax
+    entity_edges_array = _to_cypher_array(episode['entity_edges'])
+    labels_array = _to_cypher_array(episode['labels'])
 
     # Handle source - could be EpisodeType enum or string
     source_val = episode['source']
@@ -150,8 +203,8 @@ def _merge_episode_sync(graph: FalkorGraph, episode: dict[str, Any]) -> None:
         e.source_description = {to_cypher_literal(episode['source_description'])},
         e.valid_at = {to_cypher_literal(valid_at)},
         e.created_at = {to_cypher_literal(created_at)},
-        e.entity_edges = {to_cypher_literal(entity_edges_json)},
-        e.labels = {to_cypher_literal(labels_json)}
+        e.entity_edges = {entity_edges_array},
+        e.labels = {labels_array}
     RETURN e.uuid
     """
 
