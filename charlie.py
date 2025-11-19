@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from pathlib import Path
 
@@ -108,7 +109,6 @@ class HomeScreen(Screen):
         Binding("e", "edit_entry", "Edit", show=True),
         Binding("d", "delete_entry", "Delete", show=True),
         Binding("q", "quit", "Quit", show=True),
-        Binding("enter", "view_entry", "View", show=False),
         Binding("j", "cursor_down", "Down", show=False),
         Binding("k", "cursor_up", "Up", show=False),
     ]
@@ -116,7 +116,6 @@ class HomeScreen(Screen):
     def __init__(self):
         super().__init__()
         self.episodes = []
-        self.selected_index = 0
 
     def compose(self) -> ComposeResult:
         if not self.episodes:
@@ -146,17 +145,28 @@ class HomeScreen(Screen):
             await self.load_episodes()
         except Exception as e:
             logger.error(f"Database initialization failed: {e}", exc_info=True)
-            self.notify("Failed to initialize database", severity="error")
+            self.notify("Failed to initialize database. Exiting...", severity="error")
+            await asyncio.sleep(2)
+            self.app.exit(1)
 
     async def on_screen_resume(self):
         """Called when returning to this screen."""
         await self.load_episodes()
 
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        """Handle ListView selection (Enter key)."""
+        if self.episodes and event.list_view.index is not None:
+            episode = self.episodes[event.list_view.index]
+            self.app.push_screen(ViewScreen(episode["uuid"]))
+
     async def load_episodes(self):
         try:
-            self.episodes = await get_all_episodes()
+            new_episodes = await get_all_episodes()
 
-            if not self.episodes:
+            if not new_episodes:
+                self.episodes = []
+                # Safe to recompose: switching between Static (empty state) and ListView
+                # Neither widget has state that needs to be preserved
                 await self.recompose()
                 empty_state = self.query_one("#empty-state", Static)
                 empty_state.focus()
@@ -173,16 +183,21 @@ class HomeScreen(Screen):
                                 f"{episode['valid_at'].strftime('%Y-%m-%d')} - {get_display_title(episode)}"
                             )
                         )
-                        for episode in self.episodes
+                        for episode in new_episodes
                     ]
                     if items:
                         await list_view.extend(items)
+
+                    self.episodes = new_episodes
 
                     if len(self.episodes) > 0:
                         new_index = min(old_index, len(self.episodes) - 1)
                         list_view.index = new_index
                         list_view.focus()
                 except Exception:
+                    self.episodes = new_episodes
+                    # Safe to recompose: fallback when ListView doesn't exist yet
+                    # (happens when transitioning from empty to populated state)
                     await self.recompose()
         except Exception as e:
             logger.error(f"Failed to load episodes: {e}", exc_info=True)
@@ -202,17 +217,6 @@ class HomeScreen(Screen):
         except Exception as e:
             logger.error(f"Failed to open edit screen: {e}", exc_info=True)
 
-    def action_view_entry(self):
-        try:
-            if not self.episodes:
-                return
-            list_view = self.query_one("#episodes-list", ListView)
-            if list_view.index is not None and self.episodes:
-                episode = self.episodes[list_view.index]
-                self.app.push_screen(ViewScreen(episode["uuid"]))
-        except Exception as e:
-            logger.error(f"Failed to open view screen: {e}", exc_info=True)
-
     async def action_delete_entry(self):
         try:
             if not self.episodes:
@@ -231,22 +235,30 @@ class HomeScreen(Screen):
         self.app.exit()
 
     def action_cursor_down(self):
+        if not self.episodes:
+            return
         try:
             list_view = self.query_one("#episodes-list", ListView)
             list_view.action_cursor_down()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"cursor_down failed: {e}")
 
     def action_cursor_up(self):
+        if not self.episodes:
+            return
         try:
             list_view = self.query_one("#episodes-list", ListView)
             list_view.action_cursor_up()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"cursor_up failed: {e}")
 
 
 class ViewScreen(Screen):
-    """Screen for viewing a journal entry in read-only mode."""
+    """Screen for viewing a journal entry in read-only mode.
+
+    WARNING: Do NOT use recompose() in this screen - Markdown widget
+    has internal state (scroll position) that would be lost.
+    """
 
     BINDINGS = [
         Binding("e", "edit_entry", "Edit", show=True),
@@ -290,7 +302,11 @@ class ViewScreen(Screen):
 
 
 class EditScreen(Screen):
-    """Screen for creating or editing a journal entry."""
+    """Screen for creating or editing a journal entry.
+
+    WARNING: Do NOT use recompose() in this screen - TextArea widget
+    has internal state (cursor position, undo history) that would be lost.
+    """
 
     BINDINGS = [
         Binding("escape", "save_and_return", "Save & Return", show=True),
