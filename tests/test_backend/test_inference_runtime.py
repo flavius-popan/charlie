@@ -4,18 +4,21 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
 from pipeline import _dspy_setup  # noqa: F401
 import dspy
 
 from inference_runtime import DspyLM, load_model
 
 
+@pytest.mark.inference
 def test_load_model():
     """llama.cpp models load successfully via HF auto-download."""
     model = load_model()
     assert model is not None
 
 
+@pytest.mark.inference
 def test_forward_returns_proper_structure():
     """forward() returns OpenAI-compatible response structure."""
     lm = DspyLM()
@@ -34,6 +37,7 @@ def test_forward_returns_proper_structure():
     assert isinstance(result.choices[0].message.content, str)
 
 
+@pytest.mark.inference
 def test_integrates_with_dspy_predict():
     """End-to-end test that DSPy can run real inference with llama.cpp LM."""
     class Echo(dspy.Signature):

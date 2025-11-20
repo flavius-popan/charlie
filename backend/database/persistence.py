@@ -449,38 +449,6 @@ async def persist_entities_and_edges(
         raise RuntimeError(f"Entity persistence failed: {exc}") from exc
 
 
-async def update_episode_attributes(
-    episode_uuid: str,
-    attributes: dict,
-    journal: str,
-) -> None:
-    """Update episode.attributes field for temporary state storage (uuid_map).
-
-    Uses EpisodicNode.get_by_uuid() + .save() pattern from update_episode().
-
-    Args:
-        episode_uuid: Episode UUID string
-        attributes: Dictionary to store in episode.attributes
-        journal: Journal name
-
-    Raises:
-        ValueError: If episode not found
-    """
-    from graphiti_core.errors import NodeNotFoundError
-    from backend.database.driver import get_driver
-
-    driver = get_driver(journal)
-
-    try:
-        episode = await EpisodicNode.get_by_uuid(driver, episode_uuid)
-    except NodeNotFoundError as exc:
-        raise ValueError(f"Episode {episode_uuid} not found") from exc
-
-    episode.attributes = attributes
-    await episode.save(driver)
-    logger.info("Updated attributes for episode %s in journal %s", episode_uuid, journal)
-
-
 def reset_persistence_state() -> None:
     """Reset persistence state (for testing)."""
     global _graph_initialized, _seeded_self_groups
@@ -496,6 +464,5 @@ __all__ = [
     "update_episode",
     "delete_episode",
     "persist_entities_and_edges",
-    "update_episode_attributes",
     "reset_persistence_state",
 ]

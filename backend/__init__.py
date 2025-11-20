@@ -13,10 +13,7 @@ from backend.database import (
     persist_episode,
     validate_journal_name,
 )
-from backend.database.persistence import (
-    persist_entities_and_edges,
-    update_episode_attributes,
-)
+from backend.database.persistence import persist_entities_and_edges
 from backend.database.redis_ops import set_episode_status
 from backend.graph import extract_nodes, ExtractNodesResult
 
@@ -189,5 +186,4 @@ __all__ = [
     "MAX_CONTENT_LENGTH",
     "validate_content",
     "persist_entities_and_edges",
-    "update_episode_attributes",
 ]
