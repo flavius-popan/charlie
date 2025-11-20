@@ -969,3 +969,62 @@ async def test_update_episode_no_fields_error_before_not_found(isolated_graph):
     # Should raise "not found" error, not "no fields" error
     with pytest.raises(ValueError, match="not found"):
         await db.update_episode(nonexistent_uuid)  # No fields provided
+
+
+def test_entity_types_format():
+    """Test entity types formatting for LLM."""
+    from backend.graph.entities_edges import format_entity_types_for_llm, entity_types
+    import json
+
+    result = format_entity_types_for_llm(entity_types)
+    types_list = json.loads(result)
+
+    assert len(types_list) == 5
+    assert types_list[0]["entity_type_name"] == "Entity"
+
+    person_type = next(t for t in types_list if t["entity_type_name"] == "Person")
+    assert person_type["entity_type_id"] == 1
+
+
+@pytest.mark.asyncio
+async def test_persist_entities_and_edges(isolated_graph):
+    """Test persisting entities and episodic edges."""
+    from backend.database.persistence import persist_entities_and_edges
+    from graphiti_core.nodes import EntityNode
+    from graphiti_core.edges import EpisodicEdge
+    from graphiti_core.utils.datetime_utils import utc_now
+    from backend import add_journal_entry
+    from backend.settings import DEFAULT_JOURNAL
+    from backend.database import get_driver
+
+    episode_uuid = await add_journal_entry("Test content")
+
+    person_node = EntityNode(
+        name="Sarah",
+        group_id=DEFAULT_JOURNAL,
+        labels=["Entity", "Person"],
+        summary="",
+        created_at=utc_now(),
+        name_embedding=[],
+    )
+
+    episodic_edge = EpisodicEdge(
+        source_node_uuid=episode_uuid,
+        target_node_uuid=person_node.uuid,
+        group_id=DEFAULT_JOURNAL,
+        created_at=utc_now(),
+    )
+
+    await persist_entities_and_edges(
+        nodes=[person_node],
+        edges=[],
+        episodic_edges=[episodic_edge],
+        journal=DEFAULT_JOURNAL,
+    )
+
+    # Verify entity exists
+    driver = get_driver(DEFAULT_JOURNAL)
+    query = "MATCH (e:Entity {name: 'Sarah'}) RETURN count(e) as count"
+    records, _, _ = await driver.execute_query(query)
+    assert len(records) > 0
+    assert records[0]['count'] >= 1

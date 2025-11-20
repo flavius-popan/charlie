@@ -2,9 +2,21 @@
 
 from __future__ import annotations
 
+import json
+from uuid import uuid4
+
 import pytest
 
 import backend.database as db_utils
+from backend import add_journal_entry
+from backend.database.redis_ops import (
+    get_episode_data,
+    get_episode_status,
+    get_episode_uuid_map,
+    get_episodes_by_status,
+    remove_episode_from_queue,
+    set_episode_status,
+)
 
 
 @pytest.fixture
@@ -203,3 +215,140 @@ def test_shutdown_behavior(falkordb_test_context):
                 r.set("key", "value")
     finally:
         lifecycle._shutdown_requested = False
+
+
+# Episode Status Management Tests
+
+
+def test_set_episode_status_creates_initial_status(
+    episode_uuid, cleanup_test_episodes, falkordb_test_context
+):
+    """Set initial status for new episode."""
+    set_episode_status(episode_uuid, "pending_nodes", journal="default")
+
+    status = get_episode_status(episode_uuid)
+    assert status == "pending_nodes"
+
+
+def test_set_episode_status_updates_existing_status(
+    episode_uuid, cleanup_test_episodes, falkordb_test_context
+):
+    """Update status from pending_nodes to pending_edges."""
+    set_episode_status(episode_uuid, "pending_nodes", journal="default")
+    set_episode_status(episode_uuid, "pending_edges")
+
+    status = get_episode_status(episode_uuid)
+    assert status == "pending_edges"
+
+
+def test_set_episode_status_with_uuid_map(
+    episode_uuid, cleanup_test_episodes, falkordb_test_context
+):
+    """Store uuid_map when entities are found."""
+    uuid_map = {str(uuid4()): str(uuid4()), str(uuid4()): str(uuid4())}
+
+    set_episode_status(episode_uuid, "pending_edges", uuid_map=uuid_map)
+
+    data = get_episode_data(episode_uuid)
+    assert data["status"] == "pending_edges"
+    assert json.loads(data["uuid_map"]) == uuid_map
+
+
+def test_get_episodes_by_status_returns_matching_episodes(falkordb_test_context):
+    """Scan all episodes with given status."""
+    episode1 = str(uuid4())
+    episode2 = str(uuid4())
+    episode3 = str(uuid4())
+
+    set_episode_status(episode1, "pending_nodes", journal="default")
+    set_episode_status(episode2, "pending_nodes", journal="default")
+    set_episode_status(episode3, "pending_edges", journal="default")
+
+    pending_nodes = get_episodes_by_status("pending_nodes")
+    assert episode1 in pending_nodes
+    assert episode2 in pending_nodes
+    assert episode3 not in pending_nodes
+
+    pending_edges = get_episodes_by_status("pending_edges")
+    assert episode3 in pending_edges
+    assert episode1 not in pending_edges
+
+    remove_episode_from_queue(episode1)
+    remove_episode_from_queue(episode2)
+    remove_episode_from_queue(episode3)
+
+
+def test_get_episodes_by_status_empty_when_no_matches(falkordb_test_context):
+    """Return empty list when no episodes have status."""
+    episodes = get_episodes_by_status("nonexistent_status")
+    assert episodes == []
+
+
+def test_remove_episode_from_queue_removes_all_data(
+    episode_uuid, cleanup_test_episodes, falkordb_test_context
+):
+    """Remove episode from all Redis structures."""
+    uuid_map = {str(uuid4()): str(uuid4())}
+    set_episode_status(episode_uuid, "pending_edges", journal="default", uuid_map=uuid_map)
+
+    remove_episode_from_queue(episode_uuid)
+
+    status = get_episode_status(episode_uuid)
+    assert status is None
+
+    pending = get_episodes_by_status("pending_edges")
+    assert episode_uuid not in pending
+
+
+def test_status_index_updates_when_status_changes(
+    episode_uuid, cleanup_test_episodes, falkordb_test_context
+):
+    """Episode moves between status indexes correctly."""
+    set_episode_status(episode_uuid, "pending_nodes", journal="default")
+
+    pending_nodes = get_episodes_by_status("pending_nodes")
+    assert episode_uuid in pending_nodes
+
+    set_episode_status(episode_uuid, "pending_edges")
+
+    pending_nodes = get_episodes_by_status("pending_nodes")
+    assert episode_uuid not in pending_nodes
+
+    pending_edges = get_episodes_by_status("pending_edges")
+    assert episode_uuid in pending_edges
+
+
+def test_get_episode_uuid_map_returns_parsed_dict(
+    episode_uuid, cleanup_test_episodes, falkordb_test_context
+):
+    """get_episode_uuid_map returns parsed dict, not JSON string."""
+    uuid_map = {str(uuid4()): str(uuid4()), str(uuid4()): str(uuid4())}
+    set_episode_status(episode_uuid, "pending_edges", uuid_map=uuid_map)
+
+    retrieved_map = get_episode_uuid_map(episode_uuid)
+    assert retrieved_map == uuid_map
+    assert isinstance(retrieved_map, dict)
+
+
+def test_get_episode_uuid_map_returns_none_when_not_set(
+    episode_uuid, cleanup_test_episodes, falkordb_test_context
+):
+    """get_episode_uuid_map returns None when uuid_map not set."""
+    set_episode_status(episode_uuid, "pending_nodes", journal="default")
+
+    uuid_map = get_episode_uuid_map(episode_uuid)
+    assert uuid_map is None
+
+
+@pytest.mark.asyncio
+async def test_add_journal_entry_sets_pending_nodes_status(isolated_graph):
+    """New journal entries are marked as pending_nodes for extraction."""
+    episode_uuid = await add_journal_entry("Today I met Sarah at the park.")
+
+    status = get_episode_status(episode_uuid)
+    assert status == "pending_nodes"
+
+    pending_episodes = get_episodes_by_status("pending_nodes")
+    assert episode_uuid in pending_episodes
+
+    remove_episode_from_queue(episode_uuid)

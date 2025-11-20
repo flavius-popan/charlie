@@ -1,4 +1,4 @@
-"""Shared fixtures for backend API tests (no DSPy, database only)."""
+"""Shared fixtures for backend API tests."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ from typing import Iterator
 from uuid import uuid4
 
 import pytest
+import dspy
 
 import backend.database as db_utils
 from backend import settings as backend_settings
@@ -57,3 +58,41 @@ def isolated_graph(falkordb_test_context) -> Iterator[object]:
         graph.query("MATCH (n) DETACH DELETE n")
         persistence._graph_initialized.clear()
         persistence._seeded_self_groups.clear()
+
+
+@pytest.fixture(scope="session", autouse=True)
+def configure_dspy_for_backend(request: pytest.FixtureRequest) -> Iterator[None]:
+    """Configure DSPy once per test session with llama.cpp backend.
+
+    Uses deterministic sampling so integration assertions stay stable.
+    Only runs if --model option is provided, otherwise inference tests will skip.
+    """
+    model_path = request.config.getoption("--model", default=None)
+    if model_path:
+        from inference_runtime import DspyLM
+        adapter = dspy.ChatAdapter()
+        lm = DspyLM(model_path=model_path, generation_config={"temp": 0.0})
+        dspy.configure(lm=lm, adapter=adapter)
+    yield
+
+
+@pytest.fixture
+def require_llm():
+    """Skip test if no LLM is configured in dspy.settings.lm."""
+    if dspy.settings.lm is None:
+        pytest.skip("No LLM configured")
+
+
+@pytest.fixture
+def episode_uuid():
+    """Generate valid test episode UUID."""
+    return str(uuid4())
+
+
+@pytest.fixture
+def cleanup_test_episodes(episode_uuid):
+    """Clean up test episode data from Redis after each test."""
+    from backend.database.redis_ops import remove_episode_from_queue
+
+    yield
+    remove_episode_from_queue(episode_uuid)

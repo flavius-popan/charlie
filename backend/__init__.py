@@ -1,4 +1,4 @@
-"""Backend API for Charlie - journal entry management without extraction."""
+"""Backend API for Charlie - journal entry management and graph extraction."""
 
 from __future__ import annotations
 
@@ -9,7 +9,13 @@ from graphiti_core.nodes import EpisodicNode, EpisodeType
 from graphiti_core.utils.datetime_utils import utc_now
 
 from backend.settings import DEFAULT_JOURNAL
-from backend.database import persist_episode, validate_journal_name
+from backend.database import (
+    persist_episode,
+    validate_journal_name,
+)
+from backend.database.persistence import persist_entities_and_edges
+from backend.database.redis_ops import set_episode_status
+from backend.graph import extract_nodes, ExtractNodesResult
 
 # Content validation limits
 MAX_CONTENT_LENGTH = 100_000  # 100k characters
@@ -166,11 +172,18 @@ async def add_journal_entry(
 
     # Persist to database (also ensures SELF entity exists)
     await persist_episode(episode, journal=journal)
+
+    # Mark episode as pending node extraction
+    set_episode_status(episode_uuid, "pending_nodes", journal=journal)
+
     return episode_uuid
 
 
 __all__ = [
     "add_journal_entry",
+    "extract_nodes",
+    "ExtractNodesResult",
     "MAX_CONTENT_LENGTH",
     "validate_content",
+    "persist_entities_and_edges",
 ]

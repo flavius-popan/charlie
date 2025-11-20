@@ -1,3 +1,4 @@
+import pytest
 from pipeline import _dspy_setup  # noqa: F401
 import dspy
 
@@ -5,6 +6,7 @@ from inference_runtime import DspyLM
 from settings import MODEL_CONFIG
 
 
+@pytest.mark.inference
 def test_default_generation_config():
     """Verify DspyLM initializes with default config from settings."""
     lm = DspyLM()
@@ -17,6 +19,7 @@ def test_default_generation_config():
     assert lm.generation_config['presence_penalty'] == 0.0
 
 
+@pytest.mark.inference
 def test_custom_generation_config():
     """Verify custom config overrides defaults."""
     custom_config = {

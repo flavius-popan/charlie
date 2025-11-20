@@ -11,7 +11,15 @@ from graphiti_core.embedder.client import EmbedderClient, EMBEDDING_DIM
 from graphiti_core.utils.datetime_utils import convert_datetimes_to_strings
 
 from backend.database.lifecycle import _ensure_graph
-from backend.database.utils import STOPWORDS, _decode_value, _merge_episode_sync, to_cypher_literal
+from backend.database.utils import (
+    STOPWORDS,
+    _decode_value,
+    _merge_episode_sync,
+    _merge_entity_nodes_sync,
+    _merge_entity_edges_sync,
+    _merge_episodic_edges_sync,
+    to_cypher_literal,
+)
 from backend.settings import DEFAULT_JOURNAL
 
 logger = logging.getLogger(__name__)
@@ -55,25 +63,28 @@ class FalkorLiteSession(GraphDriverSession):
         if "nodes" in kwargs:
             nodes = kwargs["nodes"]
             if nodes:
-                raise NotImplementedError(
-                    "Entity node persistence not yet implemented in backend"
-                )
+                def _locked_merge():
+                    with self._lock:
+                        _merge_entity_nodes_sync(graph, nodes)
+                await asyncio.to_thread(_locked_merge)
             return None
 
         if "entity_edges" in kwargs:
             edges = kwargs["entity_edges"]
             if edges:
-                raise NotImplementedError(
-                    "Entity edge persistence not yet implemented in backend"
-                )
+                def _locked_merge():
+                    with self._lock:
+                        _merge_entity_edges_sync(graph, edges)
+                await asyncio.to_thread(_locked_merge)
             return None
 
         if "episodic_edges" in kwargs:
             episodic_edges = kwargs["episodic_edges"]
             if episodic_edges:
-                raise NotImplementedError(
-                    "Episodic edge persistence not yet implemented in backend"
-                )
+                def _locked_merge():
+                    with self._lock:
+                        _merge_episodic_edges_sync(graph, episodic_edges)
+                await asyncio.to_thread(_locked_merge)
             return None
 
         raise NotImplementedError(

@@ -1,6 +1,8 @@
+import pytest
 from pipeline import entity_edge_models as schemas
 
 
+@pytest.mark.inference
 def test_person_schema_is_string_only():
     person_fields = set(schemas.Person.model_fields.keys())
     assert person_fields == {"relationship_type"}, (
@@ -9,6 +11,7 @@ def test_person_schema_is_string_only():
     )
 
 
+@pytest.mark.inference
 def test_activity_schema_includes_purpose_string():
     import typing
     activity_fields = schemas.Activity.model_fields
@@ -21,5 +24,6 @@ def test_activity_schema_includes_purpose_string():
     assert annotation == typing.Optional[str] or annotation == (str | None)
 
 
+@pytest.mark.inference
 def test_edges_are_label_only():
     assert schemas.edge_types == {}, "Edge schema map should be empty for label-only edges."

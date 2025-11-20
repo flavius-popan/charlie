@@ -94,3 +94,133 @@ def redis_ops() -> Iterator[RedisOpsProxy]:
 
     proxy = RedisOpsProxy(redis_client)
     yield proxy
+
+
+# Episode Status Management
+
+
+def set_episode_status(
+    episode_uuid: str,
+    status: str,
+    journal: str | None = None,
+    uuid_map: dict[str, str] | None = None,
+) -> None:
+    """Set episode processing status and update indexes.
+
+    Args:
+        episode_uuid: Episode UUID
+        status: Processing status ("pending_nodes" or "pending_edges" only)
+        journal: Journal name (required for initial status set)
+        uuid_map: Optional UUID mapping (provisional -> canonical)
+
+    Raises:
+        ValueError: If status is not "pending_nodes" or "pending_edges"
+
+    Note:
+        Only "pending_nodes" and "pending_edges" are valid statuses.
+        When processing completes, call cleanup_episode() to remove from Redis.
+        This prevents unbounded growth - Redis contains only active queue items.
+
+        This function is not atomic across concurrent calls. Use Huey's
+        task deduplication or application-level locking to ensure only
+        one worker processes a given episode simultaneously.
+    """
+    import json
+
+    # Validate status to prevent unbounded sets
+    VALID_STATUSES = {"pending_nodes", "pending_edges"}
+    if status not in VALID_STATUSES:
+        raise ValueError(
+            f"Invalid status '{status}'. Only {VALID_STATUSES} are allowed. "
+            f"Call cleanup_episode() when processing completes."
+        )
+
+    with redis_ops() as r:
+        episode_key = f"episode:{episode_uuid}"
+
+        current_status = r.hget(episode_key, "status")
+
+        if current_status:
+            r.srem(f"status:{current_status.decode()}", episode_uuid)
+
+        r.hset(episode_key, "status", status)
+
+        if journal is not None:
+            r.hset(episode_key, "journal", journal)
+
+        if uuid_map is not None:
+            r.hset(episode_key, "uuid_map", json.dumps(uuid_map))
+
+        r.sadd(f"status:{status}", episode_uuid)
+
+
+def get_episode_status(episode_uuid: str) -> str | None:
+    """Get episode processing status.
+
+    Args:
+        episode_uuid: Episode UUID
+
+    Returns:
+        Status string or None if episode not found
+    """
+    with redis_ops() as r:
+        status = r.hget(f"episode:{episode_uuid}", "status")
+        return status.decode() if status else None
+
+
+def get_episode_data(episode_uuid: str) -> dict[str, str]:
+    """Get all episode metadata.
+
+    Args:
+        episode_uuid: Episode UUID
+
+    Returns:
+        Dictionary of episode metadata fields (empty dict if episode not found)
+    """
+    with redis_ops() as r:
+        data = r.hgetall(f"episode:{episode_uuid}")
+        return {k.decode(): v.decode() for k, v in data.items()}
+
+
+def get_episode_uuid_map(episode_uuid: str) -> dict[str, str] | None:
+    """Get parsed UUID mapping for episode.
+
+    Args:
+        episode_uuid: Episode UUID
+
+    Returns:
+        UUID mapping dict (provisional -> canonical) or None if not set
+    """
+    import json
+
+    data = get_episode_data(episode_uuid)
+    uuid_map_str = data.get("uuid_map")
+    return json.loads(uuid_map_str) if uuid_map_str else None
+
+
+def get_episodes_by_status(status: str) -> list[str]:
+    """Get all episodes with given status.
+
+    Args:
+        status: Processing status to filter by
+
+    Returns:
+        List of episode UUIDs
+    """
+    with redis_ops() as r:
+        uuids = r.smembers(f"status:{status}")
+        return [uuid.decode() for uuid in uuids]
+
+
+def remove_episode_from_queue(episode_uuid: str) -> None:
+    """Remove episode from processing queue.
+
+    Args:
+        episode_uuid: Episode UUID
+    """
+    with redis_ops() as r:
+        status = r.hget(f"episode:{episode_uuid}", "status")
+        if status:
+            r.srem(f"status:{status.decode()}", episode_uuid)
+
+        r.delete(f"episode:{episode_uuid}")
