@@ -130,6 +130,7 @@ async def test_extract_nodes_no_llm_configured(isolated_graph):
         dspy.settings.configure(lm=original_lm)
 
 
+@pytest.mark.inference
 @pytest.mark.asyncio
 async def test_extract_nodes_invalid_episode(isolated_graph, require_llm):
     """Test that extract_nodes handles invalid episode_uuid gracefully."""
