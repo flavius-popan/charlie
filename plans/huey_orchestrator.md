@@ -3,19 +3,19 @@
 ## Purpose
 This infrastructure is designed to enable high-performance, local AI features within a Textual TUI application while strictly managing limited system resources (RAM/VRAM). It solves the critical challenge of running heavy models (LLMs, Embeddings, Rerankers) alongside a user interface without freezing the application or crashing the system due to Out-Of-Memory (OOM) errors.
 
-The design implements a **"Warm Session" architecture**, where models remain loaded in memory for rapid sequential inference (e.g., a chat session) but are automatically swapped or unloaded when the context changes (e.g., switching from Chat to Journal Ingestion).
+The design keeps a single worker process alive so models can stay resident during a backlog of tasks and are unloaded as soon as no work remains (no timers, no periodic cleanup).
 
 ## Huey's Role
 **Huey** serves as the asynchronous orchestration layer that bridges the user interface and the heavy inference engine. Its specific responsibilities are:
 
 *   **Non-Blocking Execution:** Offloads heavy inference tasks (generation, embedding) to a background process, ensuring the TUI remains responsive to user input at all times.
 *   **Resource Serialization:** configured with a **single-threaded worker**, Huey acts as a strict FIFO (First-In-First-Out) queue. This guarantees that two heavy models are never triggered simultaneously, preventing resource contention.
-*   **State Persistence (Warm Sessions):** By utilizing the `thread` worker type (rather than `process`), Huey keeps the worker process alive between tasks. This allows the **Model Manager** to maintain global state (loaded weights) in RAM, making subsequent inference calls near-instant.
+*   **State Persistence:** By utilizing the `thread` worker type (rather than `process`), Huey keeps the worker process alive between tasks. This allows the **Model Manager** to keep a model resident while work is queued, then unload immediately when queues are empty.
 *   **Infrastructure Efficiency:** Huey integrates directly with the application's existing embedded `redislite`/`falkordblite` database, requiring no external broker services or additional system overhead.
 
 ### Phase 1: The Inference Foundation (Stateless)
 
-**Target File:** `backend/inference/engine.py`
+**Target Files:** `backend/inference/__init__.py`, `backend/inference/dspy_lm.py`, `backend/inference/loader.py`
 
 **Goal:** Create a "Model Factory" layer that knows *how* to instantiate models but holds no opinion on *when* or *how long* they are kept.
 
@@ -24,9 +24,9 @@ The design implements a **"Warm Session" architecture**, where models remain loa
 *   **Reusability:** The exact same loading logic (using paths from `backend/settings.py`) must be shared between the App and the Dev scripts to ensure optimization results are valid in production.
 
 **Structure:**
-*   This module contains pure factory functions.
-*   It reads configuration from `backend/settings.py` but stores no global state.
-*   It provides a custom `DSPy` adapter class that wraps the raw `llama_cpp` object, ensuring the interface matches what DSPy expects for signatures and predictors.
+*   Stateless factory layer: `DspyLM` (DSPy BaseLM) and `load_model()` helpers.
+*   Reads configuration from `backend/settings.py`; stores no global state.
+*   Optimizers and app share the same loaders to guarantee parity.
 
 ### Phase 2: The Orchestrator (Stateful)
 
@@ -36,14 +36,16 @@ The design implements a **"Warm Session" architecture**, where models remain loa
 
 **Why:**
 *   **Memory Management:** A local machine cannot hold an Instruct Model, an Embedding Model, and a Reranker in VRAM simultaneously. The system must enforce "Exclusive Access"—automatically unloading one model to make room for another.
-*   **Latency Reduction:** Loading a model from disk is slow. The Manager must maintain a "Warm Session" (global state) so that sequential requests (like a chat conversation) are instant.
-*   **Abstraction:** The consumer tasks shouldn't care about memory constraints. They should simply request "Instruct," and the Manager handles the complex logic of checking what is currently loaded, swapping if necessary, and returning the object.
+*   **Latency Reduction:** Loading a model from disk is slow. The Manager keeps the model in memory while tasks remain and unloads when queues are empty to free resources.
+*   **Abstraction:** The consumer tasks shouldn't care about memory constraints. They should simply request "Instruct," and the Manager handles loading and immediate cleanup when no work remains.
+
+**Current scope:** Only the instruct model is implemented. Embedding and reranker support will be added in a later iteration.
 
 **Structure:**
-*   This module imports the *Factory* from `backend/inference/engine.py`.
-*   It maintains a global registry (dictionary) of currently loaded models.
-*   It implements the "Swap Logic": Before loading a requested model via the Factory, it checks the registry and explicitly unloads/garbage-collects conflicting models.
-*   **Crucially:** This module is *never* imported by your Dev/Optimizer scripts. It is exclusive to the Application/Huey worker.
+*   Imports the factory utilities from `backend/inference`.
+*   Maintains a global registry of currently loaded models (currently only `llm`).
+*   Loads on demand; tasks trigger `cleanup_if_no_work()` to unload everything when Redis queues are empty.
+*   **Crucially:** This module is *never* imported by Dev/Optimizer scripts. It is exclusive to the Application/Huey worker.
 
 ### Phase 3: The Service Layer (Asynchronous Queue)
 
@@ -281,7 +283,7 @@ All functions have comprehensive test coverage in `tests/test_backend/test_redis
 *   **Isolation:** Optimization runs should be completely isolated from the application state. If an optimizer crashes, it shouldn't affect the database or the queue.
 
 **Structure:**
-*   These scripts import **Directly from `backend/inference/engine.py`**.
+*   These scripts import directly from `backend/inference` (DspyLM + loader).
 *   They bypass the Manager and the Queue entirely.
 *   This ensures that when you run an optimizer, you are getting a "clean room" environment with the exact model configuration used in production, but without the production machinery attached.
 
@@ -383,6 +385,7 @@ def _get_redis_connection():
 huey = AsyncRedisHuey(
     'charlie',
     connection_pool=_get_redis_connection(),
+    # Single worker in thread mode; no per-model workers in this iteration
 )
 ```
 
@@ -437,11 +440,9 @@ from backend.inference import DspyLM
 
 # Global state - safe because single worker thread
 MODELS = {
-    'llm': {'model': None, 'last_used': 0},
-    # Future: 'embedding', 'reranker' when needed
+    'llm': {'model': None},
+    # Future: add embedding/reranker entries when implemented
 }
-
-IDLE_TIMEOUT = 300  # Unload after 5 minutes
 
 ModelType = Literal['llm']  # Expand as more models are added
 
@@ -462,54 +463,27 @@ def get_model(model_type: ModelType = 'llm') -> DspyLM:
         - First call loads from disk (~4GB), subsequent calls are instant
     """
     entry = MODELS[model_type]
-    entry['last_used'] = time.time()
-
-    if entry['model'] is not None:
-        return entry['model']
 
     # Load the model (only LLM for now)
-    if model_type == 'llm':
-        entry['model'] = DspyLM()  # Uses settings from backend.settings
-    else:
-        raise ValueError(f"Model type '{model_type}' not yet implemented")
+    if entry['model'] is None:
+        if model_type == 'llm':
+            entry['model'] = DspyLM()  # Uses settings from backend.settings
+        else:
+            raise ValueError(f"Model type '{model_type}' not yet implemented")
 
     return entry['model']
 
-def _unload_all_except(keep: ModelType | None = None):
-    """Unload models to free memory."""
-    for name, entry in MODELS.items():
-        if name != keep and entry['model'] is not None:
-            entry['model'] = None
-            gc.collect()
-
-def unload_idle_models():
-    """Called by periodic task to free memory.
-
-    Runs in worker thread - safe to access globals.
-    """
-    now = time.time()
-    for name, entry in MODELS.items():
+def unload_all_models():
+    """Unload all models to free memory."""
+    for entry in MODELS.values():
         if entry['model'] is not None:
-            idle_time = now - entry['last_used']
-            if idle_time > IDLE_TIMEOUT:
-                entry['model'] = None
-                gc.collect()
+            entry['model'] = None
+    gc.collect()
 ```
 
-**Periodic Task (in `backend/services/tasks.py`):**
+**Cleanup (event-driven, no timers):**
 
-```python
-from huey import crontab
-
-@huey.periodic_task(crontab(minute='*'))
-def cleanup_idle_models():
-    """Runs every minute to unload unused models.
-
-    Executes in worker thread - no concurrency issues.
-    """
-    from backend.inference.manager import unload_idle_models
-    unload_idle_models()
-```
+Tasks call `cleanup_if_no_work()` after completion, which checks Redis backlog and calls `unload_all_models()` if both `pending_nodes` and `pending_edges` are empty.
 
 ### Phase 1 Detailed: Model Factory
 
@@ -564,11 +538,9 @@ from backend.settings import (  # Updated import
 ```
 
 **Key Points:**
-- Copy preserves existing `DspyLM` (dspy.BaseLM implementation)
-- Copy preserves `load_model()` with Llama.from_pretrained()
-- Only import paths need updating (inference_runtime → backend.inference)
-- Optimizer scripts import from `backend.inference` (same as app)
-- No factory wrapper needed - `DspyLM` is the factory
+- `DspyLM` (dspy.BaseLM) and `load_model()` stay unchanged aside from import paths (inference_runtime → backend.inference).
+- Optimizer scripts import from `backend.inference` (same as app).
+- No additional factory wrapper needed - `DspyLM` is the factory.
 
 ### Phase 5 Detailed: Subprocess Management
 
@@ -594,8 +566,8 @@ class CharlieApp(App):
         self.huey_process = subprocess.Popen([
             'huey_consumer',
             'backend.services.tasks.huey',
-            '-k', 'thread',  # CRITICAL: thread mode for warm sessions
-            '-w', '1',       # CRITICAL: single worker for thread safety
+            '-k', 'thread',  # CRITICAL: single-thread execution
+            '-w', '1',       # CRITICAL: one worker
             '-v',            # Verbose logging
         ])
 
@@ -625,7 +597,7 @@ from pathlib import Path
 # DB_PATH = Path("data/charlie.db")
 # DEFAULT_JOURNAL = "default"
 
-# Model paths
+# Model paths (optional; defaults to HF cache locations if not set)
 MODELS_DIR = Path("models")
 LLM_MODEL_PATH = MODELS_DIR / "llama-3-8b-instruct.gguf"
 EMBEDDING_MODEL_PATH = MODELS_DIR / "nomic-embed-text-v1.5.gguf"
@@ -634,7 +606,6 @@ RERANKER_MODEL_PATH = MODELS_DIR / "bge-reranker-v2-m3.gguf"
 # Huey configuration
 HUEY_WORKER_TYPE = 'thread'
 HUEY_WORKERS = 1
-HUEY_IDLE_TIMEOUT = 300  # seconds
 ```
 
 ---
@@ -649,10 +620,10 @@ def test_model_registry_structure():
     """Test MODELS dictionary structure."""
     from backend.inference.manager import MODELS
     assert 'llm' in MODELS
-    assert 'last_used' in MODELS['llm']
+    assert 'model' in MODELS['llm']
 
 def test_unload_logic():
-    """Test _unload_all_except without real models."""
+    """Test unload_all_models without real models."""
     # Mock model objects and verify unload behavior
     pass
 ```
@@ -696,4 +667,3 @@ asyncio.run(test())
 
 # 3. Watch worker logs for execution
 ```
-

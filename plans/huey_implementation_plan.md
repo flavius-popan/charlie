@@ -12,6 +12,8 @@
 
 ### Files to Create
 
+**Warning:** Before copying `inference_runtime/`, review and (if necessary) remove the `pipeline._dspy_setup` import in `inference_runtime/dspy_lm.py`; the v1 pipeline dependency may be an anti-pattern for v2 and should not be pulled in without validation.
+
 #### Copy `inference_runtime/` → `backend/inference/`
 
 ```
@@ -52,14 +54,14 @@ def get_model(model_type='llm') -> DspyLM:
     # Check cache → return if loaded (warm)
     # If not loaded → instantiate DspyLM() → cache → return (cold)
 
-def unload_idle_models():
+def unload_all_models():
     """Unload all models to free memory."""
     # Set all models to None → gc.collect()
 
 def cleanup_if_no_work():
     """Unload models if no pending episodes remain."""
     # Check Redis for pending_nodes and pending_edges
-    # If both empty → unload_idle_models()
+    # If both empty → unload_all_models()
 ```
 
 **Key points:**
@@ -68,6 +70,7 @@ def cleanup_if_no_work():
 - Models stay loaded between tasks (warm sessions)
 - Event-driven cleanup (called at end of each task)
 - Simple rule: No work in queue = unload immediately
+- Current scope: only the instruct LLM is supported; adding embedding/reranker models will be a follow-on design.
 
 **Used by:** Huey tasks (Phase 3)
 
@@ -103,6 +106,7 @@ huey = AsyncRedisHuey(
 - Reuses FalkorDB's embedded Redis (no separate broker)
 - AsyncRedisHuey for async task support
 - Must initialize AFTER database is ready
+- Single Huey consumer with one worker; no per-model workers in this iteration.
 
 #### `backend/services/tasks.py`
 
@@ -111,33 +115,64 @@ huey = AsyncRedisHuey(
 @huey.task()
 async def extract_nodes_task(episode_uuid: str, journal: str):
     """Background entity extraction."""
+    from backend.database.redis_ops import (
+        get_episode_status,
+        get_inference_enabled,
+        set_episode_status,
+        remove_episode_from_queue,
+    )
     from backend.inference.manager import get_model, cleanup_if_no_work
     from backend.graph.extract_nodes import extract_nodes
     import dspy
 
-    lm = get_model('llm')  # Warm session access
+    # Idempotency check
+    if get_episode_status(episode_uuid) != "pending_nodes":
+        return {"already_processed": True}
+
+    # Respect inference toggle
+    if not get_inference_enabled():
+        return {"inference_disabled": True}
+
+    lm = get_model('llm')
     with dspy.context(lm=lm):
         result = await extract_nodes(episode_uuid, journal)
 
     # Update episode status based on results
-    # - If entities found: set "pending_edges" + enqueue extract_edges
-    # - If no entities: remove_episode_from_queue()
+    if result.uuid_map:
+        set_episode_status(episode_uuid, "pending_edges", uuid_map=result.uuid_map)
+        extract_edges_task(episode_uuid, journal)  # enqueue next stage
+    else:
+        remove_episode_from_queue(episode_uuid)  # no entities, done
 
-    # Event-driven cleanup: unload if no more work
     cleanup_if_no_work()
-
     return result
 
 @huey.task()
 async def extract_edges_task(episode_uuid: str, journal: str):
     """Background relationship extraction."""
-    # Get uuid_map from Redis
-    # Call extract_edges() with model manager
-    # Remove episode from queue when complete
+    from backend.database.redis_ops import (
+        get_episode_status,
+        get_episode_uuid_map,
+        remove_episode_from_queue,
+    )
+    from backend.inference.manager import get_model, cleanup_if_no_work
+    from backend.graph.extract_edges import extract_edges
+    import dspy
 
-    # Event-driven cleanup: unload if no more work
+    # Idempotency check
+    if get_episode_status(episode_uuid) != "pending_edges":
+        return {"already_processed": True}
+
+    uuid_map = get_episode_uuid_map(episode_uuid)
+    if not uuid_map:
+        return {"missing_uuid_map": True}
+
+    lm = get_model('llm')
+    with dspy.context(lm=lm):
+        result = await extract_edges(episode_uuid, journal, uuid_map)
+
+    remove_episode_from_queue(episode_uuid)
     cleanup_if_no_work()
-
     return result
 ```
 
@@ -312,7 +347,7 @@ async def extract_nodes_task(episode_uuid: str, journal: str):
 
 **Functions needed:**
 ```python
-def unload_idle_models():
+def unload_all_models():
     """Unload all models to free memory."""
     # Set all model references to None
     # Call gc.collect()
@@ -325,7 +360,7 @@ def cleanup_if_no_work():
     pending_edges = get_episodes_by_status("pending_edges")
 
     if len(pending_nodes) == 0 and len(pending_edges) == 0:
-        unload_idle_models()
+        unload_all_models()
 ```
 
 **Key points:**
@@ -547,12 +582,6 @@ python -c "
 from backend.database.redis_ops import get_episodes_by_status
 print('Pending nodes:', len(get_episodes_by_status('pending_nodes')))
 print('Pending edges:', len(get_episodes_by_status('pending_edges')))
-"
-
-# Check model status
-python -c "
-from backend.inference.manager import get_model_status
-print(get_model_status())
 "
 
 # Test settings persistence

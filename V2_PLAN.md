@@ -20,7 +20,7 @@ The backend provides a clean API layer separating UI concerns from graph operati
 
 **Validation**: Content validated for null bytes (rejected), max length (100k chars), and non-empty. Naive datetimes (no timezone) are normalized to UTC for import-friendly handling - markdown files and simple formats can pass file creation timestamps directly. Journal names restricted to alphanumeric, underscores, and hyphens (max 64 chars) for filesystem safety.
 
-**Operation Triggers**: `enrich_episode(episode_uuid)` - Queues entity and relationship extraction for a saved episode. Background workers poll the queue and update episode state as operations complete. *(Not yet implemented)*
+**Operation Triggers**: Background workers (Huey, single worker thread) dequeue `extract_nodes` then `extract_edges` tasks for each saved episode. Episode state in Redis advances from `pending_nodes` to `pending_edges` to complete. *(Not yet implemented)*
 
 **Query API**: `get_episodes_by_timerange(start, end)`, `get_entity_timeline(entity_uuid)`, `search_entities(query)` - All query operations are read-only and work against the current graph state. *(Not yet implemented)*
 
@@ -100,5 +100,6 @@ Backend modules operate independently on existing episodic nodes. UI code and im
 **DSPy**: Framework for optimizing LLM extraction prompts. Enables MIPROv2 teleprompter optimization to improve entity/edge extraction quality over time. Separates extraction logic (pure dspy.Module) from orchestration (database I/O).
 
 **llama.cpp**: Local LLM inference via CPU/GPU acceleration. Thread-safe for concurrent requests. Model runs entirely offline - no API calls, no cloud dependency. Supports structured output via JSON schema for entity/edge extraction.
+**Huey (single worker)**: Thread-based consumer for asynchronous extraction tasks; only the instruct model is loaded, and it is unloaded immediately when no episodes are pending.
 
 **State Tracking**: Episode processing state stored in database. Background workers poll for episodes needing processing. Progressive reveal: UI updates as operations complete asynchronously.
