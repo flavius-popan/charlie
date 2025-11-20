@@ -1,0 +1,647 @@
+# Huey Orchestrator Implementation Plan
+
+**Goal**: Add async task queue to Charlie for non-blocking LLM inference with warm session support.
+
+**Architecture**: See `plans/huey_orchestrator.md` for detailed rationale on thread safety, warm sessions, and resource management.
+
+---
+
+## Phase 1: Model Factory (Stateless)
+
+**Purpose**: Shared model loading infrastructure for app and optimizer scripts.
+
+### Files to Create
+
+#### Copy `inference_runtime/` → `backend/inference/`
+
+```
+backend/inference/
+├── __init__.py         # Copy from inference_runtime/__init__.py
+├── dspy_lm.py          # Copy from inference_runtime/dspy_lm.py
+└── loader.py           # Copy from inference_runtime/loader.py
+```
+
+**Changes required after copy:**
+- `dspy_lm.py`: Change `from settings import MODEL_CONFIG` → `from backend.settings import MODEL_CONFIG`
+- `loader.py`: Change `from settings import LLAMA_*` → `from backend.settings import LLAMA_*`
+
+**What it provides:**
+- `DspyLM` class (dspy.BaseLM implementation wrapping llama.cpp)
+- `load_model()` function (HuggingFace auto-download)
+- Used by both manager (Phase 2) and optimizer scripts (Phase 4)
+
+---
+
+## Phase 2: Model Manager (Stateful)
+
+**Purpose**: Warm session management - keep models loaded in memory between tasks.
+
+### Files to Create
+
+#### `backend/inference/manager.py`
+
+**Core functionality:**
+```python
+# Global registry (safe with single worker thread)
+MODELS = {
+    'llm': {'model': None},
+}
+
+def get_model(model_type='llm') -> DspyLM:
+    """Load model if not cached, return instance."""
+    # Check cache → return if loaded (warm)
+    # If not loaded → instantiate DspyLM() → cache → return (cold)
+
+def unload_idle_models():
+    """Unload all models to free memory."""
+    # Set all models to None → gc.collect()
+
+def cleanup_if_no_work():
+    """Unload models if no pending episodes remain."""
+    # Check Redis for pending_nodes and pending_edges
+    # If both empty → unload_idle_models()
+```
+
+**Key points:**
+- NO locking needed (single worker thread)
+- NO timestamps needed (work queue determines unload)
+- Models stay loaded between tasks (warm sessions)
+- Event-driven cleanup (called at end of each task)
+- Simple rule: No work in queue = unload immediately
+
+**Used by:** Huey tasks (Phase 3)
+
+**NOT used by:** Optimizer scripts (they use `backend.inference` directly)
+
+---
+
+## Phase 3: Queue & Tasks
+
+**Purpose**: Async task queue integrated with existing FalkorDB Redis.
+
+### Files to Create
+
+#### `backend/services/__init__.py`
+- Empty package marker
+
+#### `backend/services/queue.py`
+
+**Core functionality:**
+```python
+def _get_redis_connection() -> ConnectionPool:
+    """Extract connection pool from FalkorDB (_db.client)."""
+    # Call _ensure_graph() to trigger DB init
+    # Return _db.client.connection_pool
+
+huey = AsyncRedisHuey(
+    'charlie',
+    connection_pool=_get_redis_connection(),
+)
+```
+
+**Key points:**
+- Reuses FalkorDB's embedded Redis (no separate broker)
+- AsyncRedisHuey for async task support
+- Must initialize AFTER database is ready
+
+#### `backend/services/tasks.py`
+
+**Core functionality:**
+```python
+@huey.task()
+async def extract_nodes_task(episode_uuid: str, journal: str):
+    """Background entity extraction."""
+    from backend.inference.manager import get_model, cleanup_if_no_work
+    from backend.graph.extract_nodes import extract_nodes
+    import dspy
+
+    lm = get_model('llm')  # Warm session access
+    with dspy.context(lm=lm):
+        result = await extract_nodes(episode_uuid, journal)
+
+    # Update episode status based on results
+    # - If entities found: set "pending_edges" + enqueue extract_edges
+    # - If no entities: remove_episode_from_queue()
+
+    # Event-driven cleanup: unload if no more work
+    cleanup_if_no_work()
+
+    return result
+
+@huey.task()
+async def extract_edges_task(episode_uuid: str, journal: str):
+    """Background relationship extraction."""
+    # Get uuid_map from Redis
+    # Call extract_edges() with model manager
+    # Remove episode from queue when complete
+
+    # Event-driven cleanup: unload if no more work
+    cleanup_if_no_work()
+
+    return result
+```
+
+**Key points:**
+- Tasks call `get_model()` from manager (warm sessions)
+- Tasks call `cleanup_if_no_work()` at end (event-driven unload)
+- NO periodic cleanup task needed (work queue drives unload)
+- Use `backend.database.redis_ops` for episode status management
+
+### Integration with Existing Code
+
+**No changes needed to:**
+- `backend/database/redis_ops.py` - episode status functions already exist
+- `backend/graph/extract_nodes.py` - works as-is, just needs dspy.context() set
+
+**Optional enhancement to `backend/__init__.py`:**
+```python
+# In add_journal_entry(), after set_episode_status():
+from backend.services.tasks import extract_nodes_task
+extract_nodes_task(episode_uuid, journal)  # Enqueue immediately
+```
+
+**Alternative:** Rely on worker startup recovery to discover pending episodes (lazy).
+
+---
+
+## Phase 4: Settings UI Integration
+
+**Purpose**: Replace placeholder toggles with functional inference controls.
+
+### Queue System Architecture
+
+**Two-layer design with clear separation of concerns:**
+
+**Layer 1: Redis (State Tracker)**
+- Tracks episode lifecycle state: `pending_nodes` → `pending_edges` → [complete]
+- Provides discovery for UI, manual operations, crash recovery
+- Source of truth for "what needs processing"
+
+**Layer 2: Huey (Work Executor)**
+- Executes tasks asynchronously (non-blocking UI)
+- Provides task isolation, error handling, worker management
+- Checks Redis state for idempotency (safe to enqueue multiple times)
+
+**Coordination model:**
+```
+add_journal_entry()
+  ↓
+  set_episode_status(uuid, "pending_nodes")  # State: needs work
+  ↓
+  if get_inference_enabled():
+      extract_nodes_task(uuid, journal)  # Execution: do work
+
+extract_nodes_task():
+  ↓
+  Check Redis: is episode still "pending_nodes"?
+  ↓
+  If not → already processed → exit
+  ↓
+  If yes AND get_inference_enabled():
+      Run extraction → update state → enqueue next task if needed
+  ↓
+  If yes BUT inference disabled:
+      Exit (episode remains in Redis for later)
+```
+
+**Key insight:** Redis and Huey serve different purposes - not redundant, but complementary.
+
+### Files to Modify
+
+#### `backend/database/redis_ops.py`
+
+**New functions to add:**
+```python
+def set_inference_enabled(enabled: bool) -> None:
+    """Enable/disable inference globally. Persisted across restarts."""
+
+def get_inference_enabled() -> bool:
+    """Get current inference enabled status. Default: True."""
+```
+
+**Key points:**
+- Use Redis for persistence (survives app restarts)
+- Setting stored under `app:inference_enabled`
+- Default: inference enabled (True)
+- No timeout setting needed (auto-unload is work-queue driven)
+
+#### `charlie.py` - Settings Modal
+
+**Update SettingsModal:**
+```python
+class SettingsModal(ModalScreen):
+    def compose(self) -> ComposeResult:
+        # Replace placeholder toggles with:
+        # - "Enable Inference" toggle (controls task enqueueing)
+        # Load initial state from redis_ops.get_inference_enabled()
+        pass
+
+    def on_switch_changed(self, event) -> None:
+        # Save to Redis via set_inference_enabled()
+        pass
+```
+
+**Key points:**
+- Single toggle only: "Enable Inference"
+- Load initial state on modal open
+- Save state change to Redis immediately
+- No timeout configuration needed (system auto-manages memory)
+
+#### `backend/__init__.py`
+
+**Update add_journal_entry:**
+```python
+async def add_journal_entry(...) -> str:
+    # ... existing code ...
+
+    # Set episode state in Redis (always)
+    set_episode_status(episode_uuid, "pending_nodes", journal=journal)
+
+    # Enqueue task only if inference enabled
+    if get_inference_enabled():
+        from backend.services.tasks import extract_nodes_task
+        extract_nodes_task(episode_uuid, journal)
+
+    return episode_uuid
+```
+
+**Key points:**
+- Redis state always set (enables manual re-enrichment later)
+- Huey task only enqueued if inference enabled (responsive)
+- No work happens if inference disabled (episodes wait in Redis)
+
+#### `backend/services/tasks.py`
+
+**Update task behavior for idempotency:**
+```python
+@huey.task()
+async def extract_nodes_task(episode_uuid: str, journal: str):
+    from backend.database.redis_ops import get_episode_status, get_inference_enabled
+
+    # Check Redis state: is this episode still pending?
+    current_status = get_episode_status(episode_uuid)
+    if current_status != "pending_nodes":
+        # Already processed by another task
+        return {'already_processed': True}
+
+    # Check if inference still enabled (may have changed since enqueue)
+    if not get_inference_enabled():
+        # Leave episode in pending_nodes for later
+        return {'inference_disabled': True}
+
+    # Proceed with extraction
+    result = await extract_nodes(episode_uuid, journal)
+
+    # Update state based on results
+    if result.uuid_map:
+        set_episode_status(episode_uuid, "pending_edges", uuid_map=result.uuid_map)
+        extract_edges_task(episode_uuid, journal)  # Enqueue next stage
+    else:
+        remove_episode_from_queue(episode_uuid)  # No entities, done
+
+    return result
+```
+
+**Key points:**
+- Tasks check Redis state first (idempotent - safe to enqueue multiple times)
+- Tasks check inference toggle before processing (respects user intent)
+- Tasks call `cleanup_if_no_work()` at end (event-driven unload)
+- No periodic cleanup task needed (work queue drives memory management)
+
+#### `backend/inference/manager.py`
+
+**Functions needed:**
+```python
+def unload_idle_models():
+    """Unload all models to free memory."""
+    # Set all model references to None
+    # Call gc.collect()
+
+def cleanup_if_no_work():
+    """Unload models if no pending episodes remain."""
+    from backend.database.redis_ops import get_episodes_by_status
+
+    pending_nodes = get_episodes_by_status("pending_nodes")
+    pending_edges = get_episodes_by_status("pending_edges")
+
+    if len(pending_nodes) == 0 and len(pending_edges) == 0:
+        unload_idle_models()
+```
+
+**Key points:**
+- No timeout parameter needed
+- No timestamp tracking needed
+- Simple rule: Empty work queue = unload immediately
+- Called by tasks (event-driven, not periodic)
+
+### Manual Re-enrichment Support (Future)
+
+**The architecture supports manual re-triggering:**
+```python
+# Future UI feature: "Re-enrich this entry" button
+def trigger_manual_enrichment(episode_uuid: str, journal: str):
+    # Reset state in Redis
+    set_episode_status(episode_uuid, "pending_nodes")
+
+    # Enqueue for processing
+    if get_inference_enabled():
+        extract_nodes_task(episode_uuid, journal)
+    # If inference disabled, episode waits in Redis until toggled on
+```
+
+**Key points:**
+- Redis state enables discovery of what needs work
+- Idempotent tasks make it safe to re-enqueue
+- User can manually trigger enrichment regardless of inference toggle
+- No special handling needed - existing task flow handles it
+
+### Testing Requirements
+
+**Persistence tests:**
+- Settings survive app restart (Redis storage)
+- Toggle changes reflected in task behavior
+
+**Idempotency tests:**
+- Enqueueing same episode multiple times processes only once
+- Redis state prevents double-processing
+
+**Queue coordination tests:**
+- Inference OFF: episodes stay in Redis, no processing
+- Inference ON: episodes process and advance through states
+- Toggle ON→OFF mid-flight: running tasks finish, queued tasks exit early
+- Pending work: models stay loaded (no unload during batch)
+- Work completes: models unload immediately (event-driven)
+
+**UI tests:**
+- Toggle loads correct initial state
+- Toggle changes save to Redis
+- Single toggle only (no timeout configuration)
+
+---
+
+## Phase 5: Optimizer Integration (Future)
+
+**Purpose**: Document how future DSPy optimizers will integrate.
+
+**NOTE**: Optimizers will NOT be created during this plan. This phase documents the pattern for future implementation.
+
+### Future Files (Not Created Now)
+
+#### `backend/optimizers/extract_nodes_optimizer.py`
+
+**Pattern to follow (future reference):**
+```python
+from backend.inference import DspyLM  # Import from factory, NOT manager
+import dspy
+
+# Load model directly (stateless, no caching)
+lm = DspyLM()
+dspy.settings.configure(lm=lm)
+
+# Run optimizer (MIPROv2, BootstrapFewShot, etc.)
+# Save results to pipeline/prompts/
+```
+
+**Key points:**
+- Naming pattern: `{operation}_optimizer.py` (matches `pipeline/optimizers/`)
+- Import from `backend.inference` (stateless factory)
+- DO NOT import from `backend.inference.manager` (stateful, app-only)
+- DO NOT import from `backend.services` (queue is app-only)
+- Optimizers run standalone, bypass all app infrastructure
+
+### Documentation to Create
+
+#### `backend/optimizers/README.md`
+
+**Contents:**
+- Architecture: Optimizers isolated from app runtime
+- Shared infrastructure: Model loading via `backend.inference`
+- Naming conventions: `extract_nodes_optimizer.py`, etc.
+- Usage examples: Import pattern, running scripts
+- Configuration: Use root `settings.py` for optimizer config
+
+**Status**: Create README now, add actual optimizers in future work
+
+---
+
+## Phase 6: Application Lifecycle
+
+**Purpose**: Auto-start/stop Huey worker when launching TUI.
+
+### Files to Modify
+
+#### `charlie.py`
+
+**Add to CharlieApp class:**
+```python
+class CharlieApp(App):
+    def __init__(self):
+        super().__init__()
+        self.huey_process = None
+
+    def on_mount(self):
+        """Start Huey worker subprocess."""
+        self.huey_process = subprocess.Popen([
+            sys.executable, '-m', 'huey.consumer',
+            'backend.services.tasks.huey',
+            '-k', 'thread',  # CRITICAL: thread mode
+            '-w', '1',       # CRITICAL: single worker
+            '-v',            # Verbose logging
+        ])
+        atexit.register(self._shutdown_huey)
+
+    def _shutdown_huey(self):
+        """Terminate worker gracefully."""
+        if self.huey_process:
+            self.huey_process.send_signal(signal.SIGTERM)
+            self.huey_process.wait(timeout=5)
+
+    def on_unmount(self):
+        """Cleanup on app exit."""
+        self._shutdown_huey()
+```
+
+**Key points:**
+- Worker starts automatically in `on_mount()`
+- Graceful shutdown with SIGTERM
+- Critical flags: `-k thread -w 1` (warm sessions + thread safety)
+
+---
+
+## Phase 7: Settings & Configuration
+
+### Settings to Add
+
+#### `backend/settings.py`
+
+```python
+# Model configuration
+LLAMA_CPP_GPU_LAYERS = int(os.getenv("LLAMA_GPU_LAYERS", "-1"))
+LLAMA_CPP_N_CTX = int(os.getenv("LLAMA_CTX_SIZE", "4096"))
+
+MODEL_CONFIG = {
+    "temp": 0.7,
+    "top_p": 0.8,
+    "top_k": 20,
+    "min_p": 0.0,
+    "presence_penalty": 0.0,
+    "max_tokens": 2048,
+}
+
+# Huey configuration
+HUEY_WORKER_TYPE = 'thread'  # CRITICAL
+HUEY_WORKERS = 1             # CRITICAL
+```
+
+**Key points:**
+- llama.cpp settings control GPU/memory usage
+- Huey settings enforce thread safety
+- MODEL_CONFIG shared between app and optimizers
+- No timeout setting needed (work-queue driven unload)
+
+---
+
+## Implementation Order
+
+1. **Phase 1** (Foundation): Copy inference_runtime → backend/inference, update imports
+2. **Phase 7** (Config): Add settings to backend/settings.py
+3. **Phase 2** (Manager): Create manager.py with warm session logic
+4. **Phase 3** (Queue): Create queue.py + tasks.py, integrate with existing redis_ops
+5. **Phase 4** (Settings UI): Add redis_ops functions, update charlie.py toggles
+6. **Phase 6** (Lifecycle): Update charlie.py to spawn worker
+7. **Phase 5** (Optimizers): Document patterns, create README (no actual optimizers yet)
+
+**Why this order:**
+- Phase 1 must be first (foundation for everything)
+- Phase 7 early (settings needed by Phase 2)
+- Phase 2 before 3 (tasks need manager)
+- Phase 4 after 3 (UI needs task behavior functions)
+- Phase 6 after 4 (worker needs settings functions)
+- Phase 5 last (documentation only, independent)
+
+---
+
+## Testing Strategy
+
+### Fast Tests (No Model Loading)
+- Import validation
+- Registry structure checks
+- Connection pool extraction
+- Mock-based unload logic
+
+### Slow Tests (With Model Loading)
+- Model loading and caching
+- Full task execution
+- Pipeline integration (add_entry → extract_nodes → extract_edges)
+
+### Manual Verification
+```bash
+# Start worker manually
+huey_consumer backend.services.tasks.huey -k thread -w 1 -v
+
+# Check worker running
+ps aux | grep huey_consumer
+
+# Monitor Redis state (Layer 1)
+python -c "
+from backend.database.redis_ops import get_episodes_by_status
+print('Pending nodes:', len(get_episodes_by_status('pending_nodes')))
+print('Pending edges:', len(get_episodes_by_status('pending_edges')))
+"
+
+# Check model status
+python -c "
+from backend.inference.manager import get_model_status
+print(get_model_status())
+"
+
+# Test settings persistence
+python -c "
+from backend.database.redis_ops import set_inference_enabled, get_inference_enabled
+set_inference_enabled(False)
+print('Inference enabled:', get_inference_enabled())
+"
+```
+
+### UI Testing Scenarios
+
+**Scenario 1: Inference disabled**
+- Toggle inference OFF in settings
+- Add journal entry
+- Verify: Episode in `status:pending_nodes` Redis set
+- Verify: No task processing (check worker logs)
+- Toggle inference ON
+- Verify: Episode processes (manual re-trigger may be needed)
+
+**Scenario 2: Responsive processing**
+- Toggle inference ON
+- Add journal entry
+- Verify: Task starts immediately (check worker logs)
+- Verify: Model loads (cold start, 1-2 seconds)
+- Add second journal entry quickly
+- Verify: Model stays loaded (warm session, instant)
+
+**Scenario 3: Auto-unload (event-driven)**
+- Add journal entry (trigger model load)
+- Wait for task to complete
+- Verify: Model unloads immediately after task (no delay)
+
+**Scenario 4: Batch processing keeps models warm**
+- Add 5 journal entries quickly
+- Check Redis: 5 episodes in pending_nodes
+- Watch episodes process sequentially
+- Verify: Model stays loaded through all 5 (warm sessions)
+- After last episode completes
+- Verify: Model unloads immediately (event-driven)
+
+**Scenario 5: Settings persistence**
+- Toggle inference OFF
+- Exit app
+- Restart app
+- Open settings → verify inference toggle is OFF
+- Toggle ON → verify episodes start processing
+
+---
+
+## Critical Requirements
+
+**Thread Safety:**
+- Huey MUST use `-k thread -w 1` (single worker thread)
+- llama-cpp-python is NOT thread-safe
+- No locking needed in manager (sequential execution guaranteed)
+
+**Connection Reuse:**
+- Queue MUST use `_get_redis_connection()` to extract FalkorDB's pool
+- Do NOT create new Redis connection (causes file locking conflicts)
+
+**Warm Sessions:**
+- Thread worker type keeps process alive (global state persists)
+- Process worker type spawns new process per task (cold start every time)
+
+**Import Discipline:**
+- App code: Import from `backend.inference.manager` (stateful)
+- Optimizer code: Import from `backend.inference` (stateless)
+- Never import manager from optimizer scripts
+
+**Queue Coordination:**
+- Redis = State tracker (what needs processing, for UI/discovery/recovery)
+- Huey = Work executor (task isolation, error handling, non-blocking)
+- Tasks are idempotent (check Redis state, safe to enqueue multiple times)
+- Always set Redis state (enables manual re-enrichment later)
+- Only enqueue to Huey if inference enabled (responsive, no lag)
+
+---
+
+## Success Criteria
+
+- [ ] Models load once and stay warm between tasks
+- [ ] TUI remains responsive during inference
+- [ ] Worker starts/stops automatically with app
+- [ ] Episode status tracking works end-to-end
+- [ ] Single inference toggle functional with persistence across restarts
+- [ ] Inference can be disabled/enabled via UI
+- [ ] Models unload immediately when work queue empties (event-driven)
+- [ ] Batch processing keeps models warm (no unload mid-batch)
+- [ ] Optimizer pattern documented (no implementations created yet)
+- [ ] No database file locking conflicts
+- [ ] No periodic cleanup task (simplified architecture)
