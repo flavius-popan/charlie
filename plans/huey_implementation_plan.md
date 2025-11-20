@@ -13,6 +13,50 @@
 - Import `backend.dspy_cache` before any `import dspy` in entrypoints (Huey worker, CLI, tests). This keeps cache writes inside `backend/prompts` without runtime hacks or env-file coupling. A single `rm -rf backend/prompts` wipes DSPy cache, GEPA artifacts, and prompt JSONs.
 - Delete any `pipeline._dspy_setup` imports when copying v1 files; the new helper replaces that hack.
 
+**Status**: ✅ COMPLETE (prerequisite already existed)
+
+---
+
+## Implementation Status
+
+### Batch 1: COMPLETE ✅
+
+**Completed Phases**: Phase 1 (Model Factory), Phase 7 (Settings), Phase 2 (Model Manager)
+
+**Files Created:**
+- `backend/inference/__init__.py`
+- `backend/inference/dspy_lm.py`
+- `backend/inference/loader.py`
+- `backend/inference/manager.py`
+- `tests/test_backend/test_inference.py`
+- `tests/test_backend/test_inference_manager.py`
+
+**Files Modified:**
+- `backend/settings.py` - Added model and Huey configuration
+- `tests/test_backend/conftest.py` - Updated to use `backend.inference`, added `reset_model_manager` fixture
+
+**Enhancements Beyond Plan:**
+1. **Parameter Naming**: Renamed `model_path` parameter to `repo_id` throughout for clarity
+2. **Settings Centralization**: All model settings properly centralized in `backend/settings.py`:
+   - `MODEL_REPO_ID` - HuggingFace repository
+   - `MODEL_QUANTIZATION` - Quantization level (separately adjustable)
+   - `LLAMA_CPP_N_CTX`, `LLAMA_CPP_GPU_LAYERS` - Hardware settings (from env vars)
+   - `LLAMA_CPP_VERBOSE` - Verbose logging flag
+   - `MODEL_CONFIG` - Generation parameters
+   - `HUEY_WORKER_TYPE`, `HUEY_WORKERS` - Task queue config
+3. **Runtime Validation**: Added `ValueError` for invalid `model_type` in `get_model()`
+4. **Comprehensive Test Coverage**:
+   - 9 unit tests for manager (mocked, fast)
+   - 7 real inference tests for manager (with actual model loading/unloading)
+   - 4 unit tests for loader/dspy_lm (mocked)
+   - 4 real inference tests for loader/dspy_lm
+   - Total: 24 tests, all passing
+
+**Migration Notes:**
+- Old `inference_runtime` module remains for backward compatibility with pipeline optimizers
+- New `backend.inference` module is the canonical implementation for Huey/app use
+- Tests updated to use `backend.inference` and `backend.settings.MODEL_REPO_ID`
+
 ---
 
 ## Phase 1: Model Factory (Stateless)

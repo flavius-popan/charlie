@@ -29,7 +29,7 @@ from backend.database import (
 )
 from backend.settings import DEFAULT_JOURNAL
 
-LOGS_DIR = Path("logs")
+LOGS_DIR = Path(__file__).parent / "logs"
 LOGS_DIR.mkdir(exist_ok=True)
 
 logging.basicConfig(

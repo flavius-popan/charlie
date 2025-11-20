@@ -33,3 +33,7 @@ async def test_with_llm_call(isolated_graph, require_llm):
     # Test automatically skips if dspy.settings.lm is None
     # Test code that makes LLM calls via DSPy
 ```
+
+## Testing Best Practices
+
+*ALWAYS* use the respective conftest.py file for a given test suite for fixtures.

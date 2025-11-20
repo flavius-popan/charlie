@@ -12,7 +12,7 @@ import dspy
 
 import backend.database as db_utils
 from backend import settings as backend_settings
-from settings import DEFAULT_MODEL_PATH
+from backend.settings import MODEL_REPO_ID
 
 
 @pytest.fixture(scope="session")
@@ -79,10 +79,10 @@ def configure_dspy_for_backend(request: pytest.FixtureRequest) -> Iterator[None]
     )
 
     if wants_inference:
-        from inference_runtime import DspyLM
+        from backend.inference import DspyLM
 
         adapter = dspy.ChatAdapter()
-        lm = DspyLM(model_path=DEFAULT_MODEL_PATH, generation_config={"temp": 0.0})
+        lm = DspyLM(repo_id=MODEL_REPO_ID, generation_config={"temp": 0.0})
         dspy.configure(lm=lm, adapter=adapter)
 
     yield
@@ -108,3 +108,13 @@ def cleanup_test_episodes(episode_uuid):
 
     yield
     remove_episode_from_queue(episode_uuid)
+
+
+@pytest.fixture
+def reset_model_manager():
+    """Reset model manager state before and after each test."""
+    from backend.inference import manager
+
+    manager.MODELS["llm"] = None
+    yield
+    manager.MODELS["llm"] = None
