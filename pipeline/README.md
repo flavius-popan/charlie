@@ -169,7 +169,7 @@ result = await extractor(content="...")
 
 **Important**: Stage 1 extracts entity names and types ONLY. Custom attributes (e.g., Person.relationship_type, Activity.purpose) are extracted in Stage 3, following graphiti-core's separation of concerns.
 
-**Author anchoring**: When the current journal entry contains first-person pronouns, Stage 1 automatically injects a deterministic SELF entity (UUID `11111111-1111-1111-1111-111111111111`, name `Self`, labels `["Entity", "Person"]`). This ensures the author is always available for edge extraction without hallucinating when entries are third-person only.
+**Author anchoring**: When the current journal entry contains first-person pronouns, Stage 1 automatically injects a deterministic author entity (UUID `11111111-1111-1111-1111-111111111111`, name `I`, labels `["Entity", "Person"]`). This ensures the author is always available for edge extraction without hallucinating when entries are third-person only.
 
 **Pattern for Future Stages**: Repeat this two-layer design. Create a pure `dspy.Module` for each LLM operation, inject into orchestrator.
 

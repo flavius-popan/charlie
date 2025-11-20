@@ -2,7 +2,7 @@
 
 Uses LLM-as-judge (gpt-5-nano) to provide rich textual feedback for optimizing
 entity extraction prompts. Focuses on accurate entity typing and first-person
-Self entity detection.
+author entity detection.
 
 Usage:
     python -m pipeline.optimizers.extract_nodes_optimizer
@@ -159,7 +159,7 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
             entity_types=entity_types_json,
             extracted_entities=ExtractedEntities(
                 extracted_entities=[
-                    ExtractedEntity(name="Self", entity_type_id=1),
+                    ExtractedEntity(name="I", entity_type_id=1),
                     ExtractedEntity(name="the Embarcadero", entity_type_id=2),
                     ExtractedEntity(name="solo sunrise ride", entity_type_id=4),
                 ]
@@ -174,7 +174,7 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
             entity_types=entity_types_json,
             extracted_entities=ExtractedEntities(
                 extracted_entities=[
-                    ExtractedEntity(name="Self", entity_type_id=1),
+                    ExtractedEntity(name="I", entity_type_id=1),
                     ExtractedEntity(name="Priya", entity_type_id=1),
                     ExtractedEntity(name="Dolores Park", entity_type_id=2),
                     ExtractedEntity(name="park hangout", entity_type_id=4),
@@ -190,7 +190,7 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
             entity_types=entity_types_json,
             extracted_entities=ExtractedEntities(
                 extracted_entities=[
-                    ExtractedEntity(name="Self", entity_type_id=1),
+                    ExtractedEntity(name="I", entity_type_id=1),
                     ExtractedEntity(name="home", entity_type_id=2),
                     ExtractedEntity(
                         name="chamomile journaling ritual", entity_type_id=4
@@ -392,7 +392,7 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
             entity_types=entity_types_json,
             extracted_entities=ExtractedEntities(
                 extracted_entities=[
-                    ExtractedEntity(name="Self", entity_type_id=1),
+                    ExtractedEntity(name="I", entity_type_id=1),
                     ExtractedEntity(name="midnight mantra walk", entity_type_id=4),
                     ExtractedEntity(name="the block", entity_type_id=2),
                 ]
@@ -563,7 +563,7 @@ Provide feedback on:
 1. Entity type accuracy: Are entities classified with correct type IDs?
 2. Completeness: Are important entities missing?
 3. Precision: Are there spurious entities that shouldn't be extracted?
-4. Self entity: Is the author's Self entity properly detected in first-person narratives?
+4. Author identity: Is the author's identity properly detected in first-person narratives?
 
 Be specific and actionable."""
 

@@ -186,7 +186,7 @@ async def ensure_graph_ready(*, delete_existing: bool = False) -> None:
 
 
 async def ensure_self_entity(group_id: str, name: str = SELF_ENTITY_NAME) -> None:
-    """Seed the deterministic SELF entity for journaling if it's missing."""
+    """Seed the deterministic author entity "I" for journaling if it's missing."""
     normalized_group = group_id or DEFAULT_SELF_GROUP
     if normalized_group in _seeded_self_groups:
         return
@@ -285,7 +285,7 @@ def _merge_self_entity_sync(group_id: str, name: str) -> None:
     try:
         graph.query(query)
     except Exception as exc:  # noqa: BLE001
-        logger.warning("Failed to seed SELF entity: %s", exc)
+        logger.warning('Failed to seed author entity "I": %s', exc)
 
 
 def _pid_exists(pid: int) -> bool:
@@ -652,7 +652,7 @@ def _fetch_self_entity_sync() -> EntityNode | None:
 
 
 async def fetch_self_entity(group_id: str | None = None) -> EntityNode | None:
-    """Return the canonical SELF entity for cloning in extraction stages."""
+    """Return the canonical author entity "I" for cloning in extraction stages."""
     await ensure_graph_ready()
     await ensure_self_entity(group_id or DEFAULT_SELF_GROUP)
     return await asyncio.to_thread(_fetch_self_entity_sync)

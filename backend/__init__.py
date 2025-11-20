@@ -170,7 +170,7 @@ async def add_journal_entry(
         entity_edges=[],
     )
 
-    # Persist to database (also ensures SELF entity exists)
+    # Persist to database (also ensures author entity "I" exists)
     await persist_episode(episode, journal=journal)
 
     # Mark episode as pending node extraction

@@ -38,7 +38,7 @@ async def test_extract_nodes_basic(isolated_graph, require_llm):
     assert result.extracted_count > 0
 
     driver = get_driver(DEFAULT_JOURNAL)
-    query = "MATCH (e:Entity) WHERE e.name <> 'Self' RETURN count(e)"
+    query = "MATCH (e:Entity) WHERE e.name <> 'I' RETURN count(e)"
     count_result = await driver.execute_query(query)
     count = count_result[0][0]["count(e)"]
     assert count >= 2

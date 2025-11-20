@@ -238,7 +238,7 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
             previous_episodes=[
                 "Crissy Field night rides used to be my go-to regulation trick."
             ],
-            entity_name="Self",
+            entity_name="I",
             entity_type="Person",
             existing_summary="",
             attributes={

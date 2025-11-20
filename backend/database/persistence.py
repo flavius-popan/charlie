@@ -111,12 +111,12 @@ async def ensure_graph_ready(journal: str = DEFAULT_JOURNAL, *, delete_existing:
 
 
 def _merge_self_entity_sync(graph, journal: str, name: str) -> None:
-    """Synchronous SELF entity merge for use in asyncio.to_thread.
+    """Synchronous author entity "I" merge for use in asyncio.to_thread.
 
     Args:
         graph: FalkorDB graph instance
         journal: Journal name
-        name: Name for the SELF entity
+        name: Name for the author entity "I"
     """
     now_literal = to_cypher_literal(utc_now().isoformat())
     summary_literal = to_cypher_literal(
@@ -145,12 +145,12 @@ def _merge_self_entity_sync(graph, journal: str, name: str) -> None:
     try:
         graph.query(query)
     except Exception as exc:
-        logger.exception("Failed to seed SELF entity")
-        raise RuntimeError(f"Failed to seed SELF entity for journal '{journal}'") from exc
+        logger.exception('Failed to seed author entity "I"')
+        raise RuntimeError(f"Failed to seed author entity (\"I\") for journal '{journal}'") from exc
 
 
 async def ensure_self_entity(journal: str, name: str = SELF_ENTITY_NAME) -> None:
-    """Seed the deterministic SELF entity for this journal if missing.
+    """Seed the deterministic author entity "I" for this journal if missing.
 
     Uses double-checked locking pattern for thread safety:
     1. Fast-path check without lock (racy read - optimization)
@@ -171,7 +171,7 @@ async def ensure_self_entity(journal: str, name: str = SELF_ENTITY_NAME) -> None
 
     Args:
         journal: Journal name
-        name: Name for the SELF entity (defaults to SELF_ENTITY_NAME)
+        name: Name for the author entity "I" (defaults to SELF_ENTITY_NAME)
     """
     if journal in _seeded_self_groups:  # Racy optimization - see docstring
         return
@@ -196,7 +196,7 @@ async def ensure_self_entity(journal: str, name: str = SELF_ENTITY_NAME) -> None
 
 
 async def ensure_database_ready(journal: str) -> None:
-    """Ensure database is initialized and SELF entity exists for this journal.
+    """Ensure database is initialized and author entity "I" exists for this journal.
 
     Args:
         journal: Journal name

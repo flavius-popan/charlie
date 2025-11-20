@@ -468,9 +468,9 @@ async def test_concurrent_lock_initialization(isolated_graph):
 
 @pytest.mark.asyncio
 async def test_concurrent_self_entity_seeding(isolated_graph):
-    """Test that concurrent SELF entity seeding doesn't create race conditions.
+    """Test that concurrent author entity "I" seeding doesn't create race conditions.
 
-    Similar to lock initialization, SELF entity seeding has a lazy lock initialization
+    Similar to lock initialization, author entity "I" seeding has a lazy lock initialization
     that could race.
     """
     import asyncio
@@ -481,7 +481,7 @@ async def test_concurrent_self_entity_seeding(isolated_graph):
     persistence._self_seed_lock = None
 
     async def seed_self(journal: str, task_id: int):
-        """Try to seed SELF entity from multiple tasks."""
+        """Try to seed author entity "I" from multiple tasks."""
         await db_utils.ensure_self_entity(journal)
         return task_id
 
@@ -495,7 +495,7 @@ async def test_concurrent_self_entity_seeding(isolated_graph):
     # Verify SELF was seeded (should be in the set)
     assert "self-race-journal" in persistence._seeded_self_groups
 
-    # Verify only one SELF entity exists in the graph
+    # Verify only one author entity "I" exists in the graph
     graph = db_utils.get_falkordb_graph("self-race-journal")
     from backend.database import SELF_ENTITY_UUID, to_cypher_literal
     query = f"""
@@ -505,7 +505,7 @@ async def test_concurrent_self_entity_seeding(isolated_graph):
     result = graph.query(query)
     rows = _query_rows(graph, query)
     count = int(rows[0][0]) if rows else 0
-    assert count == 1, f"Expected exactly 1 SELF entity, found {count}"
+    assert count == 1, f'Expected exactly 1 author entity "I", found {count}'
 
 
 @pytest.mark.asyncio

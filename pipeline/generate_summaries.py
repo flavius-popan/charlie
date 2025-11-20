@@ -231,7 +231,7 @@ class GenerateSummaries:
         # MLX inference currently serializes LLM generations, so this loop stays sequential.
         for node in nodes:
             if node.uuid == str(SELF_ENTITY_UUID):
-                logger.debug("Skipping SELF entity for summary generation")
+                logger.debug('Skipping author entity "I" for summary generation')
                 continue
             entity_type_name = next((item for item in node.labels if item != 'Entity'), 'Entity')
 
