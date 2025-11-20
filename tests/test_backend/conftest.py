@@ -6,10 +6,13 @@ from typing import Iterator
 from uuid import uuid4
 
 import pytest
+
+import backend.dspy_cache  # noqa: F401  # sets DSPY cache env vars before dspy import
 import dspy
 
 import backend.database as db_utils
 from backend import settings as backend_settings
+from settings import DEFAULT_MODEL_PATH
 
 
 @pytest.fixture(scope="session")
@@ -65,14 +68,23 @@ def configure_dspy_for_backend(request: pytest.FixtureRequest) -> Iterator[None]
     """Configure DSPy once per test session with llama.cpp backend.
 
     Uses deterministic sampling so integration assertions stay stable.
-    Only runs if --model option is provided, otherwise inference tests will skip.
+    Only runs when inference tests are selected (e.g., `-m inference` or
+    `-m ""`).
     """
-    model_path = request.config.getoption("--model", default=None)
-    if model_path:
+    marker_expr = (request.config.getoption("-m") or "").strip()
+    wants_inference = (
+        marker_expr == ""  # default when caller overrides addopts with -m ""
+        or marker_expr == "inference"
+        or ("inference" in marker_expr and "not inference" not in marker_expr)
+    )
+
+    if wants_inference:
         from inference_runtime import DspyLM
+
         adapter = dspy.ChatAdapter()
-        lm = DspyLM(model_path=model_path, generation_config={"temp": 0.0})
+        lm = DspyLM(model_path=DEFAULT_MODEL_PATH, generation_config={"temp": 0.0})
         dspy.configure(lm=lm, adapter=adapter)
+
     yield
 
 

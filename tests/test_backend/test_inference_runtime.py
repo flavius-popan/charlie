@@ -5,7 +5,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
-from pipeline import _dspy_setup  # noqa: F401
+import backend.dspy_cache  # noqa: F401  # enforce DSPy cache location
 import dspy
 
 from inference_runtime import DspyLM, load_model

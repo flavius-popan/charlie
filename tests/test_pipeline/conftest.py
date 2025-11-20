@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Callable, Iterator
 
 import pytest
-from pipeline import _dspy_setup  # noqa: F401
+import backend.dspy_cache  # noqa: F401  # sets DSPY cache env vars before dspy import
 import dspy
 
 from inference_runtime import DspyLM
@@ -23,10 +23,17 @@ def configure_dspy_for_pipeline(request: pytest.FixtureRequest) -> Iterator[None
 
     Uses deterministic sampling so integration assertions stay stable.
     """
-    model_path = request.config.getoption("--model")
-    adapter = dspy.ChatAdapter()
-    lm = DspyLM(model_path=model_path, generation_config={"temp": 0.0})
-    dspy.configure(lm=lm, adapter=adapter)
+    marker_expr = (request.config.getoption("-m") or "").strip()
+    wants_inference = (
+        marker_expr == ""
+        or marker_expr == "inference"
+        or ("inference" in marker_expr and "not inference" not in marker_expr)
+    )
+
+    if wants_inference:
+        adapter = dspy.ChatAdapter()
+        lm = DspyLM(model_path=settings.DEFAULT_MODEL_PATH, generation_config={"temp": 0.0})
+        dspy.configure(lm=lm, adapter=adapter)
     yield
 
 

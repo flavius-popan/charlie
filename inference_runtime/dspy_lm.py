@@ -6,7 +6,7 @@ import logging
 from types import SimpleNamespace
 from typing import Any
 
-from pipeline import _dspy_setup  # noqa: F401
+from backend import dspy_cache  # noqa: F401  # ensures DSPy cache dir is set
 import dspy
 
 from settings import MODEL_CONFIG

@@ -4,6 +4,15 @@
 
 **Architecture**: See `plans/huey_orchestrator.md` for detailed rationale on thread safety, warm sessions, and resource management.
 
+## Prerequisite: Lock DSPy Cache Location (simple, importable helper)
+
+- Add `backend/dspy_cache.py`:
+  - sets `DSPY_CACHEDIR`/`DSPY_CACHE_DIR`/`DSPY_CACHE` to `backend/prompts/.dspy_cache`
+  - creates the directory if missing
+  - exposes `CACHE_DIR` for debugging
+- Import `backend.dspy_cache` before any `import dspy` in entrypoints (Huey worker, CLI, tests). This keeps cache writes inside `backend/prompts` without runtime hacks or env-file coupling. A single `rm -rf backend/prompts` wipes DSPy cache, GEPA artifacts, and prompt JSONs.
+- Delete any `pipeline._dspy_setup` imports when copying v1 files; the new helper replaces that hack.
+
 ---
 
 ## Phase 1: Model Factory (Stateless)
@@ -11,8 +20,6 @@
 **Purpose**: Shared model loading infrastructure for app and optimizer scripts.
 
 ### Files to Create
-
-**Warning:** Before copying `inference_runtime/`, review and (if necessary) remove the `pipeline._dspy_setup` import in `inference_runtime/dspy_lm.py`; the v1 pipeline dependency may be an anti-pattern for v2 and should not be pulled in without validation.
 
 #### Copy `inference_runtime/` → `backend/inference/`
 
@@ -24,6 +31,7 @@ backend/inference/
 ```
 
 **Changes required after copy:**
+- Remove any `from pipeline import _dspy_setup` imports (cache path is handled by `backend.dspy_cache`).
 - `dspy_lm.py`: Change `from settings import MODEL_CONFIG` → `from backend.settings import MODEL_CONFIG`
 - `loader.py`: Change `from settings import LLAMA_*` → `from backend.settings import LLAMA_*`
 

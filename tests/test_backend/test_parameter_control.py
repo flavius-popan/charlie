@@ -1,5 +1,5 @@
 import pytest
-from pipeline import _dspy_setup  # noqa: F401
+import backend.dspy_cache  # noqa: F401  # enforce DSPy cache location
 import dspy
 
 from inference_runtime import DspyLM
@@ -30,5 +30,4 @@ def test_custom_generation_config():
     lm = DspyLM(generation_config=custom_config)
     assert lm.generation_config == custom_config
     assert lm.generation_config['temp'] == 0.5
-
 
