@@ -108,3 +108,265 @@ async def test_extract_nodes_entity_types(isolated_graph, require_llm):
         f"(Person/Place/etc) would be used. Found {len(all_entities)} entities, "
         f"{len(typed_entities)} with specific types."
     )
+
+
+@pytest.mark.asyncio
+async def test_extract_nodes_no_llm_configured(isolated_graph):
+    """Test that extract_nodes raises RuntimeError when LLM not configured."""
+    import dspy
+    from backend import add_journal_entry, extract_nodes
+    from backend.settings import DEFAULT_JOURNAL
+
+    content = "Today I met Sarah at Central Park."
+    episode_uuid = await add_journal_entry(content)
+
+    original_lm = dspy.settings.lm
+    try:
+        dspy.settings.configure(lm=None)
+
+        with pytest.raises(RuntimeError, match="No LLM configured"):
+            await extract_nodes(episode_uuid, DEFAULT_JOURNAL)
+    finally:
+        dspy.settings.configure(lm=original_lm)
+
+
+@pytest.mark.asyncio
+async def test_extract_nodes_invalid_episode(isolated_graph, require_llm):
+    """Test that extract_nodes handles invalid episode_uuid gracefully."""
+    from backend import extract_nodes
+    from backend.settings import DEFAULT_JOURNAL
+
+    with pytest.raises(Exception):
+        await extract_nodes("nonexistent-uuid", DEFAULT_JOURNAL)
+
+
+@pytest.mark.inference
+@pytest.mark.asyncio
+async def test_extract_nodes_minimal_content(isolated_graph, require_llm):
+    """Test extraction with minimal journal content."""
+    from backend import add_journal_entry, extract_nodes
+    from backend.settings import DEFAULT_JOURNAL
+
+    episode_uuid = await add_journal_entry(".")
+
+    result = await extract_nodes(episode_uuid, DEFAULT_JOURNAL)
+
+    assert result.episode_uuid == episode_uuid
+    assert result.extracted_count >= 0
+    assert result.resolved_count >= 0
+
+
+@pytest.mark.inference
+@pytest.mark.asyncio
+async def test_extract_nodes_no_entities(isolated_graph, require_llm):
+    """Test extraction with content containing no extractable entities."""
+    from backend import add_journal_entry, extract_nodes
+    from backend.settings import DEFAULT_JOURNAL
+
+    content = "It was a nice day today. The weather was pleasant."
+    episode_uuid = await add_journal_entry(content)
+
+    result = await extract_nodes(episode_uuid, DEFAULT_JOURNAL)
+
+    assert result.episode_uuid == episode_uuid
+    assert result.extracted_count >= 0
+    assert result.resolved_count >= 0
+
+
+@pytest.mark.inference
+@pytest.mark.asyncio
+async def test_extract_nodes_dedupe_disabled(isolated_graph, require_llm):
+    """Test that dedupe_enabled=False skips deduplication."""
+    from backend import add_journal_entry, extract_nodes
+    from backend.settings import DEFAULT_JOURNAL
+    from backend.database import get_driver
+
+    uuid1 = await add_journal_entry("I met Sarah today.")
+    result1 = await extract_nodes(uuid1, DEFAULT_JOURNAL, dedupe_enabled=False)
+
+    uuid2 = await add_journal_entry("Sarah called me.")
+    result2 = await extract_nodes(uuid2, DEFAULT_JOURNAL, dedupe_enabled=False)
+
+    assert result2.exact_matches == 0
+    assert result2.fuzzy_matches == 0
+
+    driver = get_driver(DEFAULT_JOURNAL)
+    query = "MATCH (e:Entity) WHERE e.name CONTAINS 'Sarah' RETURN count(e)"
+    count_result = await driver.execute_query(query)
+    count = count_result[0][0]["count(e)"]
+
+    assert count >= 2, "With dedupe disabled, should create multiple Sarah entities"
+
+
+@pytest.mark.inference
+@pytest.mark.asyncio
+async def test_extract_nodes_custom_entity_types(isolated_graph, require_llm):
+    """Test extraction with custom entity types."""
+    from backend import add_journal_entry, extract_nodes
+    from backend.settings import DEFAULT_JOURNAL
+    from pydantic import BaseModel
+
+    class CustomType(BaseModel):
+        pass
+
+    custom_types = {"CustomType": CustomType}
+
+    content = "I visited the park today."
+    episode_uuid = await add_journal_entry(content)
+
+    result = await extract_nodes(episode_uuid, DEFAULT_JOURNAL, entity_types=custom_types)
+
+    assert result.episode_uuid == episode_uuid
+    assert result.extracted_count >= 0
+
+
+@pytest.mark.inference
+@pytest.mark.asyncio
+async def test_extract_nodes_mentions_edges_created(isolated_graph, require_llm):
+    """Test that MENTIONS edges are created from episode to entities."""
+    from backend import add_journal_entry, extract_nodes
+    from backend.settings import DEFAULT_JOURNAL
+    from backend.database import get_driver
+
+    content = "Today I met Sarah at Central Park."
+    episode_uuid = await add_journal_entry(content)
+
+    result = await extract_nodes(episode_uuid, DEFAULT_JOURNAL)
+
+    driver = get_driver(DEFAULT_JOURNAL)
+
+    edge_query = f"""
+    MATCH (ep:Episodic {{uuid: '{episode_uuid}'}})-[r:MENTIONS]->(e:Entity)
+    RETURN count(r), collect(e.name)
+    """
+    edge_result = await driver.execute_query(edge_query)
+    edge_count = edge_result[0][0]["count(r)"]
+    entity_names = edge_result[0][0]["collect(e.name)"]
+
+    assert edge_count > 0, "Should create MENTIONS edges from episode to entities"
+    assert edge_count == result.resolved_count, (
+        f"Should create one MENTIONS edge per resolved entity. "
+        f"Found {edge_count} edges for {result.resolved_count} entities. "
+        f"Entities: {entity_names}"
+    )
+
+
+@pytest.mark.inference
+@pytest.mark.asyncio
+async def test_extract_nodes_result_metadata_accuracy(isolated_graph, require_llm):
+    """Test that ExtractNodesResult metadata is accurate."""
+    from backend import add_journal_entry, extract_nodes
+    from backend.settings import DEFAULT_JOURNAL
+    from backend.database import get_driver
+
+    uuid1 = await add_journal_entry("I met Sarah at Central Park.")
+    result1 = await extract_nodes(uuid1, DEFAULT_JOURNAL)
+
+    assert result1.episode_uuid == uuid1
+    assert result1.extracted_count > 0
+    assert result1.resolved_count > 0
+    assert result1.new_entities == result1.resolved_count
+    assert result1.exact_matches == 0
+    assert result1.fuzzy_matches == 0
+    assert len(result1.entity_uuids) == result1.resolved_count
+    assert len(result1.uuid_map) == result1.extracted_count
+
+    uuid2 = await add_journal_entry("Sarah and I visited Central Park again.")
+    result2 = await extract_nodes(uuid2, DEFAULT_JOURNAL)
+
+    assert result2.episode_uuid == uuid2
+    assert result2.extracted_count > 0
+
+    total_matches = result2.exact_matches + result2.fuzzy_matches
+    assert total_matches > 0, "Should detect duplicates on second extraction"
+
+    assert result2.new_entities + total_matches == result2.resolved_count, (
+        f"new_entities ({result2.new_entities}) + matches ({total_matches}) "
+        f"should equal resolved_count ({result2.resolved_count})"
+    )
+
+    assert len(result2.entity_uuids) == result2.resolved_count
+    assert len(result2.uuid_map) == result2.extracted_count
+
+    driver = get_driver(DEFAULT_JOURNAL)
+    for uuid in result2.entity_uuids:
+        query = f"MATCH (e:Entity {{uuid: '{uuid}'}}) RETURN e"
+        entity_result = await driver.execute_query(query)
+        assert len(entity_result[0]) > 0, f"Entity {uuid} should exist in database"
+
+
+@pytest.mark.inference
+@pytest.mark.asyncio
+async def test_extract_nodes_case_insensitive_dedup(isolated_graph, require_llm):
+    """Test deduplication handles case variations."""
+    from backend import add_journal_entry, extract_nodes
+    from backend.settings import DEFAULT_JOURNAL
+    from backend.database import get_driver
+
+    uuid1 = await add_journal_entry("I met Sarah today.")
+    result1 = await extract_nodes(uuid1, DEFAULT_JOURNAL)
+
+    uuid2 = await add_journal_entry("SARAH called me later.")
+    result2 = await extract_nodes(uuid2, DEFAULT_JOURNAL)
+
+    assert result2.exact_matches > 0 or result2.fuzzy_matches > 0, (
+        "Should match 'SARAH' with 'Sarah' despite case difference"
+    )
+
+    driver = get_driver(DEFAULT_JOURNAL)
+    query = "MATCH (e:Entity) WHERE toLower(e.name) CONTAINS 'sarah' RETURN count(e)"
+    count_result = await driver.execute_query(query)
+    count = count_result[0][0]["count(e)"]
+
+    assert count == 1, f"Should deduplicate Sarah/SARAH into one entity (found {count})"
+
+
+@pytest.mark.inference
+@pytest.mark.asyncio
+async def test_extract_nodes_whitespace_variations(isolated_graph, require_llm):
+    """Test deduplication handles whitespace variations."""
+    from backend import add_journal_entry, extract_nodes
+    from backend.settings import DEFAULT_JOURNAL
+    from backend.database import get_driver
+
+    uuid1 = await add_journal_entry("I visited Central Park.")
+    result1 = await extract_nodes(uuid1, DEFAULT_JOURNAL)
+
+    uuid2 = await add_journal_entry("Central  Park was beautiful.")
+    result2 = await extract_nodes(uuid2, DEFAULT_JOURNAL)
+
+    driver = get_driver(DEFAULT_JOURNAL)
+    query = "MATCH (e:Entity) WHERE e.name CONTAINS 'Central' AND e.name CONTAINS 'Park' RETURN count(e)"
+    count_result = await driver.execute_query(query)
+    count = count_result[0][0]["count(e)"]
+
+    assert count <= 2, "Should handle whitespace variations in entity names"
+
+
+@pytest.mark.inference
+@pytest.mark.asyncio
+async def test_extract_nodes_uuid_map_correctness(isolated_graph, require_llm):
+    """Test that uuid_map correctly maps provisional to canonical UUIDs."""
+    from backend import add_journal_entry, extract_nodes
+    from backend.settings import DEFAULT_JOURNAL
+
+    uuid1 = await add_journal_entry("I met Sarah and John.")
+    result1 = await extract_nodes(uuid1, DEFAULT_JOURNAL)
+
+    for provisional_uuid, canonical_uuid in result1.uuid_map.items():
+        assert isinstance(provisional_uuid, str)
+        assert isinstance(canonical_uuid, str)
+        assert canonical_uuid in result1.entity_uuids, (
+            f"Canonical UUID {canonical_uuid} should be in entity_uuids"
+        )
+
+    uuid2 = await add_journal_entry("Sarah visited me today.")
+    result2 = await extract_nodes(uuid2, DEFAULT_JOURNAL)
+
+    sarah_mappings = [
+        (prov, canon) for prov, canon in result2.uuid_map.items()
+        if any(uuid in result1.entity_uuids for uuid in [canon])
+    ]
+
+    if result2.exact_matches > 0 or result2.fuzzy_matches > 0:
+        assert len(sarah_mappings) > 0, "uuid_map should map to existing entities when dedupe occurs"
