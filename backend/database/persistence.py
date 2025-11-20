@@ -8,7 +8,9 @@ import logging
 from threading import Lock
 from typing import Any
 
-from graphiti_core.nodes import EpisodicNode
+from graphiti_core.nodes import EpisodicNode, EntityNode
+from graphiti_core.edges import EntityEdge, EpisodicEdge
+from graphiti_core.embedder.client import EmbedderClient, EMBEDDING_DIM
 from graphiti_core.utils.datetime_utils import utc_now
 
 from backend.database.driver import FalkorLiteDriver
@@ -23,6 +25,14 @@ from backend.database.utils import (
 from backend.settings import DEFAULT_JOURNAL
 
 logger = logging.getLogger(__name__)
+
+
+class NullEmbedder(EmbedderClient):
+    """Fallback embedder that returns empty vectors when embeddings are unavailable."""
+
+    async def create(self, input_data):  # type: ignore[override]
+        return [[0.0] * EMBEDDING_DIM for _ in input_data]
+
 
 # Per-journal initialization tracking
 _graph_initialized: dict[str, bool] = {}
@@ -377,6 +387,100 @@ async def delete_episode(episode_uuid: str, journal: str = DEFAULT_JOURNAL) -> N
     logger.info("Deleted episode %s from journal %s", episode_uuid, journal)
 
 
+async def persist_entities_and_edges(
+    nodes: list[EntityNode],
+    edges: list[EntityEdge],
+    episodic_edges: list[EpisodicEdge],
+    journal: str,
+) -> None:
+    """Persist entities and relationships using graphiti-core bulk writer.
+
+    Ensures embeddings are set, creates NullEmbedder, calls add_nodes_and_edges_bulk.
+    Thread-safe via per-journal locking.
+
+    Args:
+        nodes: List of EntityNode objects to persist
+        edges: List of EntityEdge objects to persist
+        episodic_edges: List of EpisodicEdge objects to persist
+        journal: Journal name (graph to persist to)
+
+    Raises:
+        RuntimeError: If persistence fails
+    """
+    from backend.database.driver import get_driver
+    from graphiti_core.utils.bulk_utils import add_nodes_and_edges_bulk
+
+    await ensure_database_ready(journal)
+
+    driver = get_driver(journal)
+    embedder = NullEmbedder()
+
+    try:
+        # Ensure all nodes have embeddings set (even if empty)
+        for node in nodes:
+            if not node.name_embedding:
+                node.name_embedding = []
+
+        # Ensure all entity edges have embeddings set (even if empty)
+        for edge in edges:
+            if not edge.fact_embedding:
+                edge.fact_embedding = []
+
+        # Use graphiti-core bulk writer
+        await add_nodes_and_edges_bulk(
+            driver=driver,
+            episodic_nodes=[],
+            episodic_edges=episodic_edges,
+            entity_nodes=nodes,
+            entity_edges=edges,
+            embedder=embedder,
+        )
+
+        logger.info(
+            "Persisted %d entities, %d entity edges, %d episodic edges to journal %s",
+            len(nodes),
+            len(edges),
+            len(episodic_edges),
+            journal,
+        )
+
+    except Exception as exc:
+        logger.exception("Failed to persist entities and edges")
+        raise RuntimeError(f"Entity persistence failed: {exc}") from exc
+
+
+async def update_episode_attributes(
+    episode_uuid: str,
+    attributes: dict,
+    journal: str,
+) -> None:
+    """Update episode.attributes field for temporary state storage (uuid_map).
+
+    Uses EpisodicNode.get_by_uuid() + .save() pattern from update_episode().
+
+    Args:
+        episode_uuid: Episode UUID string
+        attributes: Dictionary to store in episode.attributes
+        journal: Journal name
+
+    Raises:
+        ValueError: If episode not found
+    """
+    from graphiti_core.errors import NodeNotFoundError
+    from backend.database.driver import get_driver
+
+    driver = get_driver(journal)
+
+    try:
+        episode = await EpisodicNode.get_by_uuid(driver, episode_uuid)
+    except NodeNotFoundError as exc:
+        raise ValueError(f"Episode {episode_uuid} not found") from exc
+
+    episode.attributes = attributes
+    await episode.save(driver)
+    logger.info("Updated attributes for episode %s in journal %s", episode_uuid, journal)
+
+
 def reset_persistence_state() -> None:
     """Reset persistence state (for testing)."""
     global _graph_initialized, _seeded_self_groups
@@ -391,5 +495,7 @@ __all__ = [
     "persist_episode",
     "update_episode",
     "delete_episode",
+    "persist_entities_and_edges",
+    "update_episode_attributes",
     "reset_persistence_state",
 ]

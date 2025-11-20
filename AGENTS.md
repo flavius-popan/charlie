@@ -16,3 +16,20 @@ You are only permitted to run read-only git operations to understand the project
 - Use `pytest-textual-snapshot` for visual testing (generates SVG files you can read)
 
 **See `tests/test_frontend/test_charlie.py` for comprehensive testing patterns and examples.**
+
+## Testing LLM Inference
+
+**Mark all tests that make real LLM inference calls with `@pytest.mark.inference`:**
+- Default behavior: `pytest` excludes inference tests (fast test runs)
+- Run inference tests: `pytest -m inference`
+- Run all tests: `pytest -m ""`
+- Use the `require_llm` fixture to skip if no LLM configured
+
+**Pattern:**
+```python
+@pytest.mark.inference
+@pytest.mark.asyncio
+async def test_with_llm_call(isolated_graph, require_llm):
+    # Test automatically skips if dspy.settings.lm is None
+    # Test code that makes LLM calls via DSPy
+```

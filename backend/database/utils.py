@@ -121,6 +121,19 @@ def _decode_value(value: Any) -> Any:
     return value
 
 
+def _decode_json(value: Any, default: Any) -> Any:
+    """Decode JSON stored in FalkorDB properties."""
+    decoded = _decode_value(value)
+    if decoded in ("", None):
+        return default
+    if isinstance(decoded, (list, dict)):
+        return decoded
+    try:
+        return json.loads(decoded)
+    except Exception:
+        return default
+
+
 class FalkorGraph(Protocol):
     """Type protocol for FalkorDB graph instances.
 
@@ -215,6 +228,104 @@ def _merge_episode_sync(graph: FalkorGraph, episode: dict[str, Any]) -> None:
         raise RuntimeError(f"Failed to persist episode {episode['uuid']}") from exc
 
 
+def _merge_entity_nodes_sync(graph: FalkorGraph, nodes: list[dict[str, Any]]) -> None:
+    """Synchronous entity node merge for use in asyncio.to_thread."""
+    from graphiti_core.utils.datetime_utils import convert_datetimes_to_strings
+
+    for node in nodes:
+        node_dict = convert_datetimes_to_strings(dict(node))
+        labels = node_dict.get("labels") or ["Entity"]
+        props = {
+            "uuid": node_dict["uuid"],
+            "name": node_dict.get("name", ""),
+            "group_id": node_dict.get("group_id", ""),
+            "created_at": node_dict.get("created_at"),
+            "labels": json.dumps(labels),
+            "summary": node_dict.get("summary", ""),
+            "attributes": json.dumps(node_dict.get("attributes", {})),
+        }
+        set_clause = ", ".join(
+            [f"n.{key} = {to_cypher_literal(value)}" for key, value in props.items()]
+        )
+        embedding_literal = json.dumps(node_dict.get("name_embedding") or [])
+        query = f"""
+        MERGE (n:Entity {{uuid: {to_cypher_literal(node_dict["uuid"])}}})
+        SET {set_clause}
+        SET n.name_embedding = vecf32({embedding_literal})
+        RETURN n.uuid AS uuid
+        """
+        try:
+            graph.query(query)
+        except Exception as exc:
+            logger.exception("Failed to merge entity node")
+            raise RuntimeError(f"Failed to persist entity node {node_dict['uuid']}") from exc
+
+
+def _merge_entity_edges_sync(graph: FalkorGraph, edges: list[dict[str, Any]]) -> None:
+    """Synchronous entity edge merge for use in asyncio.to_thread."""
+    from graphiti_core.utils.datetime_utils import convert_datetimes_to_strings
+
+    for edge in edges:
+        edge_dict = convert_datetimes_to_strings(dict(edge))
+        props = {
+            "uuid": edge_dict["uuid"],
+            "name": edge_dict.get("name", ""),
+            "fact": edge_dict.get("fact", ""),
+            "group_id": edge_dict.get("group_id", ""),
+            "created_at": edge_dict.get("created_at"),
+            "episodes": edge_dict.get("episodes", []),
+            "expired_at": edge_dict.get("expired_at"),
+            "valid_at": edge_dict.get("valid_at"),
+            "invalid_at": edge_dict.get("invalid_at"),
+            "attributes": json.dumps(edge_dict.get("attributes", {})),
+        }
+        set_clause = ", ".join(
+            [f"r.{key} = {to_cypher_literal(value)}" for key, value in props.items()]
+        )
+        embedding_literal = json.dumps(edge_dict.get("fact_embedding") or [])
+        query = f"""
+        MATCH (source:Entity {{uuid: {to_cypher_literal(edge_dict["source_node_uuid"])}}})
+        MATCH (target:Entity {{uuid: {to_cypher_literal(edge_dict["target_node_uuid"])}}})
+        MERGE (source)-[r:RELATES_TO {{uuid: {to_cypher_literal(edge_dict["uuid"])}}}]->(target)
+        SET {set_clause}
+        SET r.fact_embedding = vecf32({embedding_literal})
+        RETURN r.uuid AS uuid
+        """
+        try:
+            graph.query(query)
+        except Exception as exc:
+            logger.exception("Failed to merge entity edge")
+            raise RuntimeError(f"Failed to persist entity edge {edge_dict['uuid']}") from exc
+
+
+def _merge_episodic_edges_sync(graph: FalkorGraph, edges: list[dict[str, Any]]) -> None:
+    """Synchronous episodic edge merge for use in asyncio.to_thread."""
+    from graphiti_core.utils.datetime_utils import convert_datetimes_to_strings
+
+    for edge in edges:
+        edge_dict = convert_datetimes_to_strings(dict(edge))
+        props = {
+            "uuid": edge_dict["uuid"],
+            "group_id": edge_dict.get("group_id", ""),
+            "created_at": edge_dict.get("created_at"),
+        }
+        set_clause = ", ".join(
+            [f"r.{key} = {to_cypher_literal(value)}" for key, value in props.items()]
+        )
+        query = f"""
+        MATCH (episode:Episodic {{uuid: {to_cypher_literal(edge_dict["source_node_uuid"])}}})
+        MATCH (entity:Entity {{uuid: {to_cypher_literal(edge_dict["target_node_uuid"])}}})
+        MERGE (episode)-[r:MENTIONS {{uuid: {to_cypher_literal(edge_dict["uuid"])}}}]->(entity)
+        SET {set_clause}
+        RETURN r.uuid AS uuid
+        """
+        try:
+            graph.query(query)
+        except Exception as exc:
+            logger.exception("Failed to merge episodic edge")
+            raise RuntimeError(f"Failed to persist episodic edge {edge_dict['uuid']}") from exc
+
+
 __all__ = [
     "SELF_ENTITY_UUID",
     "SELF_ENTITY_NAME",
@@ -226,4 +337,7 @@ __all__ = [
     "to_cypher_literal",
     "_decode_value",
     "_merge_episode_sync",
+    "_merge_entity_nodes_sync",
+    "_merge_entity_edges_sync",
+    "_merge_episodic_edges_sync",
 ]

@@ -62,6 +62,214 @@ The design implements a **"Warm Session" architecture**, where models remain loa
 *   These tasks call graph operation functions (like `backend/graph/extract_nodes.py::extract_nodes()`) which internally use `backend/inference/manager.py` to retrieve models.
 *   Tasks do NOT import the Factory directly - all model access flows through the Manager.
 
+### Phase 3.5: Episode Status Management (Worker Orchestration)
+
+**Target File:** `backend/database/redis_ops.py`
+
+**Goal:** Enable workers to discover episodes that need processing without knowing UUIDs ahead of time, supporting batch operations, startup recovery, and status monitoring.
+
+**Why:**
+*   **Worker Discovery:** Workers need to find episodes in specific states (pending_nodes, pending_edges) for batch processing and retry logic.
+*   **State Tracking:** Episodes move through processing states then are removed from Redis when complete.
+*   **Shared State:** uuid_map must be passed from extract_nodes to extract_edges (separate queued operations).
+*   **Operational Visibility:** Status monitoring for dashboards, recovery after crashes.
+
+#### Redis Key Structure
+
+```
+# Per-episode metadata (Redis Hash) - ONLY for episodes needing processing
+episode:{uuid} → Hash {
+    "status": "pending_nodes" | "pending_edges",
+    "journal": "default",
+    "uuid_map": "{...json...}"  # Only set when pending_edges
+}
+
+# Status indexes (Redis Sets) - ONLY episodes in queue
+status:pending_nodes → Set {uuid1, uuid2, uuid3}
+status:pending_edges → Set {uuid4, uuid5}
+```
+
+**Design Rationale:**
+- O(1) status lookups by UUID via Hash
+- O(n) scanning by status via Sets (n = episodes with that status, bounded by queue backlog)
+- Atomic status transitions within redis_ops() context manager
+- Status indexes automatically updated when episode status changes
+- **Episodes removed from Redis entirely once enrichment completes**
+- Completed episodes live in FalkorDB, not Redis (prevents unbounded growth)
+
+#### Episode Lifecycle Workflow
+
+```
+1. User adds journal entry
+   ↓
+   add_journal_entry() creates episode in FalkorDB
+   ↓
+   set_episode_status(uuid, "pending_nodes", journal=journal)
+   ↓
+   [Episode now in Redis, discoverable via get_episodes_by_status("pending_nodes")]
+
+2. Worker processes extract_nodes
+   ↓
+   extract_nodes(uuid, journal) extracts entities
+   ↓
+   If entities found:
+       set_episode_status(uuid, "pending_edges", uuid_map=uuid_map)
+       [Episode moved to pending_edges index in Redis]
+   If no entities:
+       remove_episode_from_queue(uuid)
+       [Episode REMOVED from Redis entirely - it's done, lives in FalkorDB]
+   ↓
+
+3. Worker processes extract_edges (if entities found)
+   ↓
+   uuid_map = get_episode_uuid_map(uuid)
+   ↓
+   extract_edges(uuid, journal, uuid_map)
+   ↓
+   remove_episode_from_queue(uuid)
+   [Episode REMOVED from Redis entirely - it's done, lives in FalkorDB]
+```
+
+**Critical Design Principle:**
+Redis contains ONLY episodes that need processing. Once enrichment is complete, episodes are removed from Redis. Historical data lives in FalkorDB. This keeps Redis sets bounded by queue backlog size, not total episodes.
+
+#### Worker API Functions
+
+**All functions are in `backend/database/redis_ops.py`:**
+
+```python
+from backend.database.redis_ops import (
+    set_episode_status,
+    get_episode_status,
+    get_episode_data,
+    get_episode_uuid_map,
+    get_episodes_by_status,
+    remove_episode_from_queue,
+)
+
+# Set episode status and update indexes
+set_episode_status(
+    episode_uuid: str,
+    status: str,
+    journal: str | None = None,  # Required for initial status
+    uuid_map: dict[str, str] | None = None  # Store UUID mapping
+)
+
+# Get current status
+status = get_episode_status(episode_uuid)  # Returns str | None
+
+# Get all episode metadata (raw strings, uuid_map is JSON)
+data = get_episode_data(episode_uuid)  # Returns dict[str, str]
+
+# Get parsed uuid_map (recommended for workers)
+uuid_map = get_episode_uuid_map(episode_uuid)  # Returns dict[str, str] | None
+
+# Scan episodes by status (for batch operations)
+episodes = get_episodes_by_status("pending_nodes")  # Returns list[str]
+
+# Remove episode from all Redis structures
+remove_episode_from_queue(episode_uuid)
+```
+
+#### Worker Usage Patterns
+
+**Pattern 1: Startup Recovery**
+```python
+# On worker startup, re-enqueue any pending episodes
+from backend.database.redis_ops import get_episodes_by_status
+from backend.services.tasks import extract_nodes_task, extract_edges_task
+
+def recover_pending_episodes():
+    # Re-enqueue pending node extractions
+    for uuid in get_episodes_by_status("pending_nodes"):
+        data = get_episode_data(uuid)
+        extract_nodes_task(uuid, data["journal"])
+
+    # Re-enqueue pending edge extractions
+    for uuid in get_episodes_by_status("pending_edges"):
+        data = get_episode_data(uuid)
+        extract_edges_task(uuid, data["journal"])
+```
+
+**Pattern 2: Batch Retry**
+```python
+# Find episodes stuck in pending_nodes for >1 hour, retry
+import time
+from backend.database.redis_ops import get_episodes_by_status, get_episode_data
+
+def retry_stale_episodes():
+    for uuid in get_episodes_by_status("pending_nodes"):
+        data = get_episode_data(uuid)
+        created_at = float(data.get("created_at", 0))
+        if time.time() - created_at > 3600:  # 1 hour
+            extract_nodes_task(uuid, data["journal"])
+```
+
+**Pattern 3: Task Implementation**
+```python
+@huey.task()
+async def extract_nodes_task(episode_uuid: str, journal: str):
+    """Background task for entity extraction."""
+    from backend.database.redis_ops import remove_episode_from_queue, set_episode_status
+    from backend.graph.extract_nodes import extract_nodes
+
+    result = await extract_nodes(episode_uuid, journal)
+
+    if result.uuid_map:
+        # Entities found - store uuid_map and enqueue edge extraction
+        set_episode_status(episode_uuid, "pending_edges", uuid_map=result.uuid_map)
+        extract_edges_task(episode_uuid, journal)
+    else:
+        # No entities - remove from Redis (processing complete)
+        remove_episode_from_queue(episode_uuid)
+
+    return result
+
+@huey.task()
+async def extract_edges_task(episode_uuid: str, journal: str):
+    """Background task for relationship extraction."""
+    from backend.database.redis_ops import remove_episode_from_queue, get_episode_uuid_map
+    from backend.graph.extract_edges import extract_edges
+
+    # Retrieve uuid_map from Redis
+    uuid_map = get_episode_uuid_map(episode_uuid)
+    if not uuid_map:
+        raise RuntimeError(f"uuid_map missing for {episode_uuid}")
+
+    result = await extract_edges(episode_uuid, journal, uuid_map)
+
+    # Processing complete - remove from Redis
+    remove_episode_from_queue(episode_uuid)
+
+    return result
+```
+
+#### Important Notes
+
+**Concurrency:**
+- `set_episode_status()` is NOT atomic across concurrent calls
+- Use Huey's task deduplication to ensure only one worker processes a given episode
+- Single-threaded worker configuration (-w 1) provides sequential execution guarantee
+
+**State Transitions:**
+Valid transitions in the state machine:
+- `pending_nodes` → `pending_edges` (entities found, continue processing)
+- `pending_nodes` → [removed from Redis] (no entities found, processing complete)
+- `pending_edges` → [removed from Redis] (edges extracted, processing complete)
+
+**Cleanup Strategy:**
+- `remove_episode_from_queue()` removes episode from all Redis structures
+- Call immediately when processing completes (no entities OR edges extracted)
+- Redis should ONLY contain episodes actively being processed or waiting in queue
+- Completed episodes live in FalkorDB only - query FalkorDB for historical data
+- This keeps Redis sets bounded by queue backlog, preventing unbounded growth
+
+**Testing:**
+All functions have comprehensive test coverage in `tests/test_backend/test_redis_ops.py`:
+- 21 tests covering all functions and edge cases
+- Tests use proper fixtures for single database connection
+- Integration test verifies add_journal_entry sets pending_nodes status
+
 ### Phase 4: The Developer Workflow (Native Optimization)
 
 **Target Files:** `backend/optimizers/optimize_*.py` (Your external scripts)
