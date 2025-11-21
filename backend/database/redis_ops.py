@@ -6,10 +6,12 @@ storage that coexists with graph operations in the same .db file.
 
 from __future__ import annotations
 
+import json
 from contextlib import contextmanager
 from typing import Iterator
 
 from backend.settings import DEFAULT_JOURNAL
+from backend.services.tasks import extract_nodes_task
 
 
 class RedisOpsProxy:
@@ -105,44 +107,30 @@ def set_episode_status(
     journal: str | None = None,
     uuid_map: dict[str, str] | None = None,
 ) -> None:
-    """Set episode processing status and update indexes.
+    """Set episode processing status.
 
     Args:
         episode_uuid: Episode UUID
-        status: Processing status ("pending_nodes" or "pending_edges" only)
+        status: Processing status ("pending_nodes" only)
         journal: Journal name (required for initial status set)
         uuid_map: Optional UUID mapping (provisional -> canonical)
 
     Raises:
-        ValueError: If status is not "pending_nodes" or "pending_edges"
+        ValueError: If status is not "pending_nodes"
 
     Note:
-        Only "pending_nodes" and "pending_edges" are valid statuses.
-        When processing completes, call cleanup_episode() to remove from Redis.
+        Episodes are removed from queue when processing completes.
         This prevents unbounded growth - Redis contains only active queue items.
-
-        This function is not atomic across concurrent calls. Use Huey's
-        task deduplication or application-level locking to ensure only
-        one worker processes a given episode simultaneously.
     """
-    import json
-
-    # Validate status to prevent unbounded sets
-    VALID_STATUSES = {"pending_nodes", "pending_edges"}
+    VALID_STATUSES = {"pending_nodes"}
     if status not in VALID_STATUSES:
         raise ValueError(
             f"Invalid status '{status}'. Only {VALID_STATUSES} are allowed. "
-            f"Call cleanup_episode() when processing completes."
+            f"Call remove_episode_from_queue() when processing completes."
         )
 
     with redis_ops() as r:
         episode_key = f"episode:{episode_uuid}"
-
-        current_status = r.hget(episode_key, "status")
-
-        if current_status:
-            r.srem(f"status:{current_status.decode()}", episode_uuid)
-
         r.hset(episode_key, "status", status)
 
         if journal is not None:
@@ -150,8 +138,6 @@ def set_episode_status(
 
         if uuid_map is not None:
             r.hset(episode_key, "uuid_map", json.dumps(uuid_map))
-
-        r.sadd(f"status:{status}", episode_uuid)
 
 
 def get_episode_status(episode_uuid: str) -> str | None:
@@ -191,8 +177,6 @@ def get_episode_uuid_map(episode_uuid: str) -> dict[str, str] | None:
     Returns:
         UUID mapping dict (provisional -> canonical) or None if not set
     """
-    import json
-
     data = get_episode_data(episode_uuid)
     uuid_map_str = data.get("uuid_map")
     return json.loads(uuid_map_str) if uuid_map_str else None
@@ -208,8 +192,13 @@ def get_episodes_by_status(status: str) -> list[str]:
         List of episode UUIDs
     """
     with redis_ops() as r:
-        uuids = r.smembers(f"status:{status}")
-        return [uuid.decode() for uuid in uuids]
+        episodes = []
+        for key in r.scan_iter(match="episode:*"):
+            ep_status = r.hget(key, "status")
+            if ep_status and ep_status.decode() == status:
+                episode_uuid = key.decode().split(":", 1)[1]
+                episodes.append(episode_uuid)
+        return episodes
 
 
 def remove_episode_from_queue(episode_uuid: str) -> None:
@@ -219,10 +208,6 @@ def remove_episode_from_queue(episode_uuid: str) -> None:
         episode_uuid: Episode UUID
     """
     with redis_ops() as r:
-        status = r.hget(f"episode:{episode_uuid}", "status")
-        if status:
-            r.srem(f"status:{status.decode()}", episode_uuid)
-
         r.delete(f"episode:{episode_uuid}")
 
 
@@ -253,3 +238,25 @@ def set_inference_enabled(enabled: bool) -> None:
     """
     with redis_ops() as r:
         r.set("app:inference_enabled", "true" if enabled else "false")
+
+
+def enqueue_pending_episodes() -> int:
+    """Enqueue all pending episodes for processing.
+
+    Returns:
+        Number of episodes enqueued
+
+    Note:
+        Only enqueues if inference is enabled.
+        Safe to call multiple times - tasks check status for idempotency.
+    """
+    if not get_inference_enabled():
+        return 0
+
+    pending = get_episodes_by_status("pending_nodes")
+    for episode_uuid in pending:
+        data = get_episode_data(episode_uuid)
+        journal = data.get("journal", "")
+        extract_nodes_task(episode_uuid, journal)
+
+    return len(pending)

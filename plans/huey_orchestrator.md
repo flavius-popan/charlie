@@ -81,21 +81,17 @@ The design keeps a single worker process alive so models can stay resident durin
 ```
 # Per-episode metadata (Redis Hash) - ONLY for episodes needing processing
 episode:{uuid} → Hash {
-    "status": "pending_nodes" | "pending_edges",
+    "status": "pending_nodes",
     "journal": DEFAULT_JOURNAL,
-    "uuid_map": "{...json...}"  # Only set when pending_edges
+    "uuid_map": "{...json...}"  # Optional, stores entity resolution mapping
 }
-
-# Status indexes (Redis Sets) - ONLY episodes in queue
-status:pending_nodes → Set {uuid1, uuid2, uuid3}
-status:pending_edges → Set {uuid4, uuid5}
 ```
 
 **Design Rationale:**
 - O(1) status lookups by UUID via Hash
-- O(n) scanning by status via Sets (n = episodes with that status, bounded by queue backlog)
-- Atomic status transitions within redis_ops() context manager
-- Status indexes automatically updated when episode status changes
+- O(n) scanning by status via SCAN (n = episodes in queue, bounded by backlog)
+- Single source of truth: episode hash contains all state
+- Only `pending_nodes` status allowed (episodes removed when processing completes)
 - **Episodes removed from Redis entirely once enrichment completes**
 - Completed episodes live in FalkorDB, not Redis (prevents unbounded growth)
 
@@ -114,26 +110,12 @@ status:pending_edges → Set {uuid4, uuid5}
    ↓
    extract_nodes(uuid, journal) extracts entities
    ↓
-   If entities found:
-       set_episode_status(uuid, "pending_edges", uuid_map=uuid_map)
-       [Episode moved to pending_edges index in Redis]
-   If no entities:
-       remove_episode_from_queue(uuid)
-       [Episode REMOVED from Redis entirely - it's done, lives in FalkorDB]
-   ↓
-
-3. Worker processes extract_edges (if entities found)
-   ↓
-   uuid_map = get_episode_uuid_map(uuid)
-   ↓
-   extract_edges(uuid, journal, uuid_map)
-   ↓
    remove_episode_from_queue(uuid)
    [Episode REMOVED from Redis entirely - it's done, lives in FalkorDB]
 ```
 
 **Critical Design Principle:**
-Redis contains ONLY episodes that need processing. Once enrichment is complete, episodes are removed from Redis. Historical data lives in FalkorDB. This keeps Redis sets bounded by queue backlog size, not total episodes.
+Redis contains ONLY episodes that need processing. Once enrichment is complete, episodes are removed from Redis. Historical data lives in FalkorDB. This keeps Redis scan bounded by queue backlog size, not total episodes.
 
 #### Worker API Functions
 
@@ -210,38 +192,26 @@ def retry_stale_episodes():
 **Pattern 3: Task Implementation**
 ```python
 @huey.task()
-async def extract_nodes_task(episode_uuid: str, journal: str):
+def extract_nodes_task(episode_uuid: str, journal: str):
     """Background task for entity extraction."""
-    from backend.database.redis_ops import remove_episode_from_queue, set_episode_status
+    from backend.database.redis_ops import remove_episode_from_queue, get_episode_status
     from backend.graph.extract_nodes import extract_nodes
+    import dspy
 
-    result = await extract_nodes(episode_uuid, journal)
+    # Idempotency check
+    if get_episode_status(episode_uuid) != "pending_nodes":
+        return {"already_processed": True}
 
-    if result.uuid_map:
-        # Entities found - store uuid_map and enqueue edge extraction
-        set_episode_status(episode_uuid, "pending_edges", uuid_map=result.uuid_map)
-        extract_edges_task(episode_uuid, journal)
-    else:
-        # No entities - remove from Redis (processing complete)
-        remove_episode_from_queue(episode_uuid)
+    # Use model manager for warm session
+    lm = get_model("llm")
+    with dspy.context(lm=lm):
+        result = extract_nodes(episode_uuid, journal)
 
-    return result
-
-@huey.task()
-async def extract_edges_task(episode_uuid: str, journal: str):
-    """Background task for relationship extraction."""
-    from backend.database.redis_ops import remove_episode_from_queue, get_episode_uuid_map
-    from backend.graph.extract_edges import extract_edges
-
-    # Retrieve uuid_map from Redis
-    uuid_map = get_episode_uuid_map(episode_uuid)
-    if not uuid_map:
-        raise RuntimeError(f"uuid_map missing for {episode_uuid}")
-
-    result = await extract_edges(episode_uuid, journal, uuid_map)
-
-    # Processing complete - remove from Redis
+    # Always remove from queue when done
     remove_episode_from_queue(episode_uuid)
+
+    # Cleanup models if no work remains
+    cleanup_if_no_work()
 
     return result
 ```
@@ -255,22 +225,20 @@ async def extract_edges_task(episode_uuid: str, journal: str):
 
 **State Transitions:**
 Valid transitions in the state machine:
-- `pending_nodes` → `pending_edges` (entities found, continue processing)
-- `pending_nodes` → [removed from Redis] (no entities found, processing complete)
-- `pending_edges` → [removed from Redis] (edges extracted, processing complete)
+- `pending_nodes` → [removed from Redis] (processing complete)
 
 **Cleanup Strategy:**
-- `remove_episode_from_queue()` removes episode from all Redis structures
-- Call immediately when processing completes (no entities OR edges extracted)
+- `remove_episode_from_queue()` removes episode from Redis
+- Call immediately when processing completes
 - Redis should ONLY contain episodes actively being processed or waiting in queue
 - Completed episodes live in FalkorDB only - query FalkorDB for historical data
-- This keeps Redis sets bounded by queue backlog, preventing unbounded growth
+- This keeps Redis scan bounded by queue backlog, preventing unbounded growth
 
 **Testing:**
 All functions have comprehensive test coverage in `tests/test_backend/test_redis_ops.py`:
-- 21 tests covering all functions and edge cases
-- Tests use proper fixtures for single database connection
-- Integration test verifies add_journal_entry sets pending_nodes status
+- 27 tests covering all functions, edge cases, and lifecycle
+- Tests verify scan-based lookups, recovery mechanisms, and idempotency
+- Integration tests verify full episode lifecycle without stuck states
 
 ### Phase 4: The Developer Workflow (Native Optimization)
 
@@ -484,7 +452,7 @@ def unload_all_models():
 
 **Cleanup (event-driven, no timers):**
 
-Tasks call `cleanup_if_no_work()` after completion, which checks Redis backlog and calls `unload_all_models()` if both `pending_nodes` and `pending_edges` are empty.
+Tasks call `cleanup_if_no_work()` after completion, which checks Redis backlog and calls `unload_all_models()` if `pending_nodes` is empty.
 
 ### Phase 1 Detailed: Model Factory
 

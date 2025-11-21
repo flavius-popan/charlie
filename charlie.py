@@ -32,7 +32,11 @@ from backend.database import (
     shutdown_database,
     update_episode,
 )
-from backend.database.redis_ops import get_inference_enabled, set_inference_enabled
+from backend.database.redis_ops import (
+    enqueue_pending_episodes,
+    get_inference_enabled,
+    set_inference_enabled,
+)
 from backend.settings import DEFAULT_JOURNAL, HUEY_WORKER_TYPE, HUEY_WORKERS
 
 LOGS_DIR = Path(__file__).parent / "logs"
@@ -149,7 +153,8 @@ class SettingsScreen(ModalScreen):
         try:
             set_inference_enabled(event.value)
             self.inference_enabled = event.value
-            # Worker stays running; tasks honor the toggle.
+            if event.value:
+                enqueue_pending_episodes()
         except Exception as exc:
             logger.error("Failed to persist inference toggle: %s", exc, exc_info=True)
             self.notify("Failed to save setting", severity="error")

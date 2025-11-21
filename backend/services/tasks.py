@@ -70,15 +70,12 @@ def extract_nodes_task(episode_uuid: str, journal: str):
             result.resolved_count,
         )
 
-        if result.uuid_map:
-            set_episode_status(episode_uuid, "pending_edges", uuid_map=result.uuid_map)
-            logger.info(
-                "Episode %s moved to pending_edges (extract_edges task not yet implemented)",
-                episode_uuid,
-            )
-        else:
-            remove_episode_from_queue(episode_uuid)
-            logger.info("No entities extracted for episode %s, removed from queue", episode_uuid)
+        remove_episode_from_queue(episode_uuid)
+        logger.info(
+            "Extracted %d entities for episode %s, removed from queue",
+            result.extracted_count,
+            episode_uuid,
+        )
 
         return {
             "episode_uuid": result.episode_uuid,
