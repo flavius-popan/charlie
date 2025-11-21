@@ -48,14 +48,14 @@ def cleanup_if_no_work() -> None:
     from backend.database.redis_ops import get_episodes_by_status
 
     pending_nodes = get_episodes_by_status("pending_nodes")
-    pending_edges = get_episodes_by_status("pending_edges")
+    # TODO: Add pending_edges check when extract_edges_task is implemented
+    # pending_edges = get_episodes_by_status("pending_edges")
 
-    if len(pending_nodes) == 0 and len(pending_edges) == 0:
+    if len(pending_nodes) == 0:
         logger.info("No pending work in queue, unloading models")
         unload_all_models()
     else:
         logger.debug(
-            "Work remains in queue (%d pending_nodes, %d pending_edges), keeping models loaded",
+            "Work remains in queue (%d pending_nodes), keeping models loaded",
             len(pending_nodes),
-            len(pending_edges),
         )

@@ -79,21 +79,24 @@ def test_cleanup_if_no_work_with_pending_nodes(reset_model_manager):
 
 
 def test_cleanup_if_no_work_with_pending_edges(reset_model_manager):
-    """cleanup_if_no_work keeps models loaded when pending_edges exist."""
+    """cleanup_if_no_work unloads models even with pending_edges (not yet implemented)."""
     with patch("backend.inference.manager.DspyLM") as mock_dspy_lm:
         with patch("backend.database.redis_ops.get_episodes_by_status") as mock_get_episodes:
-            mock_model = Mock()
-            mock_dspy_lm.return_value = mock_model
-            mock_get_episodes.side_effect = lambda status: (
-                ["episode1"] if status == "pending_edges" else []
-            )
+            with patch("backend.inference.manager.gc.collect") as mock_gc:
+                mock_model = Mock()
+                mock_dspy_lm.return_value = mock_model
+                mock_get_episodes.side_effect = lambda status: (
+                    ["episode1"] if status == "pending_edges" else []
+                )
 
-            get_model("llm")
-            assert manager.MODELS["llm"] is not None
+                get_model("llm")
+                assert manager.MODELS["llm"] is not None
 
-            cleanup_if_no_work()
+                cleanup_if_no_work()
 
-            assert manager.MODELS["llm"] is not None
+                # Models unload because pending_edges check is commented out until edge extraction is implemented
+                assert manager.MODELS["llm"] is None
+                mock_gc.assert_called_once()
 
 
 def test_cleanup_if_no_work_unloads_when_queue_empty(reset_model_manager):
@@ -115,15 +118,15 @@ def test_cleanup_if_no_work_unloads_when_queue_empty(reset_model_manager):
 
 
 def test_cleanup_if_no_work_checks_both_queues(reset_model_manager):
-    """cleanup_if_no_work checks both pending_nodes and pending_edges queues."""
+    """cleanup_if_no_work checks only pending_nodes (pending_edges check commented out)."""
     with patch("backend.database.redis_ops.get_episodes_by_status") as mock_get_episodes:
         mock_get_episodes.return_value = []
 
         cleanup_if_no_work()
 
-        assert mock_get_episodes.call_count == 2
-        mock_get_episodes.assert_any_call("pending_nodes")
-        mock_get_episodes.assert_any_call("pending_edges")
+        # Only checks pending_nodes until edge extraction is implemented
+        assert mock_get_episodes.call_count == 1
+        mock_get_episodes.assert_called_once_with("pending_nodes")
 
 
 def test_multiple_cold_warm_cycles(reset_model_manager):

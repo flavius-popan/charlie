@@ -55,7 +55,7 @@ def test_extract_nodes_task_with_entities_extracted(episode_uuid):
 
     with patch("backend.database.redis_ops.get_episode_status") as mock_status:
         with patch("backend.database.redis_ops.get_inference_enabled", create=True) as mock_enabled:
-            with patch("backend.database.redis_ops.remove_episode_from_queue") as mock_remove:
+            with patch("backend.database.redis_ops.set_episode_status") as mock_set_status:
                 with patch("backend.inference.manager.get_model") as mock_get_model:
                     with patch("backend.graph.extract_nodes.extract_nodes") as mock_extract:
                         with patch("backend.inference.manager.cleanup_if_no_work") as mock_cleanup:
@@ -74,7 +74,10 @@ def test_extract_nodes_task_with_entities_extracted(episode_uuid):
 
                             mock_get_model.assert_called_once_with("llm")
                             mock_extract.assert_called_once_with(episode_uuid, DEFAULT_JOURNAL)
-                            mock_remove.assert_called_once_with(episode_uuid)
+                            # With entities extracted, should transition to pending_edges
+                            mock_set_status.assert_called_once_with(
+                                episode_uuid, "pending_edges", uuid_map=mock_result.uuid_map
+                            )
                             mock_cleanup.assert_called_once()
 
 
@@ -215,7 +218,7 @@ def test_extract_nodes_task_cleanup_called_on_exception(episode_uuid):
 
 
 def test_extract_nodes_task_removes_from_queue_on_success(episode_uuid):
-    """Episode is always removed from queue after successful extraction."""
+    """Episode transitions to pending_edges after successful extraction with entities."""
     from backend.services.tasks import extract_nodes_task
 
     mock_result = ExtractNodesResult(
@@ -231,7 +234,7 @@ def test_extract_nodes_task_removes_from_queue_on_success(episode_uuid):
 
     with patch("backend.database.redis_ops.get_episode_status") as mock_status:
         with patch("backend.database.redis_ops.get_inference_enabled", create=True) as mock_enabled:
-            with patch("backend.database.redis_ops.remove_episode_from_queue") as mock_remove:
+            with patch("backend.database.redis_ops.set_episode_status") as mock_set_status:
                 with patch("backend.inference.manager.get_model") as mock_get_model:
                     with patch("backend.graph.extract_nodes.extract_nodes") as mock_extract:
                         with patch("backend.inference.manager.cleanup_if_no_work"):
@@ -242,7 +245,10 @@ def test_extract_nodes_task_removes_from_queue_on_success(episode_uuid):
 
                             extract_nodes_task.call_local(episode_uuid, DEFAULT_JOURNAL)
 
-                            mock_remove.assert_called_once_with(episode_uuid)
+                            # With entities extracted, should transition to pending_edges
+                            mock_set_status.assert_called_once_with(
+                                episode_uuid, "pending_edges", uuid_map={"prov": "canon"}
+                            )
 
 
 def test_extract_nodes_task_idempotency_check(episode_uuid):

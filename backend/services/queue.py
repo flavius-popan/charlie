@@ -42,6 +42,7 @@ def _get_redis_connection() -> ConnectionPool:
     return connection_pool
 
 
+# RedisHuey supports async tasks via asyncio integration
 huey = RedisHuey(
     "charlie",
     connection_pool=_get_redis_connection(),

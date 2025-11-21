@@ -528,6 +528,7 @@ class CharlieApp(App):
             atexit.register(self._shutdown_huey)
         except Exception as exc:
             logger.error("Failed to start Huey worker: %s", exc, exc_info=True)
+            self.notify("huey ded 💀 check logz", severity="error", timeout=5)
             if self.huey_log_file:
                 self.huey_log_file.close()
                 self.huey_log_file = None
@@ -540,7 +541,7 @@ class CharlieApp(App):
         try:
             # SIGINT lets Huey finish the current task before exiting.
             self.huey_process.send_signal(signal.SIGINT)
-            self.huey_process.wait(timeout=10)
+            self.huey_process.wait(timeout=3)
         except Exception as exc:
             logger.warning("Error while stopping Huey worker: %s", exc, exc_info=True)
             # Last resort: force stop to avoid orphaned process

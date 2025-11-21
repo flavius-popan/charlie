@@ -70,12 +70,26 @@ def extract_nodes_task(episode_uuid: str, journal: str):
             result.resolved_count,
         )
 
-        remove_episode_from_queue(episode_uuid)
-        logger.info(
-            "Extracted %d entities for episode %s, removed from queue",
-            result.extracted_count,
-            episode_uuid,
-        )
+        # Only transition to pending_edges if entities were extracted
+        # Self entity "I" doesn't count - edges need at least one other node
+        if result.extracted_count > 0:
+            set_episode_status(episode_uuid, "pending_edges", uuid_map=result.uuid_map)
+            logger.info(
+                "Transitioned episode %s to pending_edges with %d uuid mappings",
+                episode_uuid,
+                len(result.uuid_map),
+            )
+
+            # TODO: Uncomment when extract_edges_task is implemented
+            # from backend.services.tasks import extract_edges_task
+            # extract_edges_task(episode_uuid, journal)
+        else:
+            # No entities extracted (only self or nothing) - no edges possible
+            remove_episode_from_queue(episode_uuid)
+            logger.info(
+                "No entities extracted for episode %s, removed from queue",
+                episode_uuid,
+            )
 
         return {
             "episode_uuid": result.episode_uuid,

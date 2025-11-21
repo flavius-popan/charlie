@@ -1,8 +1,8 @@
 # Huey Orchestrator Implementation Plan
 
-**Goal**: Add async task queue to Charlie for non-blocking LLM inference with warm session support.
+**Goal**: Add async task queue to Charlie for non-blocking LLM inference with model persistence during active work.
 
-**Architecture**: See `plans/huey_orchestrator.md` for detailed rationale on thread safety, warm sessions, and resource management.
+**Architecture**: See `plans/huey_orchestrator.md` for detailed rationale on thread safety, model persistence, and resource management.
 
 ## Prerequisite: Lock DSPy Cache Location (simple, importable helper)
 
@@ -81,13 +81,12 @@
    - Comprehensive error handling for db/client/pool unavailability
 
 2. **Task Implementation** (`backend/services/tasks.py`):
-   - `extract_nodes_task()` - Single-stage entity extraction with idempotency
-   - **Architecture Simplification**: Original two-stage design (nodes→edges) simplified to single-stage processing
+   - `extract_nodes_task()` - Entity extraction with state transition to pending_edges
    - Checks episode status before processing (safe to enqueue multiple times)
    - Respects inference toggle via `get_inference_enabled()`
-   - Uses warm session via `get_model("llm")` from manager
+   - Uses model persistence via `get_model("llm")` from manager
    - Calls `cleanup_if_no_work()` for event-driven model unload
-   - Always removes episode from queue when processing completes (single-stage: pending_nodes → removed)
+   - Transitions episode to pending_edges with uuid_map persistence (ready for future edge extraction)
 
 3. **Inference Toggle & Recovery** (`backend/database/redis_ops.py`):
    - `get_inference_enabled()` - Returns True if enabled (default: True)
@@ -152,7 +151,7 @@
 **Test Coverage**: All existing tests pass
 - Worker startup tests verify proper lifecycle management
 - Settings persistence tests confirm Redis integration
-- File descriptor leak prevention test added (test_charlie_utils.py)
+- File descriptor leak prevention test added (test_charlie.py)
 
 ---
 
@@ -185,7 +184,7 @@ backend/inference/
 
 ## Phase 2: Model Manager (Stateful)
 
-**Purpose**: Warm session management - keep models loaded in memory between tasks.
+**Purpose**: Model persistence management - keep models loaded in memory while work remains in queue.
 
 ### Files to Create
 
@@ -216,7 +215,7 @@ def cleanup_if_no_work():
 **Key points:**
 - NO locking needed (single worker thread)
 - NO timestamps needed (work queue determines unload)
-- Models stay loaded between tasks (warm sessions)
+- Models stay loaded while work remains in queue (model persistence)
 - Event-driven cleanup (called at end of each task)
 - Simple rule: No work in queue = unload immediately
 - Current scope: only the instruct LLM is supported; adding embedding/reranker models will be a follow-on design.
@@ -245,7 +244,7 @@ def _get_redis_connection() -> ConnectionPool:
     # Call _ensure_graph() to trigger DB init
     # Return _db.client.connection_pool
 
-huey = AsyncRedisHuey(
+huey = RedisHuey(
     'charlie',
     connection_pool=_get_redis_connection(),
 )
@@ -253,7 +252,7 @@ huey = AsyncRedisHuey(
 
 **Key points:**
 - Reuses FalkorDB's embedded Redis (no separate broker)
-- AsyncRedisHuey for async task support
+- RedisHuey supports async tasks via asyncio integration
 - Must initialize AFTER database is ready
 - Single Huey consumer with one worker; no per-model workers in this iteration.
 
@@ -297,7 +296,7 @@ def extract_nodes_task(episode_uuid: str, journal: str):
 
 **Key points:**
 - Single-stage processing: `pending_nodes` → removed from queue (simplified from original two-stage design)
-- Tasks call `get_model()` from manager (warm sessions)
+- Tasks call `get_model()` from manager (model persistence)
 - Tasks call `cleanup_if_no_work()` at end (event-driven unload)
 - NO periodic cleanup task needed (work queue drives unload)
 - Use `backend.database.redis_ops` for episode status management
@@ -627,7 +626,7 @@ class CharlieApp(App):
 **Key points:**
 - Worker starts automatically in `on_mount()`
 - Graceful shutdown with SIGTERM
-- Critical flags: `-k thread -w 1` (warm sessions + thread safety)
+- Critical flags: `-k thread -w 1` (model persistence + thread safety)
 
 ---
 
@@ -668,7 +667,7 @@ HUEY_WORKERS = 1             # CRITICAL
 
 1. **Phase 1** (Foundation): Copy inference_runtime → backend/inference, update imports
 2. **Phase 7** (Config): Add settings to backend/settings.py
-3. **Phase 2** (Manager): Create manager.py with warm session logic
+3. **Phase 2** (Manager): Create manager.py with model persistence logic
 4. **Phase 3** (Queue): Create queue.py + tasks.py, integrate with existing redis_ops
 5. **Phase 4** (Settings UI): Add redis_ops functions, update charlie.py toggles
 6. **Phase 6** (Lifecycle): Update charlie.py to spawn worker
@@ -736,7 +735,7 @@ print('Inference enabled:', get_inference_enabled())
 - Verify: Task starts immediately (check worker logs)
 - Verify: Model loads (cold start, 1-2 seconds)
 - Add second journal entry quickly
-- Verify: Model stays loaded (warm session, instant)
+- Verify: Model stays loaded (model persists, instant)
 
 **Scenario 3: Auto-unload (event-driven)**
 - Add journal entry (trigger model load)
@@ -747,7 +746,7 @@ print('Inference enabled:', get_inference_enabled())
 - Add 5 journal entries quickly
 - Check Redis: 5 episodes in pending_nodes
 - Watch episodes process sequentially
-- Verify: Model stays loaded through all 5 (warm sessions)
+- Verify: Model stays loaded through all 5 (model persists)
 - After last episode completes
 - Verify: Model unloads immediately (event-driven)
 
@@ -771,7 +770,7 @@ print('Inference enabled:', get_inference_enabled())
 - Queue MUST use `_get_redis_connection()` to extract FalkorDB's pool
 - Do NOT create new Redis connection (causes file locking conflicts)
 
-**Warm Sessions:**
+**Model Persistence:**
 - Thread worker type keeps process alive (global state persists)
 - Process worker type spawns new process per task (cold start every time)
 
@@ -791,7 +790,7 @@ print('Inference enabled:', get_inference_enabled())
 
 ## Success Criteria
 
-- [x] Models load once and stay warm between tasks
+- [x] Models stay loaded while work remains in queue
 - [x] TUI remains responsive during inference
 - [x] Worker starts/stops automatically with app
 - [x] Episode status tracking works end-to-end

@@ -32,6 +32,34 @@ This separation allows the TUI to call `add_journal_entry()` to instantly persis
 
 **Extract Relationships**: Identifies relationships between entities with supporting facts. LLM returns relationships as integer indices referencing the provisional entity list. After extraction, `edge_operations.resolve_edge_pointers()` remaps to canonical UUIDs using the uuid_map. Exact-match deduplication merges edges across episodes via the `episodes` list field (`edge_operations.resolve_extracted_edge`). Once edges are extracted, the uuid_map is cleaned up from episode attributes.
 
+**Edge Tense Strategy - Hybrid Event/State Model**: Journal entries naturally document both temporal events and ongoing states. V2 uses **tense to encode semantic meaning**:
+
+**Event-Based Edges (Past Tense - Capturing Moments):**
+- **Met** - First encounter with someone (relationship milestone)
+- **Visited** - Went to a place (can occur multiple times)
+- **Attended** - Participated in a one-time event
+- **Started** - Began a relationship, job, or practice
+
+**State-Based Edges (Present Tense - Capturing Ongoing Patterns):**
+- **Knows** - Ongoing awareness/familiarity
+- **Supports** - Active support relationship
+- **WorksAt** - Employment relationship
+- **LivesAt** - Current residence
+- **SpendsTimeWith** - Repeated social interactions
+- **ConflictsWith** - Tension or friction in relationship
+- **ParticipatesIn** - Repeated participation in activity
+
+**Why This Works:**
+1. **Semantic authenticity**: Journal entries ARE retrospective - "I met Sarah" (past event) vs "Sarah supports me" (current state)
+2. **Natural queries**: "Show everyone I Met in 2024" and "Show everyone who Supports me" both read naturally
+3. **Growth tracking**: First meetings mark relationship beginnings, support patterns show current connection quality
+4. **Timeline + landscape**: Events provide temporal milestones, states describe current relationship fabric
+5. **Natural graph visualization**: "Alice Knows Bob" reads as "Alice knows Bob" (complete sentence)
+
+**LLM Classification**: Train DSPy optimizer to recognize event markers ("met", "visited", "went to", "attended") vs state markers ("is", "works at", "supports", "keeps visiting"). Temporal validity (valid_at/invalid_at) handles when states begin/end.
+
+**Verb Form Convention**: State edges use **third-person singular** (Knows, Supports, SpendsTimeWith) so graph triples read as natural sentences: "Alice Knows Bob" = "Alice knows Bob". Edge types are relationship descriptors, not literal query verbs. Past-tense event edges already have correct form (Met, Visited, Attended). Standard convention across knowledge graphs.
+
 Episodic edges (MENTIONS) are built via `edge_operations.build_episodic_edges()` to link episodes to entities.
 
 ### What We're Not Building

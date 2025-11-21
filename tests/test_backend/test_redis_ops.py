@@ -404,7 +404,7 @@ def test_enqueue_pending_episodes_processes_backlog(falkordb_test_context):
     set_inference_enabled(True)
     assert get_inference_enabled() is True
 
-    with patch("backend.database.redis_ops.extract_nodes_task") as mock_task:
+    with patch("backend.services.tasks.extract_nodes_task") as mock_task:
         count = enqueue_pending_episodes()
         assert count == 3
         assert mock_task.call_count == 3
@@ -427,7 +427,7 @@ def test_enqueue_pending_episodes_idempotent(falkordb_test_context):
 
     set_inference_enabled(True)
 
-    with patch("backend.database.redis_ops.extract_nodes_task") as mock_task:
+    with patch("backend.services.tasks.extract_nodes_task") as mock_task:
         count1 = enqueue_pending_episodes()
         assert count1 == 1
 
@@ -487,17 +487,3 @@ def test_cleanup_if_no_work_checks_pending_nodes_only(falkordb_test_context):
 
     cleanup_if_no_work()
     assert MODELS["llm"] is None
-
-
-def test_episode_cannot_use_invalid_status(
-    episode_uuid, cleanup_test_episodes, falkordb_test_context
-):
-    """Only pending_nodes status is allowed to prevent unbounded growth."""
-    with pytest.raises(ValueError, match="Invalid status 'pending_edges'"):
-        set_episode_status(episode_uuid, "pending_edges", journal=DEFAULT_JOURNAL)
-
-    with pytest.raises(ValueError, match="Invalid status 'completed'"):
-        set_episode_status(episode_uuid, "completed", journal=DEFAULT_JOURNAL)
-
-    with pytest.raises(ValueError, match="Invalid status 'processing'"):
-        set_episode_status(episode_uuid, "processing", journal=DEFAULT_JOURNAL)

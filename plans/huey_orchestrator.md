@@ -197,7 +197,7 @@ def extract_nodes_task(episode_uuid: str, journal: str):
     if get_episode_status(episode_uuid) != "pending_nodes":
         return {"already_processed": True}
 
-    # Use model manager for warm session
+    # Use model manager for model persistence
     lm = get_model("llm")
     with dspy.context(lm=lm):
         result = extract_nodes(episode_uuid, journal)
@@ -316,7 +316,7 @@ All functions have comprehensive test coverage in `tests/test_backend/test_redis
 ```python
 """Huey queue configuration using existing FalkorDB connection."""
 
-from huey import AsyncRedisHuey  # AsyncRedisHuey for async task support
+from huey import RedisHuey
 from backend.database.lifecycle import _db, _ensure_graph
 
 def _get_redis_connection():
@@ -345,8 +345,8 @@ def _get_redis_connection():
     return redis_client.connection_pool
 
 # Initialize Huey with existing connection
-# CRITICAL: Use AsyncRedisHuey (not RedisHuey) for async task support
-huey = AsyncRedisHuey(
+# RedisHuey supports async tasks via asyncio integration
+huey = RedisHuey(
     'charlie',
     connection_pool=_get_redis_connection(),
     # Single worker in thread mode; no per-model workers in this iteration
@@ -388,7 +388,7 @@ def extract_nodes_task(episode_uuid: str, journal: str):
 **File:** `backend/inference/manager.py`
 
 ```python
-"""Model lifecycle management for warm sessions."""
+"""Model lifecycle management for model persistence."""
 
 import gc
 import time
@@ -417,7 +417,7 @@ def get_model(model_type: ModelType = 'llm') -> DspyLM:
 
     Notes:
         - DspyLM wraps llama.cpp with DSPy-compatible interface
-        - Model stays loaded in memory for subsequent calls (warm session)
+        - Model stays loaded in memory for subsequent calls (model persistence)
         - First call loads from disk (~4GB), subsequent calls are instant
     """
     entry = MODELS[model_type]

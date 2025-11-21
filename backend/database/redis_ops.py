@@ -11,7 +11,6 @@ from contextlib import contextmanager
 from typing import Iterator
 
 from backend.settings import DEFAULT_JOURNAL
-from backend.services.tasks import extract_nodes_task
 
 
 class RedisOpsProxy:
@@ -111,24 +110,14 @@ def set_episode_status(
 
     Args:
         episode_uuid: Episode UUID
-        status: Processing status ("pending_nodes" only)
+        status: Processing status (e.g., "pending_nodes")
         journal: Journal name (required for initial status set)
         uuid_map: Optional UUID mapping (provisional -> canonical)
-
-    Raises:
-        ValueError: If status is not "pending_nodes"
 
     Note:
         Episodes are removed from queue when processing completes.
         This prevents unbounded growth - Redis contains only active queue items.
     """
-    VALID_STATUSES = {"pending_nodes"}
-    if status not in VALID_STATUSES:
-        raise ValueError(
-            f"Invalid status '{status}'. Only {VALID_STATUSES} are allowed. "
-            f"Call remove_episode_from_queue() when processing completes."
-        )
-
     with redis_ops() as r:
         episode_key = f"episode:{episode_uuid}"
         r.hset(episode_key, "status", status)
@@ -252,6 +241,9 @@ def enqueue_pending_episodes() -> int:
     """
     if not get_inference_enabled():
         return 0
+
+    # Import here to avoid circular dependency (tasks.py imports from redis_ops)
+    from backend.services.tasks import extract_nodes_task
 
     pending = get_episodes_by_status("pending_nodes")
     for episode_uuid in pending:
