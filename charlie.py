@@ -528,6 +528,9 @@ class CharlieApp(App):
             atexit.register(self._shutdown_huey)
         except Exception as exc:
             logger.error("Failed to start Huey worker: %s", exc, exc_info=True)
+            if self.huey_log_file:
+                self.huey_log_file.close()
+                self.huey_log_file = None
 
     def _shutdown_huey(self):
         """Terminate Huey worker gracefully (finish current task first)."""

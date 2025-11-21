@@ -81,19 +81,20 @@
    - Comprehensive error handling for db/client/pool unavailability
 
 2. **Task Implementation** (`backend/services/tasks.py`):
-   - `extract_nodes_task()` - Entity extraction with idempotency
+   - `extract_nodes_task()` - Single-stage entity extraction with idempotency
+   - **Architecture Simplification**: Original two-stage design (nodes→edges) simplified to single-stage processing
    - Checks episode status before processing (safe to enqueue multiple times)
    - Respects inference toggle via `get_inference_enabled()`
    - Uses warm session via `get_model("llm")` from manager
    - Calls `cleanup_if_no_work()` for event-driven model unload
-   - Always removes episode from queue when processing completes
+   - Always removes episode from queue when processing completes (single-stage: pending_nodes → removed)
 
 3. **Inference Toggle & Recovery** (`backend/database/redis_ops.py`):
    - `get_inference_enabled()` - Returns True if enabled (default: True)
    - `set_inference_enabled(enabled: bool)` - Persists to Redis at `app:inference_enabled`
    - `enqueue_pending_episodes()` - Scans and enqueues pending work when inference is enabled
    - Setting survives app restarts via Redis storage
-   - Simplified state management: scan-based lookups, no index sets
+   - Simplified state management: scan-based lookups, single-stage processing
 
 4. **Test Coverage**: 15 passing unit tests
    - 5 tests for queue configuration and error handling
@@ -105,6 +106,53 @@
 - Initial review suggested `AsyncRedisHuey` which doesn't exist in Huey
 - `RedisHuey` correctly supports async tasks via standard asyncio integration
 - All other review suggestions confirmed implementation quality
+
+---
+
+### Batch 3: COMPLETE ✅
+
+**Completed Phases**: Phase 4 (Settings UI Integration - complete), Phase 6 (Application Lifecycle), Phase 5 (Optimizer Documentation)
+
+**Files Created:**
+- None (documentation phase only for Phase 5)
+
+**Files Modified:**
+- `charlie.py` - Added worker lifecycle management and settings UI integration:
+  - `_ensure_huey_worker_running()` - Auto-start Huey worker with proper error handling
+  - `_shutdown_huey()` - Graceful worker shutdown
+  - `SettingsScreen` - Inference toggle with Redis persistence
+  - File descriptor leak fix in worker startup exception handler (charlie.py:531-533)
+- `backend/__init__.py` - Integration with inference toggle for task enqueueing
+
+**Implementation Details:**
+1. **Worker Lifecycle Management** (`charlie.py`):
+   - Automatic worker startup in `_init_and_load()` after database initialization
+   - Proper command-line argument building with `-k thread -w 1` (thread safety)
+   - Log file redirection with buffering for real-time output
+   - Graceful shutdown with SIGINT, 10-second timeout, then SIGTERM fallback
+   - File descriptor cleanup on startup errors (prevents resource leaks)
+
+2. **Settings UI Integration** (`charlie.py`):
+   - `SettingsScreen` with inference toggle linked to Redis
+   - Loads initial state from `get_inference_enabled()`
+   - Persists changes via `set_inference_enabled()`
+   - Toggle survives app restarts (Redis-backed storage)
+
+3. **Task Enqueueing Logic** (`backend/__init__.py`):
+   - Episodes always get status set in Redis (enables discovery/recovery)
+   - Tasks only enqueued to Huey when inference enabled (responsive UI)
+   - Background processing without blocking TUI
+
+4. **Architecture Validation**:
+   - Single-stage processing confirmed (simplified from original two-stage design)
+   - Thread safety verified: `-k thread -w 1` ensures sequential execution
+   - Event-driven cleanup confirmed: `cleanup_if_no_work()` in task `finally` blocks
+   - No file descriptor leaks: proper cleanup in exception paths
+
+**Test Coverage**: All existing tests pass
+- Worker startup tests verify proper lifecycle management
+- Settings persistence tests confirm Redis integration
+- File descriptor leak prevention test added (test_charlie_utils.py)
 
 ---
 
@@ -160,9 +208,9 @@ def unload_all_models():
     # Set all models to None → gc.collect()
 
 def cleanup_if_no_work():
-    """Unload models if no pending episodes remain."""
-    # Check Redis for pending_nodes and pending_edges
-    # If both empty → unload_all_models()
+    """Unload models if no pending episodes remain (event-driven cleanup)."""
+    # Check Redis for pending_nodes (and pending_edges for future expansion)
+    # If queues empty → unload_all_models()
 ```
 
 **Key points:**
@@ -214,12 +262,15 @@ huey = AsyncRedisHuey(
 **Core functionality:**
 ```python
 @huey.task()
-async def extract_nodes_task(episode_uuid: str, journal: str):
-    """Background entity extraction."""
+def extract_nodes_task(episode_uuid: str, journal: str):
+    """Background entity extraction (single-stage processing).
+
+    Simplified from original two-stage design (nodes→edges) to single-stage.
+    Processes episode and removes from queue immediately upon completion.
+    """
     from backend.database.redis_ops import (
         get_episode_status,
         get_inference_enabled,
-        set_episode_status,
         remove_episode_from_queue,
     )
     from backend.inference.manager import get_model, cleanup_if_no_work
@@ -236,48 +287,16 @@ async def extract_nodes_task(episode_uuid: str, journal: str):
 
     lm = get_model('llm')
     with dspy.context(lm=lm):
-        result = await extract_nodes(episode_uuid, journal)
+        result = extract_nodes(episode_uuid, journal)
 
-    # Update episode status based on results
-    if result.uuid_map:
-        set_episode_status(episode_uuid, "pending_edges", uuid_map=result.uuid_map)
-        extract_edges_task(episode_uuid, journal)  # enqueue next stage
-    else:
-        remove_episode_from_queue(episode_uuid)  # no entities, done
-
-    cleanup_if_no_work()
-    return result
-
-@huey.task()
-async def extract_edges_task(episode_uuid: str, journal: str):
-    """Background relationship extraction."""
-    from backend.database.redis_ops import (
-        get_episode_status,
-        get_episode_uuid_map,
-        remove_episode_from_queue,
-    )
-    from backend.inference.manager import get_model, cleanup_if_no_work
-    from backend.graph.extract_edges import extract_edges
-    import dspy
-
-    # Idempotency check
-    if get_episode_status(episode_uuid) != "pending_edges":
-        return {"already_processed": True}
-
-    uuid_map = get_episode_uuid_map(episode_uuid)
-    if not uuid_map:
-        return {"missing_uuid_map": True}
-
-    lm = get_model('llm')
-    with dspy.context(lm=lm):
-        result = await extract_edges(episode_uuid, journal, uuid_map)
-
+    # Single-stage processing: remove from queue when done
     remove_episode_from_queue(episode_uuid)
     cleanup_if_no_work()
     return result
 ```
 
 **Key points:**
+- Single-stage processing: `pending_nodes` → removed from queue (simplified from original two-stage design)
 - Tasks call `get_model()` from manager (warm sessions)
 - Tasks call `cleanup_if_no_work()` at end (event-driven unload)
 - NO periodic cleanup task needed (work queue drives unload)
@@ -309,7 +328,8 @@ extract_nodes_task(episode_uuid, journal)  # Enqueue immediately
 **Two-layer design with clear separation of concerns:**
 
 **Layer 1: Redis (State Tracker)**
-- Tracks episode lifecycle state: `pending_nodes` → `pending_edges` → [complete]
+- Tracks episode lifecycle state: `pending_nodes` → [removed when complete]
+- **Simplified Architecture**: Single-stage processing (original two-stage design with `pending_edges` was simplified)
 - Provides discovery for UI, manual operations, crash recovery
 - Source of truth for "what needs processing"
 
@@ -334,13 +354,13 @@ extract_nodes_task():
   If not → already processed → exit
   ↓
   If yes AND get_inference_enabled():
-      Run extraction → update state → enqueue next task if needed
+      Run extraction → remove from queue (single-stage complete)
   ↓
   If yes BUT inference disabled:
       Exit (episode remains in Redis for later)
 ```
 
-**Key insight:** Redis and Huey serve different purposes - not redundant, but complementary.
+**Key insight:** Redis and Huey serve different purposes - not redundant, but complementary. Single-stage processing keeps architecture simple.
 
 ### Files to Modify
 
@@ -408,11 +428,16 @@ async def add_journal_entry(...) -> str:
 
 #### `backend/services/tasks.py`
 
-**Update task behavior for idempotency:**
+**Single-stage task implementation:**
 ```python
 @huey.task()
-async def extract_nodes_task(episode_uuid: str, journal: str):
-    from backend.database.redis_ops import get_episode_status, get_inference_enabled
+def extract_nodes_task(episode_uuid: str, journal: str):
+    from backend.database.redis_ops import (
+        get_episode_status,
+        get_inference_enabled,
+        remove_episode_from_queue,
+    )
+    from backend.inference.manager import cleanup_if_no_work
 
     # Check Redis state: is this episode still pending?
     current_status = get_episode_status(episode_uuid)
@@ -425,15 +450,12 @@ async def extract_nodes_task(episode_uuid: str, journal: str):
         # Leave episode in pending_nodes for later
         return {'inference_disabled': True}
 
-    # Proceed with extraction
-    result = await extract_nodes(episode_uuid, journal)
+    # Proceed with extraction (single-stage processing)
+    result = extract_nodes(episode_uuid, journal)
 
-    # Update state based on results
-    if result.uuid_map:
-        set_episode_status(episode_uuid, "pending_edges", uuid_map=result.uuid_map)
-        extract_edges_task(episode_uuid, journal)  # Enqueue next stage
-    else:
-        remove_episode_from_queue(episode_uuid)  # No entities, done
+    # Single-stage: remove from queue when done
+    remove_episode_from_queue(episode_uuid)
+    cleanup_if_no_work()
 
     return result
 ```
@@ -454,11 +476,11 @@ def unload_all_models():
     # Call gc.collect()
 
 def cleanup_if_no_work():
-    """Unload models if no pending episodes remain."""
+    """Unload models if no pending episodes remain (event-driven cleanup)."""
     from backend.database.redis_ops import get_episodes_by_status
 
     pending_nodes = get_episodes_by_status("pending_nodes")
-    pending_edges = get_episodes_by_status("pending_edges")
+    pending_edges = get_episodes_by_status("pending_edges")  # For future expansion
 
     if len(pending_nodes) == 0 and len(pending_edges) == 0:
         unload_all_models()
@@ -687,7 +709,7 @@ ps aux | grep huey_consumer
 python -c "
 from backend.database.redis_ops import get_episodes_by_status
 print('Pending nodes:', len(get_episodes_by_status('pending_nodes')))
-print('Pending edges:', len(get_episodes_by_status('pending_edges')))
+# Note: Single-stage processing - episodes removed from queue when complete
 "
 
 # Test settings persistence
@@ -769,14 +791,16 @@ print('Inference enabled:', get_inference_enabled())
 
 ## Success Criteria
 
-- [ ] Models load once and stay warm between tasks
-- [ ] TUI remains responsive during inference
-- [ ] Worker starts/stops automatically with app
-- [ ] Episode status tracking works end-to-end
-- [ ] Single inference toggle functional with persistence across restarts
-- [ ] Inference can be disabled/enabled via UI
-- [ ] Models unload immediately when work queue empties (event-driven)
-- [ ] Batch processing keeps models warm (no unload mid-batch)
-- [ ] Optimizer pattern documented (no implementations created yet)
-- [ ] No database file locking conflicts
-- [ ] No periodic cleanup task (simplified architecture)
+- [x] Models load once and stay warm between tasks
+- [x] TUI remains responsive during inference
+- [x] Worker starts/stops automatically with app
+- [x] Episode status tracking works end-to-end
+- [x] Single inference toggle functional with persistence across restarts
+- [x] Inference can be disabled/enabled via UI
+- [x] Models unload immediately when work queue empties (event-driven)
+- [x] Batch processing keeps models warm (no unload mid-batch)
+- [x] Optimizer pattern documented (no implementations created yet)
+- [x] No database file locking conflicts
+- [x] No periodic cleanup task (simplified architecture)
+
+**ALL SUCCESS CRITERIA MET ✅** - Huey orchestrator implementation complete!
