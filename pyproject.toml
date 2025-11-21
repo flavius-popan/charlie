@@ -34,4 +34,6 @@ markers = [
 filterwarnings = [
     "ignore:Support for class-based `config` is deprecated:DeprecationWarning",
     "ignore:coroutine.*was never awaited:RuntimeWarning",
+    "ignore:coroutine 'Header._on_mount.<locals>.set_title' was never awaited:RuntimeWarning",
+    "ignore:coroutine 'Screen._watch_selections' was never awaited:RuntimeWarning",
 ]

@@ -14,7 +14,7 @@ from backend.database import (
     validate_journal_name,
 )
 from backend.database.persistence import persist_entities_and_edges
-from backend.database.redis_ops import set_episode_status
+from backend.database.redis_ops import get_inference_enabled, set_episode_status
 from backend.graph import extract_nodes, ExtractNodesResult
 
 # Content validation limits
@@ -175,6 +175,21 @@ async def add_journal_entry(
 
     # Mark episode as pending node extraction
     set_episode_status(episode_uuid, "pending_nodes", journal=journal)
+
+    # Enqueue background extraction if inference is enabled
+    if get_inference_enabled():
+        try:
+            from backend.services.tasks import extract_nodes_task
+
+            extract_nodes_task(episode_uuid, journal)
+        except Exception as exc:
+            # Do not block journal writes if the worker is unavailable
+            # Status remains in Redis so tasks can be recovered later.
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "Failed to enqueue extract_nodes_task for %s: %s", episode_uuid, exc
+            )
 
     return episode_uuid
 

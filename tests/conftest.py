@@ -1,9 +1,10 @@
-"""Root pytest configuration for all tests."""
+"""Test configuration."""
 
 import sys
 from pathlib import Path
 
-# Add project root to sys.path so we can import settings
-project_root = Path(__file__).resolve().parent.parent
-if str(project_root) not in sys.path:
-    sys.path.insert(0, str(project_root))
+# Ensure project root is importable when running tests directly.
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+

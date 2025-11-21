@@ -6,6 +6,10 @@ Unless I request a simple change, any discussion of architecture, design, featur
 
 You are only permitted to run read-only git operations to understand the project state. You ARE NOT permitted to run git add, commit, push, etc.
 
+## PYTHON ENVIRONMENT
+
+Always use the project's uv-managed virtual environment (e.g., `uv run ...`) instead of the system Python when running commands or tests.
+
 ## Testing Textual Applications
 
 **CRITICAL:** Never run the Textual app directly (e.g., `python charlie.py`) in a non-interactive shell or agent environment. It will hang or output raw terminal control codes.

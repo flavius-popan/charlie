@@ -1,5 +1,9 @@
 import asyncio
+import atexit
 import logging
+import signal
+import subprocess
+import sys
 from pathlib import Path
 
 from textual.app import App, ComposeResult
@@ -27,7 +31,8 @@ from backend.database import (
     shutdown_database,
     update_episode,
 )
-from backend.settings import DEFAULT_JOURNAL
+from backend.database.redis_ops import get_inference_enabled, set_inference_enabled
+from backend.settings import DEFAULT_JOURNAL, HUEY_WORKER_TYPE, HUEY_WORKERS
 
 LOGS_DIR = Path(__file__).parent / "logs"
 LOGS_DIR.mkdir(exist_ok=True)
@@ -107,6 +112,15 @@ EMPTY_STATE_CAT = r"""
 class SettingsScreen(ModalScreen):
     """Modal screen for application settings."""
 
+    def __init__(self):
+        super().__init__()
+        # Default to enabled; actual state loaded on mount from Redis
+        try:
+            self.inference_enabled = get_inference_enabled()
+        except Exception:
+            self.inference_enabled = True
+        self._loading_toggle_state = False
+
     BINDINGS = [
         Binding("s", "dismiss_modal", "Close", show=True),
         Binding("escape", "dismiss_modal", "Close", show=False),
@@ -118,17 +132,28 @@ class SettingsScreen(ModalScreen):
         yield Vertical(
             Label("Settings", id="settings-title"),
             Label(""),
-            Label("Example Toggle 1:"),
-            Switch(id="toggle1", value=False),
-            Label(""),
-            Label("Example Toggle 2:"),
-            Switch(id="toggle2", value=True),
+            Label("Enable background inference"),
+            Switch(id="inference-toggle", value=self.inference_enabled),
             id="settings-dialog",
         )
         yield Footer()
 
     def action_dismiss_modal(self) -> None:
         self.dismiss()
+
+    def on_switch_changed(self, event: Switch.Changed) -> None:
+        if event.switch.id != "inference-toggle":
+            return
+
+        try:
+            set_inference_enabled(event.value)
+            self.inference_enabled = event.value
+            # Worker stays running; tasks honor the toggle.
+        except Exception as exc:
+            logger.error("Failed to persist inference toggle: %s", exc, exc_info=True)
+            self.notify("Failed to save setting", severity="error")
+            # Revert UI state to last known value
+            event.switch.value = self.inference_enabled
 
 
 class HomeScreen(Screen):
@@ -174,6 +199,9 @@ class HomeScreen(Screen):
     async def _init_and_load(self):
         try:
             await ensure_database_ready(DEFAULT_JOURNAL)
+            # Start Huey worker after database is ready to avoid startup races
+            if hasattr(self.app, "_ensure_huey_worker_running"):
+                self.app._ensure_huey_worker_running()
             await self.load_episodes()
         except Exception as e:
             logger.error(f"Database initialization failed: {e}", exc_info=True)
@@ -426,10 +454,76 @@ class CharlieApp(App):
 
     TITLE = "Charlie"
 
+    def __init__(self):
+        super().__init__()
+        self.huey_process: subprocess.Popen | None = None
+        self.huey_log_file = None
+
     async def on_mount(self):
         self.theme = "catppuccin-mocha"
         self.title = "Charlie"
         self.push_screen(HomeScreen())
+        # Worker is started after DB readiness in HomeScreen._init_and_load.
+
+    def _ensure_huey_worker_running(self):
+        """Start Huey worker in thread mode if not already running."""
+        if self.huey_process is not None:
+            return
+
+        try:
+            args = [
+                sys.executable,
+                "-m",
+                "huey.consumer",
+                "backend.services.tasks.huey",
+                "-k",
+                HUEY_WORKER_TYPE,
+                "-w",
+                str(HUEY_WORKERS),
+                "-v",
+            ]
+            huey_err_path = LOGS_DIR / "huey-worker.err"
+            self.huey_log_file = open(huey_err_path, "a", buffering=1)
+            self.huey_process = subprocess.Popen(
+                args,
+                stdout=subprocess.DEVNULL,
+                stderr=self.huey_log_file,
+            )
+            atexit.register(self._shutdown_huey)
+        except Exception as exc:
+            logger.error("Failed to start Huey worker: %s", exc, exc_info=True)
+
+    def _shutdown_huey(self):
+        """Terminate Huey worker gracefully (finish current task first)."""
+        if self.huey_process is None:
+            return
+
+        try:
+            # SIGINT lets Huey finish the current task before exiting.
+            self.huey_process.send_signal(signal.SIGINT)
+            self.huey_process.wait(timeout=10)
+        except Exception as exc:
+            logger.warning("Error while stopping Huey worker: %s", exc, exc_info=True)
+            # Last resort: force stop to avoid orphaned process
+            try:
+                self.huey_process.terminate()
+            except Exception:
+                pass
+        finally:
+            self.huey_process = None
+            if self.huey_log_file:
+                try:
+                    self.huey_log_file.close()
+                except Exception:
+                    pass
+                self.huey_log_file = None
+
+    def stop_huey_worker(self):
+        """Public wrapper to stop worker (used by UI handlers)."""
+        self._shutdown_huey()
+
+    def on_unmount(self):
+        self._shutdown_huey()
 
 
 CharlieApp.CSS = """
