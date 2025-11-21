@@ -1,7 +1,9 @@
-"""Huey task definitions for async inference processing."""
+"""Huey task definitions for inference processing."""
 
 from __future__ import annotations
 
+import asyncio
+import inspect
 import logging
 
 import backend.dspy_cache  # noqa: F401
@@ -13,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 @huey.task()
-async def extract_nodes_task(episode_uuid: str, journal: str):
+def extract_nodes_task(episode_uuid: str, journal: str):
     """Background entity extraction task.
 
     Args:
@@ -38,46 +40,57 @@ async def extract_nodes_task(episode_uuid: str, journal: str):
 
     logger.info("extract_nodes_task started for episode %s", episode_uuid)
 
-    current_status = get_episode_status(episode_uuid)
-    if current_status != "pending_nodes":
+    try:
+        current_status = get_episode_status(episode_uuid)
+        if current_status != "pending_nodes":
+            logger.info(
+                "Episode %s already processed (status: %s), skipping",
+                episode_uuid,
+                current_status,
+            )
+            return {"already_processed": True, "status": current_status}
+
+        if not get_inference_enabled():
+            logger.info("Inference disabled, leaving episode %s in pending_nodes", episode_uuid)
+            return {"inference_disabled": True}
+
+        lm = get_model("llm")
+        with dspy.context(lm=lm):
+            extraction = extract_nodes(episode_uuid, journal)
+            if inspect.isawaitable(extraction):
+                result = asyncio.run(extraction)
+            else:
+                result = extraction
+
         logger.info(
-            "Episode %s already processed (status: %s), skipping",
+            "Extracted %d entities for episode %s (new: %d, resolved: %d)",
+            result.extracted_count,
             episode_uuid,
-            current_status,
+            result.new_entities,
+            result.resolved_count,
         )
-        return {"already_processed": True, "status": current_status}
 
-    if not get_inference_enabled():
-        logger.info("Inference disabled, leaving episode %s in pending_nodes", episode_uuid)
-        return {"inference_disabled": True}
+        if result.uuid_map:
+            set_episode_status(episode_uuid, "pending_edges", uuid_map=result.uuid_map)
+            logger.info(
+                "Episode %s moved to pending_edges (extract_edges task not yet implemented)",
+                episode_uuid,
+            )
+        else:
+            remove_episode_from_queue(episode_uuid)
+            logger.info("No entities extracted for episode %s, removed from queue", episode_uuid)
 
-    lm = get_model("llm")
-    with dspy.context(lm=lm):
-        result = await extract_nodes(episode_uuid, journal)
-
-    logger.info(
-        "Extracted %d entities for episode %s (new: %d, resolved: %d)",
-        result.extracted_count,
-        episode_uuid,
-        result.new_entities,
-        result.resolved_count,
-    )
-
-    if result.uuid_map:
-        set_episode_status(episode_uuid, "pending_edges", uuid_map=result.uuid_map)
-        logger.info(
-            "Episode %s moved to pending_edges (extract_edges task not yet implemented)",
-            episode_uuid,
-        )
-    else:
-        remove_episode_from_queue(episode_uuid)
-        logger.info("No entities extracted for episode %s, removed from queue", episode_uuid)
-
-    cleanup_if_no_work()
-
-    return {
-        "episode_uuid": result.episode_uuid,
-        "extracted_count": result.extracted_count,
-        "new_entities": result.new_entities,
-        "resolved_count": result.resolved_count,
-    }
+        return {
+            "episode_uuid": result.episode_uuid,
+            "extracted_count": result.extracted_count,
+            "new_entities": result.new_entities,
+            "resolved_count": result.resolved_count,
+        }
+    except Exception:
+        logger.exception("extract_nodes_task failed for episode %s", episode_uuid)
+        raise
+    finally:
+        try:
+            cleanup_if_no_work()
+        except Exception:
+            logger.warning("cleanup_if_no_work() failed after extract_nodes_task", exc_info=True)

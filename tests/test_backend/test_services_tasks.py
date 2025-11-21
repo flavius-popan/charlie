@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import Mock, patch
 
 import pytest
@@ -10,22 +11,20 @@ from backend import ExtractNodesResult
 from backend.settings import DEFAULT_JOURNAL
 
 
-@pytest.mark.asyncio
-async def test_extract_nodes_task_already_processed(episode_uuid):
+def test_extract_nodes_task_already_processed(episode_uuid):
     """Task skips if episode already processed."""
     from backend.services.tasks import extract_nodes_task
 
     with patch("backend.database.redis_ops.get_episode_status") as mock_status:
         mock_status.return_value = "pending_edges"
 
-        result = await extract_nodes_task.call_local(episode_uuid, DEFAULT_JOURNAL)
+        result = extract_nodes_task.call_local(episode_uuid, DEFAULT_JOURNAL)
 
         assert result["already_processed"] is True
         assert result["status"] == "pending_edges"
 
 
-@pytest.mark.asyncio
-async def test_extract_nodes_task_inference_disabled(episode_uuid):
+def test_extract_nodes_task_inference_disabled(episode_uuid):
     """Task exits early if inference disabled."""
     from backend.services.tasks import extract_nodes_task
 
@@ -34,13 +33,12 @@ async def test_extract_nodes_task_inference_disabled(episode_uuid):
             mock_status.return_value = "pending_nodes"
             mock_enabled.return_value = False
 
-            result = await extract_nodes_task.call_local(episode_uuid, DEFAULT_JOURNAL)
+            result = extract_nodes_task.call_local(episode_uuid, DEFAULT_JOURNAL)
 
             assert result["inference_disabled"] is True
 
 
-@pytest.mark.asyncio
-async def test_extract_nodes_task_with_entities_extracted(episode_uuid):
+def test_extract_nodes_task_with_entities_extracted(episode_uuid):
     """Task moves episode to pending_edges when entities found."""
     from backend.services.tasks import extract_nodes_task
 
@@ -67,7 +65,7 @@ async def test_extract_nodes_task_with_entities_extracted(episode_uuid):
                             mock_get_model.return_value = mock_model
                             mock_extract.return_value = mock_result
 
-                            result = await extract_nodes_task.call_local(episode_uuid, DEFAULT_JOURNAL)
+                            result = extract_nodes_task.call_local(episode_uuid, DEFAULT_JOURNAL)
 
                             assert result["episode_uuid"] == episode_uuid
                             assert result["extracted_count"] == 3
@@ -84,8 +82,7 @@ async def test_extract_nodes_task_with_entities_extracted(episode_uuid):
                             mock_cleanup.assert_called_once()
 
 
-@pytest.mark.asyncio
-async def test_extract_nodes_task_no_entities_removes_from_queue(episode_uuid):
+def test_extract_nodes_task_no_entities_removes_from_queue(episode_uuid):
     """Task removes episode from queue when no entities extracted."""
     from backend.services.tasks import extract_nodes_task
 
@@ -112,15 +109,14 @@ async def test_extract_nodes_task_no_entities_removes_from_queue(episode_uuid):
                             mock_get_model.return_value = mock_model
                             mock_extract.return_value = mock_result
 
-                            result = await extract_nodes_task.call_local(episode_uuid, DEFAULT_JOURNAL)
+                            result = extract_nodes_task.call_local(episode_uuid, DEFAULT_JOURNAL)
 
                             assert result["extracted_count"] == 0
                             mock_remove.assert_called_once_with(episode_uuid)
                             mock_cleanup.assert_called_once()
 
 
-@pytest.mark.asyncio
-async def test_extract_nodes_task_uses_dspy_context(episode_uuid):
+def test_extract_nodes_task_uses_dspy_context(episode_uuid):
     """Task sets dspy.context with LLM before calling extract_nodes."""
     from backend.services.tasks import extract_nodes_task
     import dspy
@@ -149,21 +145,20 @@ async def test_extract_nodes_task_uses_dspy_context(episode_uuid):
 
                             captured_lm = None
 
-                            async def capture_lm(*args, **kwargs):
+                            def capture_lm(*args, **kwargs):
                                 nonlocal captured_lm
                                 captured_lm = dspy.settings.lm
                                 return mock_result
 
                             mock_extract.side_effect = capture_lm
 
-                            await extract_nodes_task.call_local(episode_uuid, DEFAULT_JOURNAL)
+                            extract_nodes_task.call_local(episode_uuid, DEFAULT_JOURNAL)
 
                             assert captured_lm == mock_model
 
 
-@pytest.mark.asyncio
 @pytest.mark.inference
-async def test_extract_nodes_task_integration(
+def test_extract_nodes_task_integration(
     isolated_graph, episode_uuid, cleanup_test_episodes, require_llm
 ):
     """Integration test: extract_nodes_task with real model and database."""
@@ -172,14 +167,14 @@ async def test_extract_nodes_task_integration(
     from backend import add_journal_entry
 
     content = "I met Alice at the park. She works at Google."
-    episode_uuid = await add_journal_entry(content)
+    episode_uuid = asyncio.run(add_journal_entry(content))
 
     set_episode_status(episode_uuid, "pending_nodes", journal=DEFAULT_JOURNAL)
 
     with patch("backend.database.redis_ops.get_inference_enabled", create=True) as mock_enabled:
         mock_enabled.return_value = True
 
-        result = await extract_nodes_task.call_local(episode_uuid, DEFAULT_JOURNAL)
+        result = extract_nodes_task.call_local(episode_uuid, DEFAULT_JOURNAL)
 
         assert result["episode_uuid"] == episode_uuid
         assert isinstance(result["extracted_count"], int)

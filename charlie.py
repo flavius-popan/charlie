@@ -39,7 +39,7 @@ LOGS_DIR = Path(__file__).parent / "logs"
 LOGS_DIR.mkdir(exist_ok=True)
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.ERROR,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     handlers=[
         logging.FileHandler(LOGS_DIR / "charlie.log"),
@@ -294,7 +294,8 @@ class HomeScreen(Screen):
     def _graceful_shutdown(self):
         """Ensure worker stops before database teardown (idempotent)."""
         try:
-            self.stop_huey_worker()
+            if hasattr(self.app, "stop_huey_worker"):
+                self.app.stop_huey_worker()
         finally:
             shutdown_database()
 
@@ -511,8 +512,9 @@ class CharlieApp(App):
 
         try:
             args = self._build_huey_command()
-            huey_err_path = LOGS_DIR / "huey-worker.err"
-            self.huey_log_file = open(huey_err_path, "a", buffering=1)
+            huey_log_path = LOGS_DIR / "charlie.log"
+            huey_log_path.parent.mkdir(parents=True, exist_ok=True)
+            self.huey_log_file = open(huey_log_path, "a", buffering=1)
             self.huey_process = subprocess.Popen(
                 args,
                 stdout=subprocess.DEVNULL,
@@ -550,6 +552,18 @@ class CharlieApp(App):
     def stop_huey_worker(self):
         """Public wrapper to stop worker (used by UI handlers)."""
         self._shutdown_huey()
+
+    def _graceful_shutdown(self):
+        """Stop background worker before tearing down the database."""
+        try:
+            self.stop_huey_worker()
+        finally:
+            try:
+                shutdown_database()
+            except Exception as exc:
+                logger.warning(
+                    "Database shutdown encountered an error: %s", exc, exc_info=True
+                )
 
     def on_unmount(self):
         # Covers exits triggered outside the key binding (e.g., cmd+q/ctrl+c)

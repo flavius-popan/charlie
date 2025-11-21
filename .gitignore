@@ -33,4 +33,3 @@ debug/
 
 # Logs
 logs/*.log
-logs/*.err
