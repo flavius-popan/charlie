@@ -31,7 +31,7 @@ import signal
 from contextlib import asynccontextmanager
 from datetime import datetime
 import subprocess
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, Mock, patch, mock_open
 
 import pytest
 
@@ -574,3 +574,29 @@ class TestIntegration:
             await pilot.press("escape")
             await pilot.pause()
             assert isinstance(app.screen, HomeScreen)
+
+
+class TestWorkerManagement:
+    """Tests for Huey worker lifecycle management."""
+
+    @pytest.mark.asyncio
+    async def test_worker_startup_closes_file_on_popen_failure(self, mock_database):
+        """Should close log file handle if subprocess.Popen raises exception."""
+        from pathlib import Path
+
+        app = CharlieApp()
+        async with app_test_context(app) as pilot:
+            await pilot.pause()
+
+            mock_file = Mock()
+            with patch('charlie.open', mock_open()) as mock_open_func, \
+                 patch('charlie.subprocess.Popen', side_effect=FileNotFoundError("huey_consumer not found")), \
+                 patch.object(Path, 'mkdir'):
+
+                mock_open_func.return_value = mock_file
+
+                app._ensure_huey_worker_running()
+
+                mock_file.close.assert_called_once()
+                assert app.huey_log_file is None
+                assert app.huey_process is None

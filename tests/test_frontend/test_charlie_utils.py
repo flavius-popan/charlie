@@ -1,12 +1,8 @@
 """Tests for Charlie TUI utility functions."""
 
-import subprocess
-from pathlib import Path
-from unittest.mock import Mock, patch, mock_open
-
 import pytest
 
-from charlie import extract_title, get_display_title, CharlieApp
+from charlie import extract_title, get_display_title
 
 
 class TestExtractTitle:
@@ -96,24 +92,3 @@ class TestGetDisplayTitle:
         episode = {"content": "No header content", "name": None}
         result = get_display_title(episode)
         assert result == "No header content"
-
-
-class TestWorkerStartup:
-    """Tests for Huey worker startup functionality."""
-
-    def test_worker_startup_closes_file_on_popen_failure(self):
-        """Should close log file handle if subprocess.Popen raises exception."""
-        app = CharlieApp()
-
-        mock_file = Mock()
-        with patch('charlie.open', mock_open()) as mock_open_func, \
-             patch('charlie.subprocess.Popen', side_effect=FileNotFoundError("huey_consumer not found")), \
-             patch.object(Path, 'mkdir'):
-
-            mock_open_func.return_value = mock_file
-
-            app._ensure_huey_worker_running()
-
-            mock_file.close.assert_called_once()
-            assert app.huey_log_file is None
-            assert app.huey_process is None
