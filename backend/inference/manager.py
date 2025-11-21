@@ -48,7 +48,10 @@ def cleanup_if_no_work() -> None:
     from backend.database.redis_ops import get_episodes_by_status
 
     pending_nodes = get_episodes_by_status("pending_nodes")
-    # TODO: Add pending_edges check when extract_edges_task is implemented
+    # Intentionally do NOT block on pending_edges yet.
+    # Until edge extraction exists, episodes may sit in pending_edges as a staging
+    # state; model unloads should still proceed. When extract_edges_task lands,
+    # add a pending_edges check here to keep models warm for relationship runs.
     # pending_edges = get_episodes_by_status("pending_edges")
 
     if len(pending_nodes) == 0:

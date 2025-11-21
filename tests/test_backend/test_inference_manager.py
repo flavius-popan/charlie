@@ -79,7 +79,7 @@ def test_cleanup_if_no_work_with_pending_nodes(reset_model_manager):
 
 
 def test_cleanup_if_no_work_with_pending_edges(reset_model_manager):
-    """cleanup_if_no_work unloads models even with pending_edges (not yet implemented)."""
+    """For now we still unload even if pending_edges exist (edge task not implemented yet)."""
     with patch("backend.inference.manager.DspyLM") as mock_dspy_lm:
         with patch("backend.database.redis_ops.get_episodes_by_status") as mock_get_episodes:
             with patch("backend.inference.manager.gc.collect") as mock_gc:
@@ -94,7 +94,7 @@ def test_cleanup_if_no_work_with_pending_edges(reset_model_manager):
 
                 cleanup_if_no_work()
 
-                # Models unload because pending_edges check is commented out until edge extraction is implemented
+                # Intentional: keep unloading while pending_edges is just a staging state
                 assert manager.MODELS["llm"] is None
                 mock_gc.assert_called_once()
 
@@ -118,7 +118,7 @@ def test_cleanup_if_no_work_unloads_when_queue_empty(reset_model_manager):
 
 
 def test_cleanup_if_no_work_checks_both_queues(reset_model_manager):
-    """cleanup_if_no_work checks only pending_nodes (pending_edges check commented out)."""
+    """Currently only pending_nodes is considered for keeping models warm."""
     with patch("backend.database.redis_ops.get_episodes_by_status") as mock_get_episodes:
         mock_get_episodes.return_value = []
 

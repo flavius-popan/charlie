@@ -211,6 +211,10 @@ def extract_nodes_task(episode_uuid: str, journal: str):
     return result
 ```
 
+**Temporary behavior (as of Nov 21, 2025):**
+- Only `extract_nodes` runs today. Episodes move into `pending_edges` as a staging state, but there is no edge worker yet.
+- `cleanup_if_no_work` purposely ignores `pending_edges` so models can still unload; add the check back when `extract_edges_task` exists.
+
 #### Important Notes
 
 **Concurrency:**

@@ -4,6 +4,8 @@
 
 **Architecture**: See `plans/huey_orchestrator.md` for detailed rationale on thread safety, model persistence, and resource management.
 
+**Current Scope (Nov 21, 2025)**: Only `extract_nodes` is implemented. Episodes advance to `pending_edges` as a staging marker, but no edge worker exists yet. `cleanup_if_no_work` deliberately ignores `pending_edges` so models can unload; reinstate the pending_edges check once `extract_edges_task` is added.
+
 ## Prerequisite: Lock DSPy Cache Location (simple, importable helper)
 
 - Add `backend/dspy_cache.py`:

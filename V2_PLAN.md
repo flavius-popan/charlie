@@ -30,7 +30,9 @@ This separation allows the TUI to call `add_journal_entry()` to instantly persis
 
 **Extract Entities**: Identifies people, places, organizations, and activities mentioned in the episode. Uses MinHash LSH for fuzzy deduplication against existing entities (`graphiti_core.utils.maintenance.dedup_helpers`). Stores both provisional nodes (with temporary UUIDs for LLM indexing) and resolved nodes (canonical UUIDs after deduplication via `node_operations.resolve_extracted_nodes`). The uuid_map linking provisional to canonical UUIDs is stored in episode attributes temporarily.
 
-**Extract Relationships**: Identifies relationships between entities with supporting facts. LLM returns relationships as integer indices referencing the provisional entity list. After extraction, `edge_operations.resolve_edge_pointers()` remaps to canonical UUIDs using the uuid_map. Exact-match deduplication merges edges across episodes via the `episodes` list field (`edge_operations.resolve_extracted_edge`). Once edges are extracted, the uuid_map is cleaned up from episode attributes.
+**Current Scope (as of Nov 21, 2025)**: Only entity extraction is live. Episodes transition from `pending_nodes` to `pending_edges` as a holding state, but no edge extraction worker exists yet. `cleanup_if_no_work` intentionally ignores `pending_edges` so models can unload even if that queue contains items. This will change once `extract_edges_task` is implemented.
+
+**Extract Relationships** (planned): Identifies relationships between entities with supporting facts. LLM returns relationships as integer indices referencing the provisional entity list. After extraction, `edge_operations.resolve_edge_pointers()` remaps to canonical UUIDs using the uuid_map. Exact-match deduplication merges edges across episodes via the `episodes` list field (`edge_operations.resolve_extracted_edge`). Once edges are extracted, the uuid_map is cleaned up from episode attributes.
 
 **Edge Tense Strategy - Hybrid Event/State Model**: Journal entries naturally document both temporal events and ongoing states. V2 uses **tense to encode semantic meaning**:
 
