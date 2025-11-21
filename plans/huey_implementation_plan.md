@@ -95,7 +95,7 @@
    - `set_inference_enabled(enabled: bool)` - Persists to Redis at `app:inference_enabled`
    - `enqueue_pending_episodes()` - Scans and enqueues pending work when inference is enabled
    - Setting survives app restarts via Redis storage
-   - Simplified state management: scan-based lookups, single-stage processing
+   - Simplified state management: scan-based lookups; current pipeline has only the entity-extraction stage (more stages can be added later)
 
 4. **Test Coverage**: 15 passing unit tests
    - 5 tests for queue configuration and error handling
@@ -145,7 +145,7 @@
    - Background processing without blocking TUI
 
 4. **Architecture Validation**:
-   - Single-stage processing confirmed (simplified from original two-stage design)
+   - Single-stage processing confirmed
    - Thread safety verified: `-k thread -w 1` ensures sequential execution
    - Event-driven cleanup confirmed: `cleanup_if_no_work()` in task `finally` blocks
    - No file descriptor leaks: proper cleanup in exception paths
@@ -264,9 +264,9 @@ huey = RedisHuey(
 ```python
 @huey.task()
 def extract_nodes_task(episode_uuid: str, journal: str):
-    """Background entity extraction (single-stage processing).
+    """Background entity extraction (current implemented stage).
 
-    Simplified from original two-stage design (nodes→edges) to single-stage.
+    # Single-stage processing
     Processes episode and removes from queue immediately upon completion.
     """
     from backend.database.redis_ops import (
@@ -297,7 +297,7 @@ def extract_nodes_task(episode_uuid: str, journal: str):
 ```
 
 **Key points:**
-- Single-stage processing: `pending_nodes` → removed from queue (simplified from original two-stage design)
+- Single-stage processing: `pending_nodes` → removed from queue
 - Tasks call `get_model()` from manager (model persistence)
 - Tasks call `cleanup_if_no_work()` at end (event-driven unload)
 - NO periodic cleanup task needed (work queue drives unload)
@@ -330,7 +330,7 @@ extract_nodes_task(episode_uuid, journal)  # Enqueue immediately
 
 **Layer 1: Redis (State Tracker)**
 - Tracks episode lifecycle state: `pending_nodes` → [removed when complete]
-- **Simplified Architecture**: Single-stage processing (original two-stage design with `pending_edges` was simplified)
+- **Architecture**: Single-stage processing
 - Provides discovery for UI, manual operations, crash recovery
 - Source of truth for "what needs processing"
 
@@ -355,13 +355,13 @@ extract_nodes_task():
   If not → already processed → exit
   ↓
   If yes AND get_inference_enabled():
-      Run extraction → remove from queue (single-stage complete)
+      Run extraction → remove from queue (current stage complete)
   ↓
   If yes BUT inference disabled:
       Exit (episode remains in Redis for later)
 ```
 
-**Key insight:** Redis and Huey serve different purposes - not redundant, but complementary. Single-stage processing keeps architecture simple.
+**Key insight:** Redis and Huey serve different purposes - not redundant, but complementary. The queue state is owned by Redis; Huey executes whatever stages exist today (currently entity extraction) and clears the Redis hash when that episode’s work is done.
 
 ### Files to Modify
 
@@ -451,7 +451,7 @@ def extract_nodes_task(episode_uuid: str, journal: str):
         # Leave episode in pending_nodes for later
         return {'inference_disabled': True}
 
-    # Proceed with extraction (single-stage processing)
+    # Proceed with extraction (current implemented stage)
     result = extract_nodes(episode_uuid, journal)
 
     # Single-stage: remove from queue when done

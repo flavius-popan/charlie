@@ -60,7 +60,7 @@ The design keeps a single worker process alive so models can stay resident durin
 
 **Structure:**
 *   `backend/services/queue.py` bridges the `huey` library with your existing `backend/database/lifecycle.py` module. It must access the existing connection pool to ensure it talks to the same embedded database file defined in `backend/settings.py`.
-*   `backend/services/tasks.py` defines the specific jobs that wrap `backend/graph/*` operations (currently `extract_nodes_task` - single-stage processing).
+*   `backend/services/tasks.py` defines the specific jobs that wrap `backend/graph/*` operations (today only `extract_nodes_task`; additional graph tasks will be added as they are built).
 *   These tasks call graph operation functions (like `backend/graph/extract_nodes.py::extract_nodes()`) which internally use `backend/inference/manager.py` to retrieve models.
 *   Tasks do NOT import the Factory directly - all model access flows through the Manager.
 
@@ -73,7 +73,7 @@ The design keeps a single worker process alive so models can stay resident durin
 **Why:**
 *   **Worker Discovery:** Workers need to find episodes in specific states (pending_nodes) for batch processing and retry logic.
 *   **State Tracking:** Episodes move through processing states then are removed from Redis when complete.
-*   **Simplified Architecture:** Single-stage processing (original two-stage design was simplified).
+*   **Architecture:** Single-stage processing.
 *   **Operational Visibility:** Status monitoring for dashboards, recovery after crashes.
 
 #### Redis Key Structure
@@ -90,10 +90,10 @@ episode:{uuid} → Hash {
 **Design Rationale:**
 - O(1) status lookups by UUID via Hash
 - O(n) scanning by status via SCAN (n = episodes in queue, bounded by backlog)
-- Single source of truth: episode hash contains all state
-- **Single-stage processing**: Only `pending_nodes` status used (episodes removed when processing completes)
-- **Episodes removed from Redis entirely once enrichment completes**
-- Completed episodes live in FalkorDB, not Redis (prevents unbounded growth)
+- Single source of truth: episode hash contains all state for that episode’s processing lifecycle.
+- Lifespan coupling: the Redis hash must exist while work remains for the episode and must be deleted when processing finishes **or** when the episode itself is deleted from the graph, so Redis and FalkorDB stay in sync.
+- Today’s states: `pending_nodes` (active) and an optional `pending_edges` placeholder. Future graph stages can add new states; the same hash carries them.
+- Completed episodes live only in FalkorDB; Redis holds *work-in-flight* metadata to keep scans bounded.
 
 #### Episode Lifecycle Workflow
 
@@ -164,7 +164,7 @@ from backend.database.redis_ops import get_episodes_by_status
 from backend.services.tasks import extract_nodes_task
 
 def recover_pending_episodes():
-    # Re-enqueue pending node extractions (single-stage processing)
+    # Re-enqueue pending node extractions (current extract_nodes stage)
     for uuid in get_episodes_by_status("pending_nodes"):
         data = get_episode_data(uuid)
         extract_nodes_task(uuid, data["journal"])
@@ -212,8 +212,8 @@ def extract_nodes_task(episode_uuid: str, journal: str):
 ```
 
 **Temporary behavior (as of Nov 21, 2025):**
-- Only `extract_nodes` runs today. Episodes move into `pending_edges` as a staging state, but there is no edge worker yet.
-- `cleanup_if_no_work` purposely ignores `pending_edges` so models can still unload; add the check back when `extract_edges_task` exists.
+- Only `extract_nodes` runs today. Episodes may be marked `pending_edges` for bookkeeping, but no edge worker exists yet.
+- `cleanup_if_no_work` purposely ignores `pending_edges` so models can still unload; add the check back when an edge task exists.
 
 #### Important Notes
 
@@ -223,15 +223,18 @@ def extract_nodes_task(episode_uuid: str, journal: str):
 - Single-threaded worker configuration (-w 1) provides sequential execution guarantee
 
 **State Transitions:**
-Valid transitions in the state machine (single-stage processing):
-- `pending_nodes` → [removed from Redis] (processing complete)
+Valid transitions in the current state machine:
+- `pending_nodes` → `pending_edges` (if/when an edge stage will run)
+- `pending_nodes` → removed from Redis (no entities extracted or processing complete)
+- `pending_edges` → removed from Redis (placeholder cleared or edge stage complete)
+- Episode deleted → remove Redis hash immediately (must stay in sync with FalkorDB)
 
 **Cleanup Strategy:**
-- `remove_episode_from_queue()` removes episode from Redis
-- Call immediately when processing completes
+- `remove_episode_from_queue()` removes the per-episode hash from Redis
+- Call immediately when processing completes **or** when the episode is deleted
 - Redis should ONLY contain episodes actively being processed or waiting in queue
 - Completed episodes live in FalkorDB only - query FalkorDB for historical data
-- This keeps Redis scan bounded by queue backlog, preventing unbounded growth
+- This keeps Redis scan bounded by queue backlog, preventing unbounded growth and keeps Redis/graph state aligned
 
 **Testing:**
 All functions have comprehensive test coverage in `tests/test_backend/test_redis_ops.py`:
@@ -302,7 +305,7 @@ All functions have comprehensive test coverage in `tests/test_backend/test_redis
   ↓
   dequeue() → execute(task)
   ↓
-  Your graph operations (extract_nodes - single-stage processing)
+  Your graph operations (currently extract_nodes; additional graph stages will be added later)
   ↓
   Model Manager → get_model() → llama-cpp-python
 ```
@@ -360,16 +363,16 @@ huey = RedisHuey(
 **File:** `backend/services/tasks.py`
 
 ```python
-"""Huey tasks for graph operations (single-stage processing)."""
+"""Huey tasks for graph operations (current extract_nodes stage; more stages can be added)."""
 
 from backend.services.queue import huey
 from backend.graph.extract_nodes import extract_nodes
 
 @huey.task()
 def extract_nodes_task(episode_uuid: str, journal: str):
-    """Background task for entity extraction (single-stage processing).
+    """Background task for entity extraction (current implemented stage).
 
-    Simplified from original two-stage design (nodes→edges) to single-stage.
+    # Single-stage processing
     Processes episode and removes from queue immediately upon completion.
 
     Calls backend/graph/extract_nodes.py which uses the Model Manager

@@ -30,6 +30,29 @@ These are blocking gaps observed after reviewing `plans/huey_implementation_plan
 
 ---
 
+## 4) Deletion lifecycle leaves orphan Redis keys and dangling graph nodes
+- **Problem**: Deleting a journal entry removes only the graph episode; Redis queue state is left behind, so Huey workers keep pulling nonexistent episodes and crash with `NodeNotFoundError`. Graph cleanup omits orphan pruning for extracted entities/edges.
+- **Evidence**:
+  - UI delete path calls `delete_episode` only; no Redis/Huey cleanup: `charlie.py:286-295`.
+  - `delete_episode` deletes just the Episodic node and warns about missing orphan cleanup: `backend/database/persistence.py:354-387`.
+  - Redis queue entries never cleared on delete; `set_episode_status` + `enqueue_pending_episodes` will re-enqueue `pending_nodes` even if the episode is gone: `backend/database/redis_ops.py:103-200,232-240`.
+- Extraction success sets status to `pending_edges` then stops (extract_edges_task is TODO), leaving the per-episode Redis hash `episode:<uuid>` (fields: status/journal/uuid_map) in place indefinitely: `backend/services/tasks.py:73-86`.
+  - `cleanup_if_no_work` only inspects `pending_nodes`; stuck hashes there block model unload: `backend/inference/manager.py:46-63`.
+  - Runtime proof: `logs/charlie.log` on 2025-11-21 11:22:41–11:22:51 shows repeated `graphiti_core.errors.NodeNotFoundError` for episode UUIDs that had been deleted, indicating Redis still held those queue keys.
+- **Impact**:
+  - Worker crash loops and noisy logs; extraction never progresses for the stuck items.
+  - `pending_nodes` hashes keep models resident and mis-signal work.
+  - Graph drift: MENTIONS edges are removed with the episode, but extracted entity nodes remain orphaned; future dedupe/edges can anchor to stale nodes.
+- **Required fixes**:
+  - Delete path: remove `episode:<uuid>` Redis hash (and any task/uuid_map metadata) whenever an episode is deleted (user delete or batch). Idempotent if already gone.
+  - Task path: on unrecoverable errors (e.g., `NodeNotFoundError`), drop or mark the Redis key to avoid retry storms; optionally mark `status=dead` for diagnostics.
+  - Status completeness: if edge extraction isn’t implemented, `pending_edges` must not be a resting state—either promote to `done` and delete the hash, or add a no-op edge step that clears the queue so the lifecycle finishes cleanly.
+  - Redis/graph coupling: the per-episode Redis hash is the authoritative state tracker only while the episode exists; the hash must be deleted whenever the episode is deleted so Redis and FalkorDB stay in sync.
+  - Graph pruning: when deleting an episode, remove MENTIONS edges and delete only entities with no remaining incoming MENTIONS (journal-scoped) to avoid collateral damage.
+  - Tests: add integration tests that start a real consumer/simulator to prove (a) delete wipes Redis keys, (b) orphan pruning retains entities still referenced elsewhere, (c) `enqueue_pending_episodes` skips absent episodes, and (d) model unloads once queues are empty.
+
+---
+
 These issues should be addressed before integrating additional graph modules to ensure the orchestrator reliably drives background inference.
 
 ---
