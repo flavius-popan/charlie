@@ -46,8 +46,9 @@ These are blocking gaps observed after reviewing `plans/huey_implementation_plan
 - **Required fixes**:
   - Delete path: remove `episode:<uuid>` Redis hash (and any task/uuid_map metadata) whenever an episode is deleted (user delete or batch). Idempotent if already gone.
   - Task path: on unrecoverable errors (e.g., `NodeNotFoundError`), drop or mark the Redis key to avoid retry storms; optionally mark `status=dead` for diagnostics.
-  - Status completeness: if edge extraction isn’t implemented, `pending_edges` must not be a resting state—either promote to `done` and delete the hash, or add a no-op edge step that clears the queue so the lifecycle finishes cleanly.
-  - Redis/graph coupling: the per-episode Redis hash is the authoritative state tracker only while the episode exists; the hash must be deleted whenever the episode is deleted so Redis and FalkorDB stay in sync.
+  - State tracking refactor: stop deleting `episode:<uuid>` hashes to signal completion. Let Huey own the queue; use the hash as persistent episode state. Add terminal `status=done` (or `dead` on failure); delete the hash only when the episode itself is deleted. Update tasks to: (a) set `status=done` for the no-entity path; (b) set `pending_edges` only when a `uuid_map` exists; (c) move `pending_edges` → `done` when the edge stage (real or placeholder) completes.
+  - Redis/graph coupling: the per-episode Redis hash must persist for the lifetime of the episode and be deleted when the episode is deleted so Redis and FalkorDB stay in sync.
+  - Status contract tests: add/adjust tests to assert (a) no-entity path → `status=done`, hash retained; (b) entity path → `status=pending_edges` with `uuid_map`; (c) edge completion → `status=done`; (d) deletion → hash removed.
   - Graph pruning: when deleting an episode, remove MENTIONS edges and delete only entities with no remaining incoming MENTIONS (journal-scoped) to avoid collateral damage.
   - Tests: add integration tests that start a real consumer/simulator to prove (a) delete wipes Redis keys, (b) orphan pruning retains entities still referenced elsewhere, (c) `enqueue_pending_episodes` skips absent episodes, and (d) model unloads once queues are empty.
 
