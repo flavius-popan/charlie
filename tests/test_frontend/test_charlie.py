@@ -27,7 +27,6 @@ Compare against baselines (normal test run):
 """
 
 import asyncio
-import signal
 from contextlib import asynccontextmanager
 from datetime import datetime
 import subprocess
@@ -104,22 +103,16 @@ class TestCharlieApp:
     @pytest.mark.asyncio
     async def test_app_starts_worker_always(self, mock_database):
         """Huey worker starts regardless of inference toggle; tasks enforce it."""
-        mock_process = Mock()
-        mock_process.wait.return_value = 0
-        with patch('charlie.subprocess.Popen', return_value=mock_process) as mock_popen:
+        with patch('charlie.is_huey_consumer_running', return_value=False), \
+             patch('charlie.start_huey_consumer') as mock_start, \
+             patch('charlie.atexit.register'):
+
             app = CharlieApp()
             async with app_test_context(app) as pilot:
                 await pilot.pause()
                 await pilot.pause()  # allow call_after_refresh to run
 
-            mock_popen.assert_called_once()
-            args = mock_popen.call_args[0][0]
-            assert '-k' in args and '-w' in args
-            # Shutdown should be invoked without error
-            mock_process.send_signal.assert_called_with(signal.SIGINT)
-            # stderr redirected to log file, stdout suppressed
-            assert mock_popen.call_args[1]['stdout'] is subprocess.DEVNULL
-            assert mock_popen.call_args[1]['stderr'] is not None
+            mock_start.assert_called_once()
 
 
 class TestHomeScreen:
@@ -405,7 +398,9 @@ class TestSettingsScreen:
     async def test_settings_toggles_initial_state(self, mock_database):
         """Should load initial state from backend."""
         mock_database['get_inference_enabled'].return_value = True
-        with patch('charlie.subprocess.Popen'):
+        with patch('charlie.is_huey_consumer_running', return_value=False), \
+             patch('charlie.start_huey_consumer'), \
+             patch('charlie.atexit.register'):
             app = CharlieApp()
             async with app_test_context(app) as pilot:
                 await pilot.pause()
@@ -495,10 +490,9 @@ class TestSettingsScreen:
         """Disabling inference should NOT stop the Huey worker (tasks honor toggle)."""
         mock_database['get_inference_enabled'].return_value = True
 
-        with patch('charlie.subprocess.Popen') as mock_popen:
-            mock_process = Mock()
-            mock_process.wait.return_value = 0
-            mock_popen.return_value = mock_process
+        with patch('charlie.is_huey_consumer_running', return_value=False), \
+             patch('charlie.start_huey_consumer'), \
+             patch('charlie.atexit.register'):
 
             app = CharlieApp()
             async with app_test_context(app) as pilot:
@@ -580,23 +574,16 @@ class TestWorkerManagement:
     """Tests for Huey worker lifecycle management."""
 
     @pytest.mark.asyncio
-    async def test_worker_startup_closes_file_on_popen_failure(self, mock_database):
-        """Should close log file handle if subprocess.Popen raises exception."""
-        from pathlib import Path
-
+    async def test_worker_startup_notifies_on_failure(self, mock_database):
+        """App should surface an error if the consumer fails to start."""
         app = CharlieApp()
         async with app_test_context(app) as pilot:
             await pilot.pause()
 
-            mock_file = Mock()
-            with patch('charlie.open', mock_open()) as mock_open_func, \
-                 patch('charlie.subprocess.Popen', side_effect=FileNotFoundError("huey_consumer not found")), \
-                 patch.object(Path, 'mkdir'):
+            with patch('charlie.is_huey_consumer_running', return_value=False), \
+                 patch('charlie.start_huey_consumer', side_effect=RuntimeError("boom")), \
+                 patch('charlie.atexit.register'):
 
-                mock_open_func.return_value = mock_file
-
+                app.notify = Mock()
                 app._ensure_huey_worker_running()
-
-                mock_file.close.assert_called_once()
-                assert app.huey_log_file is None
-                assert app.huey_process is None
+                app.notify.assert_called_once()

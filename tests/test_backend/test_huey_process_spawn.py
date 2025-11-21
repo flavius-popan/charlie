@@ -1,30 +1,27 @@
 from __future__ import annotations
 
-import sys
 from unittest.mock import patch
 
 from charlie import CharlieApp
-from backend.settings import HUEY_WORKER_TYPE, HUEY_WORKERS
 
 
-def test_build_huey_command_prefers_console_script():
-    app = CharlieApp()
-    console_path = "/opt/bin/huey_consumer"
-
-    with patch("charlie.shutil.which", return_value=console_path):
-        cmd = app._build_huey_command()
-
-    assert cmd[0] == console_path
-    assert cmd[1] == "backend.services.tasks.huey"
-    assert ["-k", HUEY_WORKER_TYPE, "-w", str(HUEY_WORKERS), "-q"] == cmd[2:]
-
-
-def test_build_huey_command_module_fallback_when_console_missing():
+def test_ensure_huey_worker_running_starts_consumer_when_not_running():
     app = CharlieApp()
 
-    with patch("charlie.shutil.which", return_value=None):
-        cmd = app._build_huey_command()
+    with patch("charlie.is_huey_consumer_running", return_value=False):
+        with patch("charlie.start_huey_consumer") as mock_start:
+            with patch("charlie.atexit.register"):
+                app._ensure_huey_worker_running()
 
-    assert cmd[:3] == [sys.executable, "-m", "huey.bin.huey_consumer"]
-    assert cmd[3] == "backend.services.tasks.huey"
-    assert ["-k", HUEY_WORKER_TYPE, "-w", str(HUEY_WORKERS), "-q"] == cmd[4:]
+    mock_start.assert_called_once()
+
+
+def test_ensure_huey_worker_running_noop_when_already_running():
+    app = CharlieApp()
+
+    with patch("charlie.is_huey_consumer_running", return_value=True):
+        with patch("charlie.start_huey_consumer") as mock_start:
+            with patch("charlie.atexit.register"):
+                app._ensure_huey_worker_running()
+
+    mock_start.assert_not_called()

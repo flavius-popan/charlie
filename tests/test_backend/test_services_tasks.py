@@ -180,7 +180,7 @@ def test_extract_nodes_task_integration(
         assert isinstance(result["new_entities"], int)
 
         status = get_episode_status(episode_uuid)
-        assert status is None
+        assert status == "pending_edges"
 
 
 def test_extract_nodes_task_cleanup_always_called(episode_uuid):

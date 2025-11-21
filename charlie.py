@@ -1,10 +1,6 @@
 import asyncio
 import atexit
 import logging
-import signal
-import subprocess
-import sys
-import shutil
 from pathlib import Path
 
 from textual.app import App, ComposeResult
@@ -29,6 +25,7 @@ from backend.database import (
     ensure_database_ready,
     get_all_episodes,
     get_episode,
+    get_tcp_server_endpoint,
     shutdown_database,
     update_episode,
 )
@@ -37,7 +34,12 @@ from backend.database.redis_ops import (
     get_inference_enabled,
     set_inference_enabled,
 )
-from backend.settings import DEFAULT_JOURNAL, HUEY_WORKER_TYPE, HUEY_WORKERS
+from backend.settings import DEFAULT_JOURNAL
+from backend.services.queue import (
+    is_huey_consumer_running,
+    start_huey_consumer,
+    stop_huey_consumer,
+)
 
 LOGS_DIR = Path(__file__).parent / "logs"
 LOGS_DIR.mkdir(exist_ok=True)
@@ -472,37 +474,6 @@ class CharlieApp(App):
 
     def __init__(self):
         super().__init__()
-        self.huey_process: subprocess.Popen | None = None
-        self.huey_log_file = None
-
-    def _build_huey_command(self) -> list[str]:
-        """Build the Huey worker command.
-
-        Prefers the console script `huey_consumer` (recommended by Huey docs) to
-        avoid the runpy double-import warning triggered by `python -m
-        huey.consumer`. Falls back to the module entrypoint if the console script
-        is not on PATH.
-        """
-
-        console = shutil.which("huey_consumer")
-        base_args = [
-            "backend.services.tasks.huey",
-            "-k",
-            HUEY_WORKER_TYPE,
-            "-w",
-            str(HUEY_WORKERS),
-            "-q",  # quiet logging to avoid noisy Huey debug output
-        ]
-
-        if console:
-            return [console, *base_args]
-
-        return [
-            sys.executable,
-            "-m",
-            "huey.bin.huey_consumer",
-            *base_args,
-        ]
 
     async def on_mount(self):
         self.theme = "catppuccin-mocha"
@@ -511,52 +482,35 @@ class CharlieApp(App):
         # Worker is started after DB readiness in HomeScreen._init_and_load.
 
     def _ensure_huey_worker_running(self):
-        """Start Huey worker in thread mode if not already running."""
-        if self.huey_process is not None:
+        """Start Huey consumer in-process if not already running."""
+        if is_huey_consumer_running():
             return
 
         try:
-            args = self._build_huey_command()
-            huey_log_path = LOGS_DIR / "charlie.log"
-            huey_log_path.parent.mkdir(parents=True, exist_ok=True)
-            self.huey_log_file = open(huey_log_path, "a", buffering=1)
-            self.huey_process = subprocess.Popen(
-                args,
-                stdout=subprocess.DEVNULL,
-                stderr=self.huey_log_file,
-            )
+            start_huey_consumer()
+            endpoint = get_tcp_server_endpoint()
+            if endpoint:
+                host, port = endpoint
+                logger.info(
+                    "Huey consumer running in-process using embedded Redis at %s:%d",
+                    host,
+                    port,
+                )
+            else:
+                logger.info(
+                    "Huey consumer running in-process using embedded Redis (unix socket)"
+                )
             atexit.register(self._shutdown_huey)
         except Exception as exc:
             logger.error("Failed to start Huey worker: %s", exc, exc_info=True)
             self.notify("huey ded 💀 check logz", severity="error", timeout=5)
-            if self.huey_log_file:
-                self.huey_log_file.close()
-                self.huey_log_file = None
 
     def _shutdown_huey(self):
         """Terminate Huey worker gracefully (finish current task first)."""
-        if self.huey_process is None:
-            return
-
         try:
-            # SIGINT lets Huey finish the current task before exiting.
-            self.huey_process.send_signal(signal.SIGINT)
-            self.huey_process.wait(timeout=3)
+            stop_huey_consumer()
         except Exception as exc:
             logger.warning("Error while stopping Huey worker: %s", exc, exc_info=True)
-            # Last resort: force stop to avoid orphaned process
-            try:
-                self.huey_process.terminate()
-            except Exception:
-                pass
-        finally:
-            self.huey_process = None
-            if self.huey_log_file:
-                try:
-                    self.huey_log_file.close()
-                except Exception:
-                    pass
-                self.huey_log_file = None
 
     def stop_huey_worker(self):
         """Public wrapper to stop worker (used by UI handlers)."""

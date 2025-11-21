@@ -6,22 +6,9 @@ Issues are ordered by priority and dependency: foundational contract changes com
 
 ---
 
-## 1) Worker/producer Redis split & port collision risk
+## 1) Redis episode state tracking contract is incomplete (FOUNDATIONAL)
 
-- **Problem**: The Huey consumer is launched in a separate process that re-initializes FalkorDB/Redis, even though the TUI already started an embedded Redis with a TCP listener enabled. This can spawn a second redis-server (port 6379 by default) or point Huey at a different DB file, so enqueued jobs may never be seen by the worker or the worker may crash on startup.
-- **Evidence**:
-  - TCP listener enabled by default: `backend/settings.py:11-17`.
-  - `_init_db` spins up a redis-server using that port each time a process calls `_ensure_graph`: `backend/database/lifecycle.py:204-227`.
-  - The worker process imports `backend.services.queue`, which calls `_ensure_graph` when the module loads: `backend/services/queue.py:15-48`.
-  - The TUI starts the Huey consumer as a *separate process* (`subprocess.Popen`), not a thread: `charlie.py:478-534`. That new process will repeat the DB init path above, racing or conflicting with the already running redis-server.
-- **Impact**: Tasks can be orphaned (producer writes to one Redis, worker listens to another) or the worker fails to start due to "address already in use", leaving background inference non-functional.
-- **Follow-up note**: Turning off the TCP listener does **not** remove the split-brain risk. Even in default redislite/unix-socket mode, each process (TUI vs. Huey worker subprocess) initializes its *own* FalkorDB instance when importing `_ensure_graph()`. The TUI's Huey producer and the worker's Huey consumer can therefore point at different embedded redis servers, so jobs are enqueued to one broker and consumed from another. Shutdown in either process can also kill the server the other relies on. The TCP-enabled case adds port-collision failures; the underlying hazard is per-process FalkorDB init, not just TCP exposure.
-
----
-
-## 2) Redis episode state tracking contract is incomplete (FOUNDATIONAL)
-
-**Priority**: HIGH - This is a foundational contract change that issues #3 and #4 depend on.
+**Priority**: HIGH - This is a foundational contract change that later issues depend on.
 
 - **Problem**: The current Redis episode lifecycle deletes hashes on completion and leaves them in place on failure, creating ambiguity between "work complete" (hash absent) vs "work failed" (hash stuck in `pending_nodes`) vs "work pending" (hash in `pending_nodes`). Deletion also breaks Redis/graph sync when episodes are deleted from the graph but Redis keys remain, causing worker crash loops.
 - **Evidence**:
@@ -36,15 +23,15 @@ Issues are ordered by priority and dependency: foundational contract changes com
   - No distinction between "failed" and "pending" episodes - both stuck in `pending_nodes`.
   - No way to query "which episodes are complete?" - must rely on hash absence.
   - Graph drift: MENTIONS edges are removed with the episode, but extracted entity nodes remain orphaned; future dedupe/edges can anchor to stale nodes.
-  - Blocks model unload (see issue #3) because stuck hashes mis-signal active work.
+  - Blocks model unload (see issue #2) because stuck hashes mis-signal active work.
 
 ---
 
-### Required Fixes for Issue #2 (State Tracking Contract)
+### Required Fixes for Issue #1 (State Tracking Contract)
 
 **Core principle**: Redis hash lifetime must match graph episode lifetime. Terminal states must be explicit, not implicit (hash deletion).
 
-#### 2.1) Add terminal state support
+#### 1.1) Add terminal state support
 
 **Change**: Stop using hash deletion to signal completion. Add explicit terminal statuses.
 
@@ -61,7 +48,7 @@ Issues are ordered by priority and dependency: foundational contract changes com
 - Unrecoverable errors (e.g., `NodeNotFoundError`): `set_episode_status(uuid, "dead")` then return/raise
 - Exception handler: Catch exceptions, set `status=dead`, then re-raise (`backend/services/tasks.py:100-102`)
 
-#### 2.2) Sync Redis with graph deletion
+#### 1.2) Sync Redis with graph deletion
 
 **Change**: Delete Redis hash whenever graph episode is deleted.
 
@@ -70,7 +57,7 @@ Issues are ordered by priority and dependency: foundational contract changes com
 - UI delete path: Already calls `delete_episode()`, will inherit Redis cleanup: `charlie.py:286-295`.
 - Make idempotent: `remove_episode_from_queue()` should silently succeed if hash already absent.
 
-#### 2.3) Update cleanup logic to ignore terminal states
+#### 1.3) Update cleanup logic to ignore terminal states
 
 **Change**: `cleanup_if_no_work()` should only block on active work states.
 
@@ -95,7 +82,7 @@ def cleanup_if_no_work() -> None:
         )
 ```
 
-#### 2.4) Graph orphan pruning
+#### 1.4) Graph orphan pruning
 
 **Change**: When deleting an episode, only delete entities that are no longer referenced.
 
@@ -105,7 +92,7 @@ def cleanup_if_no_work() -> None:
 - Delete entity only if MENTIONS count = 0
 - Prevents collateral damage when multiple episodes reference the same entity
 
-#### 2.5) Status contract tests
+#### 1.5) Status contract tests
 
 **New tests required** (`tests/test_backend/test_services_tasks.py`):
 - No-entity extraction → `status=done`, hash retained
@@ -117,13 +104,13 @@ def cleanup_if_no_work() -> None:
 
 ---
 
-## 3) Cleanup deadlock and inference-disabled handling (DEPENDS ON ISSUE #2)
+## 2) Cleanup deadlock and inference-disabled handling (DEPENDS ON ISSUE #1)
 
-**Priority**: MEDIUM - Blocked by issue #2's state tracking refactor.
+**Priority**: MEDIUM - Blocked by issue #1's state tracking refactor.
 
-**Prerequisite**: Issue #2 must be implemented first (terminal states + cleanup logic changes).
+**Prerequisite**: Issue #1 must be implemented first (terminal states + cleanup logic changes).
 
-- **Remaining problems after issue #2 is fixed**:
+- **Remaining problems after issue #1 is fixed**:
   1. **Inference disabled**: Episodes stay in `pending_nodes` when inference is disabled, but `cleanup_if_no_work()` doesn't distinguish between "blocked by disabled inference" vs "active work". Models stay loaded even though no work will run.
   2. **No re-enqueue on inference enable**: When inference is toggled back on, pending episodes are not automatically re-enqueued.
 
@@ -134,9 +121,9 @@ def cleanup_if_no_work() -> None:
 
 - **Impact**: Models stay loaded indefinitely when inference is disabled, wasting memory for work that will never run.
 
-### Required Fixes for Issue #3 (After Issue #2)
+### Required Fixes for Issue #2 (After Issue #1)
 
-#### 3.1) Update cleanup logic to check inference state
+#### 2.1) Update cleanup logic to check inference state
 
 **Change**: `cleanup_if_no_work()` should treat `pending_nodes` as non-blocking when inference is disabled.
 
@@ -167,7 +154,7 @@ def cleanup_if_no_work() -> None:
         )
 ```
 
-#### 3.2) Auto-enqueue on inference enable
+#### 2.2) Auto-enqueue on inference enable
 
 **Change**: When inference is toggled ON in settings UI, call `enqueue_pending_episodes()` to resume work.
 
@@ -175,7 +162,7 @@ def cleanup_if_no_work() -> None:
 - After `set_inference_enabled(True)`, call `enqueue_pending_episodes()` to resume blocked work
 - This triggers workers to re-process episodes that were waiting during the disabled period
 
-#### 3.3) Tests
+#### 2.3) Tests
 
 **New tests required**:
 - Inference disabled + pending episodes → models unload immediately
@@ -184,30 +171,29 @@ def cleanup_if_no_work() -> None:
 
 ---
 
-## 4) Queue/integration behavior untested (only call_local)
+## 3) Queue/integration behavior untested (only call_local)
 
-**Priority**: LOW - Testing infrastructure to validate fixes for issues #1, #2, and #3.
+**Priority**: LOW - Testing infrastructure to validate fixes for issues #1 and #2.
 
 - **Problem**: Tests never run a real Huey consumer or cross-process queue; they invoke `.call_local()` directly and patch Redis/model layers, so producer/consumer wiring, connection sharing, and startup collisions are unverified.
 - **Evidence**:
   - Task tests use `extract_nodes_task.call_local(...)` throughout: `tests/test_backend/test_services_tasks.py:14-258`.
   - Queue tests assert pool extraction but never start a consumer or enqueue jobs: `tests/test_backend/test_services_queue.py:10-55`.
-- **Impact**: The critical inter-process bugs (Redis split, port contention, lost jobs, state sync) are not covered by the test suite; failures will surface only at runtime.
+- **Impact**: Critical orchestration bugs (state sync, missed work, lingering Redis keys) are not covered by the test suite; failures will surface only at runtime.
 
-### Required Fixes for Issue #4 (Integration Testing)
+### Required Fixes for Issue #3 (Integration Testing)
 
 **New integration tests required**:
-- Start real Huey consumer in subprocess
+- Start real Huey consumer (in-process) during tests
 - Enqueue tasks from main process
-- Verify tasks execute in worker process
+- Verify tasks execute in worker thread
 - Verify Redis connection sharing (no split-brain)
-- Verify port collision handling (issue #1)
-- Verify episode deletion cleans up Redis (issue #2.2)
-- Verify orphan pruning retains shared entities (issue #2.4)
-- Verify `enqueue_pending_episodes` skips deleted episodes (issue #2.2)
-- Verify model unloads when queues empty (issue #2.3)
-- Verify cleanup respects inference disabled state (issue #3.1)
+- Verify episode deletion cleans up Redis (issue #1.2)
+- Verify orphan pruning retains shared entities (issue #1.4)
+- Verify `enqueue_pending_episodes` skips deleted episodes (issue #1.2)
+- Verify model unloads when queues empty (issue #1.3)
+- Verify cleanup respects inference disabled state (issue #2.1)
 
 ---
 
-These issues should be addressed in order (1 → 2 → 3 → 4) before integrating additional graph modules to ensure the orchestrator reliably drives background inference.
+These issues should be addressed in order (1 → 2 → 3) before integrating additional graph modules to ensure the orchestrator reliably drives background inference.
