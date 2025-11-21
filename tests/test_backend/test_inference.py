@@ -21,7 +21,9 @@ def test_load_model():
 @pytest.mark.inference
 def test_load_model_with_repo_id():
     """load_model accepts repo_id parameter."""
-    model = load_model(repo_id="unsloth/Qwen3-4B-Instruct-2507-GGUF")
+    from backend.settings import MODEL_REPO_ID
+
+    model = load_model(repo_id=MODEL_REPO_ID)
     assert model is not None
 
 
@@ -81,9 +83,10 @@ def test_dspy_lm_uses_default_repo():
 
 
 @pytest.mark.inference
-def test_forward_returns_proper_structure():
+def test_forward_returns_proper_structure(require_llm):
     """forward() returns OpenAI-compatible response structure."""
-    lm = DspyLM()
+    lm = dspy.settings.lm
+    assert lm is not None
     messages = [
         {"role": "system", "content": "You are terse."},
         {"role": "user", "content": "Say hi"},
@@ -100,16 +103,22 @@ def test_forward_returns_proper_structure():
 
 
 @pytest.mark.inference
-def test_integrates_with_dspy_predict():
+def test_integrates_with_dspy_predict(require_llm):
     """End-to-end test that DSPy can run real inference with llama.cpp LM."""
     class Echo(dspy.Signature):
         prompt: str = dspy.InputField()
         answer: str = dspy.OutputField()
 
-    lm = DspyLM(generation_config={"temp": 0.0})
-    dspy.configure(lm=lm, adapter=dspy.ChatAdapter())
-    predictor = dspy.Predict(Echo)
-    output = predictor(prompt="Say 'OK'")
+    lm = dspy.settings.lm
+    assert lm is not None
+    original_config = lm.generation_config
+    try:
+        lm.generation_config = {**original_config, "temp": 0.0}
+        dspy.configure(lm=lm, adapter=dspy.ChatAdapter())
+        predictor = dspy.Predict(Echo)
+        output = predictor(prompt="Say 'OK'")
+    finally:
+        lm.generation_config = original_config
 
     assert hasattr(output, "answer")
     assert isinstance(output.answer, str)

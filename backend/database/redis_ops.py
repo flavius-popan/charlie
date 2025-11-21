@@ -224,3 +224,32 @@ def remove_episode_from_queue(episode_uuid: str) -> None:
             r.srem(f"status:{status.decode()}", episode_uuid)
 
         r.delete(f"episode:{episode_uuid}")
+
+
+def get_inference_enabled() -> bool:
+    """Get current inference enabled status.
+
+    Returns:
+        True if inference enabled, False otherwise (default: True)
+
+    Note:
+        Setting is persisted in Redis and survives app restarts.
+        Default is True (inference enabled).
+    """
+    with redis_ops() as r:
+        enabled = r.get("app:inference_enabled")
+        return enabled.decode() == "true" if enabled else True
+
+
+def set_inference_enabled(enabled: bool) -> None:
+    """Enable/disable inference globally.
+
+    Args:
+        enabled: True to enable inference, False to disable
+
+    Note:
+        Setting is persisted in Redis and survives app restarts.
+        Controls whether new journal entries trigger background extraction tasks.
+    """
+    with redis_ops() as r:
+        r.set("app:inference_enabled", "true" if enabled else "false")

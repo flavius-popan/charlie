@@ -80,10 +80,29 @@ def configure_dspy_for_backend(request: pytest.FixtureRequest) -> Iterator[None]
 
     if wants_inference:
         from backend.inference import DspyLM
+        from backend.settings import MODEL_CONFIG
 
         adapter = dspy.ChatAdapter()
-        lm = DspyLM(repo_id=MODEL_REPO_ID, generation_config={"temp": 0.0})
+        lm = DspyLM(
+            repo_id=MODEL_REPO_ID,
+            generation_config={**MODEL_CONFIG, "temp": 0.0},
+        )
         dspy.configure(lm=lm, adapter=adapter)
+
+    yield
+
+
+@pytest.fixture(scope="session", autouse=True)
+def reuse_session_lm(configure_dspy_for_backend) -> Iterator[None]:
+    """Share the session-loaded LLM with the inference manager cache.
+
+    Ensures inference tests reuse a single loaded model unless a test
+    intentionally exercises load/unload behavior (those use reset_model_manager).
+    """
+    from backend.inference import manager
+
+    if dspy.settings.lm is not None:
+        manager.MODELS["llm"] = dspy.settings.lm  # warm cache with shared model
 
     yield
 

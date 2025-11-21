@@ -9,6 +9,7 @@ import pytest
 
 import backend.database as db_utils
 from backend import add_journal_entry
+from backend.settings import DEFAULT_JOURNAL
 from backend.database.redis_ops import (
     get_episode_data,
     get_episode_status,
@@ -224,7 +225,7 @@ def test_set_episode_status_creates_initial_status(
     episode_uuid, cleanup_test_episodes, falkordb_test_context
 ):
     """Set initial status for new episode."""
-    set_episode_status(episode_uuid, "pending_nodes", journal="default")
+    set_episode_status(episode_uuid, "pending_nodes", journal=DEFAULT_JOURNAL)
 
     status = get_episode_status(episode_uuid)
     assert status == "pending_nodes"
@@ -234,7 +235,7 @@ def test_set_episode_status_updates_existing_status(
     episode_uuid, cleanup_test_episodes, falkordb_test_context
 ):
     """Update status from pending_nodes to pending_edges."""
-    set_episode_status(episode_uuid, "pending_nodes", journal="default")
+    set_episode_status(episode_uuid, "pending_nodes", journal=DEFAULT_JOURNAL)
     set_episode_status(episode_uuid, "pending_edges")
 
     status = get_episode_status(episode_uuid)
@@ -260,9 +261,9 @@ def test_get_episodes_by_status_returns_matching_episodes(falkordb_test_context)
     episode2 = str(uuid4())
     episode3 = str(uuid4())
 
-    set_episode_status(episode1, "pending_nodes", journal="default")
-    set_episode_status(episode2, "pending_nodes", journal="default")
-    set_episode_status(episode3, "pending_edges", journal="default")
+    set_episode_status(episode1, "pending_nodes", journal=DEFAULT_JOURNAL)
+    set_episode_status(episode2, "pending_nodes", journal=DEFAULT_JOURNAL)
+    set_episode_status(episode3, "pending_edges", journal=DEFAULT_JOURNAL)
 
     pending_nodes = get_episodes_by_status("pending_nodes")
     assert episode1 in pending_nodes
@@ -289,7 +290,9 @@ def test_remove_episode_from_queue_removes_all_data(
 ):
     """Remove episode from all Redis structures."""
     uuid_map = {str(uuid4()): str(uuid4())}
-    set_episode_status(episode_uuid, "pending_edges", journal="default", uuid_map=uuid_map)
+    set_episode_status(
+        episode_uuid, "pending_edges", journal=DEFAULT_JOURNAL, uuid_map=uuid_map
+    )
 
     remove_episode_from_queue(episode_uuid)
 
@@ -304,7 +307,7 @@ def test_status_index_updates_when_status_changes(
     episode_uuid, cleanup_test_episodes, falkordb_test_context
 ):
     """Episode moves between status indexes correctly."""
-    set_episode_status(episode_uuid, "pending_nodes", journal="default")
+    set_episode_status(episode_uuid, "pending_nodes", journal=DEFAULT_JOURNAL)
 
     pending_nodes = get_episodes_by_status("pending_nodes")
     assert episode_uuid in pending_nodes
@@ -334,7 +337,7 @@ def test_get_episode_uuid_map_returns_none_when_not_set(
     episode_uuid, cleanup_test_episodes, falkordb_test_context
 ):
     """get_episode_uuid_map returns None when uuid_map not set."""
-    set_episode_status(episode_uuid, "pending_nodes", journal="default")
+    set_episode_status(episode_uuid, "pending_nodes", journal=DEFAULT_JOURNAL)
 
     uuid_map = get_episode_uuid_map(episode_uuid)
     assert uuid_map is None

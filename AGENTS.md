@@ -24,6 +24,7 @@ You are only permitted to run read-only git operations to understand the project
 - Run inference tests: `pytest -m inference`
 - Run all tests: `pytest -m ""`
 - Use the `require_llm` fixture to skip if no LLM configured
+- Reuse the session-configured LLM (`dspy.settings.lm`) for all inference tests. Only tests that explicitly verify load/unload behavior should instantiate or unload models; everything else should use the shared model seeded by `configure_dspy_for_backend`/`reuse_session_lm`.
 
 **Pattern:**
 ```python

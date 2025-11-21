@@ -82,7 +82,7 @@ The design keeps a single worker process alive so models can stay resident durin
 # Per-episode metadata (Redis Hash) - ONLY for episodes needing processing
 episode:{uuid} → Hash {
     "status": "pending_nodes" | "pending_edges",
-    "journal": "default",
+    "journal": DEFAULT_JOURNAL,
     "uuid_map": "{...json...}"  # Only set when pending_edges
 }
 
@@ -370,7 +370,8 @@ def _get_redis_connection():
         RuntimeError: If FalkorDB is not initialized
     """
     # Ensure database is initialized (triggers _init_db if needed)
-    _ensure_graph("default")  # Any journal works to trigger init
+    from backend.settings import DEFAULT_JOURNAL
+    _ensure_graph(DEFAULT_JOURNAL)  # Any journal works to trigger init
 
     # Extract redis connection pool from FalkorDB's internal client
     if _db is None:
@@ -640,7 +641,8 @@ async def test_extract_nodes_task(isolated_graph):
     from backend.services.tasks import extract_nodes_task
 
     episode_uuid = await add_journal_entry("Today I met Sarah.")
-    result = await extract_nodes_task(episode_uuid, "default")
+    from backend.settings import DEFAULT_JOURNAL
+    result = await extract_nodes_task(episode_uuid, DEFAULT_JOURNAL)
 
     assert result['extracted_count'] > 0
 ```
@@ -654,12 +656,13 @@ huey_consumer backend.services.tasks.huey -k thread -w 1 -v
 # 2. In another terminal, enqueue a task
 python -c "
 from backend.services.tasks import extract_nodes_task
+from backend.settings import DEFAULT_JOURNAL
 from backend import add_journal_entry
 import asyncio
 
 async def test():
     uuid = await add_journal_entry('Test content')
-    task = extract_nodes_task(uuid, 'default')
+    task = extract_nodes_task(uuid, DEFAULT_JOURNAL)
     print(f'Task enqueued: {task.id}')
 
 asyncio.run(test())

@@ -52,8 +52,7 @@ FALKORLITE_TCP_ENABLED_BY_DEFAULT = _env_flag("FALKORLITE_TCP_ENABLED", False)
 GROUP_ID = "phase1-poc"
 EPISODE_CONTEXT_WINDOW = 3  # Mirrors Graphiti's default (EPISODE_WINDOW_LEN)
 
-# Model generation parameters (Qwen3 recommended: temp=0.7, top_p=0.8, top_k=20, min_p=0)
-# Supported: temp, top_p, top_k, min_p, presence_penalty, max_tokens
+# Model generation parameters (supported: temp, top_p, top_k, min_p, presence_penalty, max_tokens)
 MODEL_CONFIG = {
     "temp": 0.7,
     "top_p": 0.8,

@@ -59,6 +59,59 @@
 
 ---
 
+### Batch 2: COMPLETE ✅
+
+**Completed Phases**: Phase 3 (Queue & Tasks), Phase 4 (Inference Toggle - partial)
+
+**Files Created:**
+- `backend/services/__init__.py`
+- `backend/services/queue.py`
+- `backend/services/tasks.py`
+- `tests/test_backend/test_services_queue.py`
+- `tests/test_backend/test_services_tasks.py`
+
+**Files Modified:**
+- `backend/database/redis_ops.py` - Added `get_inference_enabled()` and `set_inference_enabled()`
+- `pyproject.toml` - Added `huey>=2.5.4` dependency
+
+**Implementation Details:**
+1. **Huey Queue Configuration** (`backend/services/queue.py`):
+   - Extracts FalkorDB Redis connection pool via `_get_redis_connection()`
+   - Creates `RedisHuey` instance reusing embedded Redis (no separate broker)
+   - Comprehensive error handling for db/client/pool unavailability
+
+2. **Task Implementation** (`backend/services/tasks.py`):
+   - `extract_nodes_task()` - Async entity extraction with idempotency
+   - Checks episode status before processing (safe to enqueue multiple times)
+   - Respects inference toggle via `get_inference_enabled()`
+   - Uses warm session via `get_model("llm")` from manager
+   - Calls `cleanup_if_no_work()` for event-driven model unload
+   - Moves episodes to `pending_edges` when entities found
+   - Note: `extract_edges_task` not implemented (extract_edges.py doesn't exist yet)
+
+3. **Inference Toggle** (`backend/database/redis_ops.py`):
+   - `get_inference_enabled()` - Returns True if enabled (default: True)
+   - `set_inference_enabled(enabled: bool)` - Persists to Redis at `app:inference_enabled`
+   - Setting survives app restarts via Redis storage
+
+4. **Test Coverage**: 10 passing unit tests
+   - 5 tests for queue configuration and error handling
+   - 5 tests for task behavior (idempotency, inference toggle, entity handling, dspy context)
+   - Tests use `task.call_local()` to execute tasks synchronously
+   - All mocking uses correct module paths for local function imports
+
+**Deferred to Future Batches:**
+- Phase 4 (Settings UI): SettingsModal integration, add_journal_entry hook
+- Phase 6 (Lifecycle): Worker auto-start/stop in charlie.py
+- extract_edges_task implementation (requires backend/graph/extract_edges.py first)
+
+**Code Review Notes:**
+- Initial review suggested `AsyncRedisHuey` which doesn't exist in Huey
+- `RedisHuey` correctly supports async tasks via standard asyncio integration
+- All other review suggestions confirmed implementation quality
+
+---
+
 ## Phase 1: Model Factory (Stateless)
 
 **Purpose**: Shared model loading infrastructure for app and optimizer scripts.
