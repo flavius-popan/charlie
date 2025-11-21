@@ -4,6 +4,7 @@ import logging
 import signal
 import subprocess
 import sys
+import shutil
 from pathlib import Path
 
 from textual.app import App, ComposeResult
@@ -290,8 +291,17 @@ class HomeScreen(Screen):
             logger.error(f"Failed to delete entry: {e}", exc_info=True)
             self.notify("Failed to delete entry", severity="error")
 
+    def _graceful_shutdown(self):
+        """Ensure worker stops before database teardown (idempotent)."""
+        try:
+            self.stop_huey_worker()
+        finally:
+            shutdown_database()
+
     def action_quit(self):
-        shutdown_database()
+        # Stop background worker before tearing down the database to avoid
+        # connection errors/backoff during shutdown.
+        self._graceful_shutdown()
         self.app.exit()
 
     def action_cursor_down(self):
@@ -459,6 +469,35 @@ class CharlieApp(App):
         self.huey_process: subprocess.Popen | None = None
         self.huey_log_file = None
 
+    def _build_huey_command(self) -> list[str]:
+        """Build the Huey worker command.
+
+        Prefers the console script `huey_consumer` (recommended by Huey docs) to
+        avoid the runpy double-import warning triggered by `python -m
+        huey.consumer`. Falls back to the module entrypoint if the console script
+        is not on PATH.
+        """
+
+        console = shutil.which("huey_consumer")
+        base_args = [
+            "backend.services.tasks.huey",
+            "-k",
+            HUEY_WORKER_TYPE,
+            "-w",
+            str(HUEY_WORKERS),
+            "-q",  # quiet logging to avoid noisy Huey debug output
+        ]
+
+        if console:
+            return [console, *base_args]
+
+        return [
+            sys.executable,
+            "-m",
+            "huey.bin.huey_consumer",
+            *base_args,
+        ]
+
     async def on_mount(self):
         self.theme = "catppuccin-mocha"
         self.title = "Charlie"
@@ -471,17 +510,7 @@ class CharlieApp(App):
             return
 
         try:
-            args = [
-                sys.executable,
-                "-m",
-                "huey.consumer",
-                "backend.services.tasks.huey",
-                "-k",
-                HUEY_WORKER_TYPE,
-                "-w",
-                str(HUEY_WORKERS),
-                "-v",
-            ]
+            args = self._build_huey_command()
             huey_err_path = LOGS_DIR / "huey-worker.err"
             self.huey_log_file = open(huey_err_path, "a", buffering=1)
             self.huey_process = subprocess.Popen(
@@ -523,7 +552,8 @@ class CharlieApp(App):
         self._shutdown_huey()
 
     def on_unmount(self):
-        self._shutdown_huey()
+        # Covers exits triggered outside the key binding (e.g., cmd+q/ctrl+c)
+        self._graceful_shutdown()
 
 
 CharlieApp.CSS = """

@@ -581,13 +581,12 @@ class CharlieApp(App):
 
     def on_mount(self):
         """Start Huey worker subprocess."""
-        self.huey_process = subprocess.Popen([
-            sys.executable, '-m', 'huey.consumer',
-            'backend.services.tasks.huey',
-            '-k', 'thread',  # CRITICAL: thread mode
-            '-w', '1',       # CRITICAL: single worker
-            '-v',            # Verbose logging
-        ])
+        # Prefer console script to avoid runpy double-import warning.
+        cmd = ['huey_consumer', 'backend.services.tasks.huey', '-k', 'thread', '-w', '1', '-q']
+        if shutil.which('huey_consumer') is None:
+            cmd = [sys.executable, '-m', 'huey.bin.huey_consumer', 'backend.services.tasks.huey', '-k', 'thread', '-w', '1', '-q']
+
+        self.huey_process = subprocess.Popen(cmd)
         atexit.register(self._shutdown_huey)
 
     def _shutdown_huey(self):
@@ -599,6 +598,12 @@ class CharlieApp(App):
     def on_unmount(self):
         """Cleanup on app exit."""
         self._shutdown_huey()
+
+    def action_quit(self):
+        # Stop Huey before shutting down database to prevent redis reconnect noise
+        self.stop_huey_worker()
+        shutdown_database()
+        self.app.exit()
 ```
 
 **Key points:**
@@ -677,7 +682,7 @@ HUEY_WORKERS = 1             # CRITICAL
 ### Manual Verification
 ```bash
 # Start worker manually
-huey_consumer backend.services.tasks.huey -k thread -w 1 -v
+huey_consumer backend.services.tasks.huey -k thread -w 1 -q
 
 # Check worker running
 ps aux | grep huey_consumer
