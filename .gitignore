@@ -17,6 +17,7 @@ wheels/
 .direnv
 .claude
 prompts/.dspy_cache/
+backend/prompts/.dspy_cache/
 .dspy_cache
 pipeline/prompts/.dspy_cache/
 pipeline/prompts/gepa/

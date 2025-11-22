@@ -9,7 +9,7 @@ from typing import Any
 from backend import dspy_cache  # noqa: F401  # ensures DSPy cache dir is set
 import dspy
 
-from settings import MODEL_CONFIG
+from backend.settings import MODEL_CONFIG, MODEL_REPO_ID
 from .loader import load_model
 
 logger = logging.getLogger(__name__)
@@ -20,13 +20,13 @@ class DspyLM(dspy.BaseLM):
 
     def __init__(
         self,
-        model_path: str | None = None,
+        repo_id: str | None = None,
         *,
         generation_config: dict[str, Any] | None = None,
     ) -> None:
-        super().__init__(model="Qwen3-4B-Instruct-GGUF")
+        super().__init__(model=MODEL_REPO_ID)
 
-        self.llm = load_model(model_path)
+        self.llm = load_model(repo_id)
         self.generation_config = generation_config or MODEL_CONFIG
         logger.info("DspyLM initialized with llama.cpp model")
 

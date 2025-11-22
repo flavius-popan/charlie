@@ -111,12 +111,12 @@ async def ensure_graph_ready(journal: str = DEFAULT_JOURNAL, *, delete_existing:
 
 
 def _merge_self_entity_sync(graph, journal: str, name: str) -> None:
-    """Synchronous SELF entity merge for use in asyncio.to_thread.
+    """Synchronous author entity "I" merge for use in asyncio.to_thread.
 
     Args:
         graph: FalkorDB graph instance
         journal: Journal name
-        name: Name for the SELF entity
+        name: Name for the author entity "I"
     """
     now_literal = to_cypher_literal(utc_now().isoformat())
     summary_literal = to_cypher_literal(
@@ -145,12 +145,12 @@ def _merge_self_entity_sync(graph, journal: str, name: str) -> None:
     try:
         graph.query(query)
     except Exception as exc:
-        logger.exception("Failed to seed SELF entity")
-        raise RuntimeError(f"Failed to seed SELF entity for journal '{journal}'") from exc
+        logger.exception('Failed to seed author entity "I"')
+        raise RuntimeError(f"Failed to seed author entity (\"I\") for journal '{journal}'") from exc
 
 
 async def ensure_self_entity(journal: str, name: str = SELF_ENTITY_NAME) -> None:
-    """Seed the deterministic SELF entity for this journal if missing.
+    """Seed the deterministic author entity "I" for this journal if missing.
 
     Uses double-checked locking pattern for thread safety:
     1. Fast-path check without lock (racy read - optimization)
@@ -171,7 +171,7 @@ async def ensure_self_entity(journal: str, name: str = SELF_ENTITY_NAME) -> None
 
     Args:
         journal: Journal name
-        name: Name for the SELF entity (defaults to SELF_ENTITY_NAME)
+        name: Name for the author entity "I" (defaults to SELF_ENTITY_NAME)
     """
     if journal in _seeded_self_groups:  # Racy optimization - see docstring
         return
@@ -196,7 +196,7 @@ async def ensure_self_entity(journal: str, name: str = SELF_ENTITY_NAME) -> None
 
 
 async def ensure_database_ready(journal: str) -> None:
-    """Ensure database is initialized and SELF entity exists for this journal.
+    """Ensure database is initialized and author entity "I" exists for this journal.
 
     Args:
         journal: Journal name
@@ -361,16 +361,18 @@ async def delete_episode(episode_uuid: str, journal: str = DEFAULT_JOURNAL) -> N
     Raises:
         ValueError: If episode not found
 
-    Note:
-        Uses graphiti-core's EpisodicNode.delete for deletion.
-        This removes only the episode node itself.
-        Orphaned entity/edge cleanup will be implemented when extraction operations are added.
+    Behavior:
+        - Deletes the Episodic node
+        - Removes MENTIONS edges to entities
+        - Deletes entities that are no longer referenced by any episode
+        - Removes the episode hash from Redis queue (idempotent, best-effort)
 
-    Warning:
-        This does not clean up entities or edges that were extracted from this episode.
-        Use this for simple episode deletion during development/testing.
-        Full cleanup (with entity/edge orphan detection) will be added in future iterations.
+    Redis cleanup note:
+        Redis removal is best-effort; failures are logged but do not block graph deletion.
+        Queue operations are idempotent, so leftover hashes will not mutate graph data,
+        but they may emit retries/log noise until cleaned up manually.
     """
+    from backend.database.redis_ops import remove_episode_from_queue
     from graphiti_core.errors import NodeNotFoundError
     from backend.database.driver import get_driver
 
@@ -382,9 +384,60 @@ async def delete_episode(episode_uuid: str, journal: str = DEFAULT_JOURNAL) -> N
     except NodeNotFoundError as exc:
         raise ValueError(f"Episode {episode_uuid} not found") from exc
 
-    # Delete the episode
-    await episode.delete(driver)
-    logger.info("Deleted episode %s from journal %s", episode_uuid, journal)
+    # Gather deletion stats before mutating the graph
+    stats_query = """
+    MATCH (ep:Episodic {uuid: $episode_uuid})
+    OPTIONAL MATCH (ep)-[:MENTIONS]->(ent:Entity)
+    WITH ep, collect(DISTINCT ent) AS ents
+    WITH ep, [e IN ents WHERE e IS NOT NULL AND size((e)<-[:MENTIONS]-()) = 1] AS doomed
+    OPTIONAL MATCH (d:Entity)-[rel]-() WHERE d IN doomed AND type(rel) <> 'MENTIONS'
+    RETURN coalesce(ep.name, '') AS episode_name,
+           size(doomed) AS doomed_entities,
+           [e IN doomed | coalesce(e.name, e.uuid)] AS doomed_entity_names,
+           count(DISTINCT rel) AS non_mention_edges
+    """
+    stats_records, _, _ = await driver.execute_query(stats_query, episode_uuid=episode_uuid)
+    stats = stats_records[0] if stats_records else {}
+    episode_name = stats.get("episode_name") or episode.name or ""
+    doomed_entities = int(stats.get("doomed_entities") or 0)
+    doomed_entity_names = stats.get("doomed_entity_names") or []
+    non_mention_edges = int(stats.get("non_mention_edges") or 0)
+
+    total_nodes_to_delete = 1 + doomed_entities  # episode + orphan entities
+    logger.info(
+        "Deleting episode %s (%s): removing %d nodes (1 episode + %d entities: %s) and %d non-MENTIONS edges",
+        episode_uuid,
+        episode_name,
+        total_nodes_to_delete,
+        doomed_entities,
+        ", ".join(doomed_entity_names) if doomed_entity_names else "none",
+        non_mention_edges,
+    )
+
+    # Remove MENTIONS edges to entities, delete episode, and prune entities with no remaining mentions
+    prune_query = """
+    MATCH (ent_episode:Episodic {uuid: $episode_uuid})
+    OPTIONAL MATCH (ent_episode)-[r:MENTIONS]->(entity:Entity)
+    WITH ent_episode, collect(distinct entity) AS ents, collect(r) AS rels
+    FOREACH (_ IN rels | DELETE _)
+    DELETE ent_episode
+    WITH ents
+    UNWIND ents AS ent
+    WITH DISTINCT ent
+    WHERE ent IS NOT NULL AND NOT (ent)<-[:MENTIONS]-()
+    DETACH DELETE ent
+    """
+    await driver.execute_query(prune_query, episode_uuid=episode_uuid)
+
+    # Keep Redis in sync (idempotent if already removed)
+    try:
+        remove_episode_from_queue(episode_uuid)
+    except Exception:
+        logger.warning(
+            "Failed to remove episode %s from Redis queue after deletion", episode_uuid, exc_info=True
+        )
+
+    logger.info("Deleted episode %s from journal %s (graph and Redis cleaned)", episode_uuid, journal)
 
 
 async def persist_entities_and_edges(

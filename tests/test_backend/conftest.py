@@ -6,10 +6,13 @@ from typing import Iterator
 from uuid import uuid4
 
 import pytest
+
+import backend.dspy_cache  # noqa: F401  # sets DSPY cache env vars before dspy import
 import dspy
 
 import backend.database as db_utils
 from backend import settings as backend_settings
+from backend.settings import MODEL_REPO_ID
 
 
 @pytest.fixture(scope="session")
@@ -65,14 +68,42 @@ def configure_dspy_for_backend(request: pytest.FixtureRequest) -> Iterator[None]
     """Configure DSPy once per test session with llama.cpp backend.
 
     Uses deterministic sampling so integration assertions stay stable.
-    Only runs if --model option is provided, otherwise inference tests will skip.
+    Only runs when inference tests are selected (e.g., `-m inference` or
+    `-m ""`).
     """
-    model_path = request.config.getoption("--model", default=None)
-    if model_path:
-        from inference_runtime import DspyLM
+    marker_expr = (request.config.getoption("-m") or "").strip()
+    wants_inference = (
+        marker_expr == ""  # default when caller overrides addopts with -m ""
+        or marker_expr == "inference"
+        or ("inference" in marker_expr and "not inference" not in marker_expr)
+    )
+
+    if wants_inference:
+        from backend.inference import DspyLM
+        from backend.settings import MODEL_CONFIG
+
         adapter = dspy.ChatAdapter()
-        lm = DspyLM(model_path=model_path, generation_config={"temp": 0.0})
+        lm = DspyLM(
+            repo_id=MODEL_REPO_ID,
+            generation_config={**MODEL_CONFIG, "temp": 0.0},
+        )
         dspy.configure(lm=lm, adapter=adapter)
+
+    yield
+
+
+@pytest.fixture(scope="session", autouse=True)
+def reuse_session_lm(configure_dspy_for_backend) -> Iterator[None]:
+    """Share the session-loaded LLM with the inference manager cache.
+
+    Ensures inference tests reuse a single loaded model unless a test
+    intentionally exercises load/unload behavior (those use reset_model_manager).
+    """
+    from backend.inference import manager
+
+    if dspy.settings.lm is not None:
+        manager.MODELS["llm"] = dspy.settings.lm  # warm cache with shared model
+
     yield
 
 
@@ -96,3 +127,13 @@ def cleanup_test_episodes(episode_uuid):
 
     yield
     remove_episode_from_queue(episode_uuid)
+
+
+@pytest.fixture
+def reset_model_manager():
+    """Reset model manager state before and after each test."""
+    from backend.inference import manager
+
+    manager.MODELS["llm"] = None
+    yield
+    manager.MODELS["llm"] = None

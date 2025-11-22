@@ -8,7 +8,7 @@
 
 **driver.py** - Query execution (FalkorLiteDriver, index building, fulltext search)
 
-**persistence.py** - Write operations (create, update, delete episodes; SELF entity; initialization)
+**persistence.py** - Write operations (create, update, delete episodes; author entity "I"; initialization)
 
 **queries.py** - Read operations (get episode by UUID; future: time-range queries, entity timelines, search)
 

@@ -219,6 +219,72 @@ def test_vecf32_empty_embedding(isolated_graph):
 
 
 @pytest.mark.asyncio
+async def test_episode_delete_prunes_entities_only_when_unreferenced(isolated_graph):
+    """Orphan pruning should keep shared entities until the last MENTIONS is removed."""
+    from backend.database.persistence import delete_episode
+    from backend.settings import DEFAULT_JOURNAL
+
+    # Two episodes referencing the same entity
+    isolated_graph.query(
+        f"""
+        CREATE (:Episodic {{
+                    uuid: 'ep-orphan-a',
+                    group_id: '{DEFAULT_JOURNAL}',
+                    content: 'Entry A',
+                    name: 'Entry A',
+                    source: 'text',
+                    source_description: 'test',
+                    entity_edges: [],
+                    created_at: '2025-01-01T00:00:00Z',
+                    valid_at: '2025-01-01T00:00:00Z'
+               }}),
+               (:Episodic {{
+                    uuid: 'ep-orphan-b',
+                    group_id: '{DEFAULT_JOURNAL}',
+                    content: 'Entry B',
+                    name: 'Entry B',
+                    source: 'text',
+                    source_description: 'test',
+                    entity_edges: [],
+                    created_at: '2025-01-01T00:00:00Z',
+                    valid_at: '2025-01-01T00:00:00Z'
+               }}),
+               (:Entity {{uuid: 'entity-shared', group_id: '{DEFAULT_JOURNAL}', name: 'Shared'}})
+        """
+    )
+    isolated_graph.query(
+        """
+        MATCH (a:Episodic {uuid: 'ep-orphan-a'}), (b:Episodic {uuid: 'ep-orphan-b'}), (ent:Entity {uuid: 'entity-shared'})
+        CREATE (a)-[:MENTIONS {uuid: 'm1'}]->(ent),
+               (b)-[:MENTIONS {uuid: 'm2'}]->(ent)
+        """
+    )
+
+    # Delete first episode: entity should remain, one MENTIONS should remain
+    await delete_episode("ep-orphan-a", DEFAULT_JOURNAL)
+    rows_after_first = _query_rows(
+        isolated_graph,
+        """
+        MATCH (ent:Entity {uuid: 'entity-shared'})
+        OPTIONAL MATCH ()-[r:MENTIONS]->(ent)
+        RETURN count(ent), count(r)
+        """,
+    )
+    assert rows_after_first == [[1, 1]], "Entity should persist while still referenced"
+
+    # Delete second episode: entity should now be pruned
+    await delete_episode("ep-orphan-b", DEFAULT_JOURNAL)
+    rows_after_second = _query_rows(
+        isolated_graph,
+        """
+        MATCH (ent:Entity {uuid: 'entity-shared'})
+        RETURN count(ent)
+        """,
+    )
+    assert rows_after_second == [[0]], "Entity should be removed when no MENTIONS remain"
+
+
+@pytest.mark.asyncio
 async def test_ensure_graph_ready_idempotent(isolated_graph):
     """ensure_graph_ready can rebuild indices multiple times without corrupting data."""
     await db_utils.ensure_graph_ready(delete_existing=True)
@@ -468,9 +534,9 @@ async def test_concurrent_lock_initialization(isolated_graph):
 
 @pytest.mark.asyncio
 async def test_concurrent_self_entity_seeding(isolated_graph):
-    """Test that concurrent SELF entity seeding doesn't create race conditions.
+    """Test that concurrent author entity "I" seeding doesn't create race conditions.
 
-    Similar to lock initialization, SELF entity seeding has a lazy lock initialization
+    Similar to lock initialization, author entity "I" seeding has a lazy lock initialization
     that could race.
     """
     import asyncio
@@ -481,7 +547,7 @@ async def test_concurrent_self_entity_seeding(isolated_graph):
     persistence._self_seed_lock = None
 
     async def seed_self(journal: str, task_id: int):
-        """Try to seed SELF entity from multiple tasks."""
+        """Try to seed author entity "I" from multiple tasks."""
         await db_utils.ensure_self_entity(journal)
         return task_id
 
@@ -495,7 +561,7 @@ async def test_concurrent_self_entity_seeding(isolated_graph):
     # Verify SELF was seeded (should be in the set)
     assert "self-race-journal" in persistence._seeded_self_groups
 
-    # Verify only one SELF entity exists in the graph
+    # Verify only one author entity "I" exists in the graph
     graph = db_utils.get_falkordb_graph("self-race-journal")
     from backend.database import SELF_ENTITY_UUID, to_cypher_literal
     query = f"""
@@ -505,7 +571,7 @@ async def test_concurrent_self_entity_seeding(isolated_graph):
     result = graph.query(query)
     rows = _query_rows(graph, query)
     count = int(rows[0][0]) if rows else 0
-    assert count == 1, f"Expected exactly 1 SELF entity, found {count}"
+    assert count == 1, f'Expected exactly 1 author entity "I", found {count}'
 
 
 @pytest.mark.asyncio

@@ -9,6 +9,7 @@ import pytest
 
 import backend.database as db_utils
 from backend import add_journal_entry
+from backend.settings import DEFAULT_JOURNAL
 from backend.database.redis_ops import (
     get_episode_data,
     get_episode_status,
@@ -224,7 +225,7 @@ def test_set_episode_status_creates_initial_status(
     episode_uuid, cleanup_test_episodes, falkordb_test_context
 ):
     """Set initial status for new episode."""
-    set_episode_status(episode_uuid, "pending_nodes", journal="default")
+    set_episode_status(episode_uuid, "pending_nodes", journal=DEFAULT_JOURNAL)
 
     status = get_episode_status(episode_uuid)
     assert status == "pending_nodes"
@@ -233,12 +234,15 @@ def test_set_episode_status_creates_initial_status(
 def test_set_episode_status_updates_existing_status(
     episode_uuid, cleanup_test_episodes, falkordb_test_context
 ):
-    """Update status from pending_nodes to pending_edges."""
-    set_episode_status(episode_uuid, "pending_nodes", journal="default")
-    set_episode_status(episode_uuid, "pending_edges")
+    """Update episode fields while keeping status as pending_nodes."""
+    set_episode_status(episode_uuid, "pending_nodes", journal=DEFAULT_JOURNAL)
+    uuid_map = {str(uuid4()): str(uuid4())}
+    set_episode_status(episode_uuid, "pending_nodes", uuid_map=uuid_map)
 
     status = get_episode_status(episode_uuid)
-    assert status == "pending_edges"
+    assert status == "pending_nodes"
+    data = get_episode_data(episode_uuid)
+    assert json.loads(data["uuid_map"]) == uuid_map
 
 
 def test_set_episode_status_with_uuid_map(
@@ -247,10 +251,10 @@ def test_set_episode_status_with_uuid_map(
     """Store uuid_map when entities are found."""
     uuid_map = {str(uuid4()): str(uuid4()), str(uuid4()): str(uuid4())}
 
-    set_episode_status(episode_uuid, "pending_edges", uuid_map=uuid_map)
+    set_episode_status(episode_uuid, "pending_nodes", journal=DEFAULT_JOURNAL, uuid_map=uuid_map)
 
     data = get_episode_data(episode_uuid)
-    assert data["status"] == "pending_edges"
+    assert data["status"] == "pending_nodes"
     assert json.loads(data["uuid_map"]) == uuid_map
 
 
@@ -258,24 +262,21 @@ def test_get_episodes_by_status_returns_matching_episodes(falkordb_test_context)
     """Scan all episodes with given status."""
     episode1 = str(uuid4())
     episode2 = str(uuid4())
-    episode3 = str(uuid4())
 
-    set_episode_status(episode1, "pending_nodes", journal="default")
-    set_episode_status(episode2, "pending_nodes", journal="default")
-    set_episode_status(episode3, "pending_edges", journal="default")
+    set_episode_status(episode1, "pending_nodes", journal=DEFAULT_JOURNAL)
+    set_episode_status(episode2, "pending_nodes", journal=DEFAULT_JOURNAL)
 
     pending_nodes = get_episodes_by_status("pending_nodes")
     assert episode1 in pending_nodes
     assert episode2 in pending_nodes
-    assert episode3 not in pending_nodes
-
-    pending_edges = get_episodes_by_status("pending_edges")
-    assert episode3 in pending_edges
-    assert episode1 not in pending_edges
 
     remove_episode_from_queue(episode1)
+
+    pending_nodes_after = get_episodes_by_status("pending_nodes")
+    assert episode1 not in pending_nodes_after
+    assert episode2 in pending_nodes_after
+
     remove_episode_from_queue(episode2)
-    remove_episode_from_queue(episode3)
 
 
 def test_get_episodes_by_status_empty_when_no_matches(falkordb_test_context):
@@ -289,33 +290,32 @@ def test_remove_episode_from_queue_removes_all_data(
 ):
     """Remove episode from all Redis structures."""
     uuid_map = {str(uuid4()): str(uuid4())}
-    set_episode_status(episode_uuid, "pending_edges", journal="default", uuid_map=uuid_map)
+    set_episode_status(
+        episode_uuid, "pending_nodes", journal=DEFAULT_JOURNAL, uuid_map=uuid_map
+    )
 
     remove_episode_from_queue(episode_uuid)
 
     status = get_episode_status(episode_uuid)
     assert status is None
 
-    pending = get_episodes_by_status("pending_edges")
+    pending = get_episodes_by_status("pending_nodes")
     assert episode_uuid not in pending
 
 
 def test_status_index_updates_when_status_changes(
     episode_uuid, cleanup_test_episodes, falkordb_test_context
 ):
-    """Episode moves between status indexes correctly."""
-    set_episode_status(episode_uuid, "pending_nodes", journal="default")
+    """Episode remains in pending_nodes until removed from queue."""
+    set_episode_status(episode_uuid, "pending_nodes", journal=DEFAULT_JOURNAL)
 
     pending_nodes = get_episodes_by_status("pending_nodes")
     assert episode_uuid in pending_nodes
 
-    set_episode_status(episode_uuid, "pending_edges")
+    remove_episode_from_queue(episode_uuid)
 
     pending_nodes = get_episodes_by_status("pending_nodes")
     assert episode_uuid not in pending_nodes
-
-    pending_edges = get_episodes_by_status("pending_edges")
-    assert episode_uuid in pending_edges
 
 
 def test_get_episode_uuid_map_returns_parsed_dict(
@@ -323,7 +323,7 @@ def test_get_episode_uuid_map_returns_parsed_dict(
 ):
     """get_episode_uuid_map returns parsed dict, not JSON string."""
     uuid_map = {str(uuid4()): str(uuid4()), str(uuid4()): str(uuid4())}
-    set_episode_status(episode_uuid, "pending_edges", uuid_map=uuid_map)
+    set_episode_status(episode_uuid, "pending_nodes", journal=DEFAULT_JOURNAL, uuid_map=uuid_map)
 
     retrieved_map = get_episode_uuid_map(episode_uuid)
     assert retrieved_map == uuid_map
@@ -334,7 +334,7 @@ def test_get_episode_uuid_map_returns_none_when_not_set(
     episode_uuid, cleanup_test_episodes, falkordb_test_context
 ):
     """get_episode_uuid_map returns None when uuid_map not set."""
-    set_episode_status(episode_uuid, "pending_nodes", journal="default")
+    set_episode_status(episode_uuid, "pending_nodes", journal=DEFAULT_JOURNAL)
 
     uuid_map = get_episode_uuid_map(episode_uuid)
     assert uuid_map is None
@@ -352,3 +352,138 @@ async def test_add_journal_entry_sets_pending_nodes_status(isolated_graph):
     assert episode_uuid in pending_episodes
 
     remove_episode_from_queue(episode_uuid)
+
+
+def test_episode_lifecycle_completes_properly(
+    episode_uuid, cleanup_test_episodes, falkordb_test_context
+):
+    """Episode progresses through full lifecycle without getting stuck."""
+    set_episode_status(episode_uuid, "pending_nodes", journal=DEFAULT_JOURNAL)
+
+    pending = get_episodes_by_status("pending_nodes")
+    assert episode_uuid in pending
+
+    uuid_map = {str(uuid4()): str(uuid4())}
+    set_episode_status(episode_uuid, "pending_nodes", uuid_map=uuid_map)
+
+    pending_after = get_episodes_by_status("pending_nodes")
+    assert episode_uuid in pending_after
+
+    remove_episode_from_queue(episode_uuid)
+
+    status = get_episode_status(episode_uuid)
+    assert status is None
+
+    pending_final = get_episodes_by_status("pending_nodes")
+    assert episode_uuid not in pending_final
+
+
+def test_enqueue_pending_episodes_processes_backlog(falkordb_test_context):
+    """Pending episodes are enqueued when inference is re-enabled."""
+    from backend.database.redis_ops import (
+        enqueue_pending_episodes,
+        get_inference_enabled,
+        set_inference_enabled,
+    )
+    from unittest.mock import patch
+
+    episode1 = str(uuid4())
+    episode2 = str(uuid4())
+    episode3 = str(uuid4())
+
+    set_episode_status(episode1, "pending_nodes", journal=DEFAULT_JOURNAL)
+    set_episode_status(episode2, "pending_nodes", journal=DEFAULT_JOURNAL)
+    set_episode_status(episode3, "pending_nodes", journal=DEFAULT_JOURNAL)
+
+    set_inference_enabled(False)
+    assert get_inference_enabled() is False
+
+    count = enqueue_pending_episodes()
+    assert count == 0
+
+    set_inference_enabled(True)
+    assert get_inference_enabled() is True
+
+    with patch("backend.services.tasks.extract_nodes_task") as mock_task:
+        count = enqueue_pending_episodes()
+        assert count == 3
+        assert mock_task.call_count == 3
+
+        called_uuids = {call[0][0] for call in mock_task.call_args_list}
+        assert called_uuids == {episode1, episode2, episode3}
+
+    remove_episode_from_queue(episode1)
+    remove_episode_from_queue(episode2)
+    remove_episode_from_queue(episode3)
+
+
+def test_enqueue_pending_episodes_idempotent(falkordb_test_context):
+    """Calling enqueue_pending_episodes multiple times is safe."""
+    from backend.database.redis_ops import enqueue_pending_episodes, set_inference_enabled
+    from unittest.mock import patch
+
+    episode1 = str(uuid4())
+    set_episode_status(episode1, "pending_nodes", journal=DEFAULT_JOURNAL)
+
+    set_inference_enabled(True)
+
+    with patch("backend.services.tasks.extract_nodes_task") as mock_task:
+        count1 = enqueue_pending_episodes()
+        assert count1 == 1
+
+        count2 = enqueue_pending_episodes()
+        assert count2 == 1
+
+        assert mock_task.call_count == 2
+
+    remove_episode_from_queue(episode1)
+
+
+def test_get_episodes_by_status_scan_consistency(falkordb_test_context):
+    """Scan-based lookup returns consistent results with episode hash state."""
+    episode1 = str(uuid4())
+    episode2 = str(uuid4())
+    episode3 = str(uuid4())
+
+    set_episode_status(episode1, "pending_nodes", journal=DEFAULT_JOURNAL)
+    set_episode_status(episode2, "pending_nodes", journal=DEFAULT_JOURNAL)
+    set_episode_status(episode3, "pending_nodes", journal=DEFAULT_JOURNAL)
+
+    pending = get_episodes_by_status("pending_nodes")
+    assert len(pending) == 3
+    assert episode1 in pending
+    assert episode2 in pending
+    assert episode3 in pending
+
+    remove_episode_from_queue(episode2)
+
+    pending_after_remove = get_episodes_by_status("pending_nodes")
+    assert len(pending_after_remove) == 2
+    assert episode1 in pending_after_remove
+    assert episode2 not in pending_after_remove
+    assert episode3 in pending_after_remove
+
+    remove_episode_from_queue(episode1)
+    remove_episode_from_queue(episode3)
+
+
+def test_cleanup_if_no_work_checks_pending_nodes_only(falkordb_test_context):
+    """cleanup_if_no_work only needs to check pending_nodes status."""
+    from backend.inference.manager import cleanup_if_no_work, MODELS
+    from backend.database.redis_ops import get_episodes_by_status
+
+    episode1 = str(uuid4())
+    set_episode_status(episode1, "pending_nodes", journal=DEFAULT_JOURNAL)
+
+    MODELS["llm"] = "fake_model"
+
+    cleanup_if_no_work()
+    assert MODELS["llm"] == "fake_model"
+
+    remove_episode_from_queue(episode1)
+
+    pending = get_episodes_by_status("pending_nodes")
+    assert len(pending) == 0
+
+    cleanup_if_no_work()
+    assert MODELS["llm"] is None

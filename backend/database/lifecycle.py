@@ -11,13 +11,7 @@ from threading import Lock
 from typing import Any
 
 from backend.database.utils import FalkorGraph, validate_journal_name
-from backend.settings import (
-    DB_PATH,
-    ENABLE_TCP_SERVER,
-    TCP_HOST,
-    TCP_PASSWORD,
-    TCP_PORT,
-)
+from backend.settings import DB_PATH, REDIS_TCP_ENABLED, TCP_HOST, TCP_PASSWORD, TCP_PORT
 
 try:
     from redislite.falkordb_client import FalkorDB
@@ -44,7 +38,7 @@ _shutdown_requested = False
 
 # TCP server configuration
 _tcp_server = {
-    "enabled": ENABLE_TCP_SERVER and TCP_PORT > 0,
+    "enabled": REDIS_TCP_ENABLED and TCP_PORT > 0,
     "host": TCP_HOST,
     "port": TCP_PORT,
     "password": TCP_PASSWORD,

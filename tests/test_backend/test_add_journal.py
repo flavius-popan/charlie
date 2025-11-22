@@ -142,7 +142,7 @@ async def test_multiple_journals_isolation(isolated_graph):
 
 @pytest.mark.asyncio
 async def test_self_entity_created(isolated_graph):
-    """Test that SELF entity is created when first entry is added."""
+    """Test that author entity "I" is created when first entry is added."""
     content = "First entry in journal"
 
     uuid = await add_journal_entry(content=content)

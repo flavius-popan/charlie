@@ -16,11 +16,11 @@ The v2 rewrite eliminates the concept of "stages" in favor of discrete operation
 
 The backend provides a clean API layer separating UI concerns from graph operations:
 
-**Episode Creation**: `add_journal_entry(content, reference_time, journal, title, source_description, uuid)` - Saves episode to database immediately, returns episode UUID string. No LLM processing performed. Supports multiple isolated journals via `journal` parameter (maps to `group_id` internally). Auto-generates human-readable titles ("Tuesday Nov 18, 2024") when not provided. Accepts pre-existing UUIDs for imports from Day One, Notion, Obsidian, etc. Automatically creates SELF entity for each journal on first entry.
+**Episode Creation**: `add_journal_entry(content, reference_time, journal, title, source_description, uuid)` - Saves episode to database immediately, returns episode UUID string. No LLM processing performed. Supports multiple isolated journals via `journal` parameter (maps to `group_id` internally). Auto-generates human-readable titles ("Tuesday Nov 18, 2024") when not provided. Accepts pre-existing UUIDs for imports from Day One, Notion, Obsidian, etc. Automatically creates author entity "I" for each journal on first entry.
 
 **Validation**: Content validated for null bytes (rejected), max length (100k chars), and non-empty. Naive datetimes (no timezone) are normalized to UTC for import-friendly handling - markdown files and simple formats can pass file creation timestamps directly. Journal names restricted to alphanumeric, underscores, and hyphens (max 64 chars) for filesystem safety.
 
-**Operation Triggers**: `enrich_episode(episode_uuid)` - Queues entity and relationship extraction for a saved episode. Background workers poll the queue and update episode state as operations complete. *(Not yet implemented)*
+**Operation Triggers**: Background workers (Huey, single worker thread) dequeue `extract_nodes` then `extract_edges` tasks for each saved episode. Episode state in Redis advances from `pending_nodes` to `pending_edges` to complete. *(Not yet implemented)*
 
 **Query API**: `get_episodes_by_timerange(start, end)`, `get_entity_timeline(entity_uuid)`, `search_entities(query)` - All query operations are read-only and work against the current graph state. *(Not yet implemented)*
 
@@ -30,7 +30,37 @@ This separation allows the TUI to call `add_journal_entry()` to instantly persis
 
 **Extract Entities**: Identifies people, places, organizations, and activities mentioned in the episode. Uses MinHash LSH for fuzzy deduplication against existing entities (`graphiti_core.utils.maintenance.dedup_helpers`). Stores both provisional nodes (with temporary UUIDs for LLM indexing) and resolved nodes (canonical UUIDs after deduplication via `node_operations.resolve_extracted_nodes`). The uuid_map linking provisional to canonical UUIDs is stored in episode attributes temporarily.
 
-**Extract Relationships**: Identifies relationships between entities with supporting facts. LLM returns relationships as integer indices referencing the provisional entity list. After extraction, `edge_operations.resolve_edge_pointers()` remaps to canonical UUIDs using the uuid_map. Exact-match deduplication merges edges across episodes via the `episodes` list field (`edge_operations.resolve_extracted_edge`). Once edges are extracted, the uuid_map is cleaned up from episode attributes.
+**Current Scope (as of Nov 21, 2025)**: Only entity extraction is live. Episodes transition from `pending_nodes` to `pending_edges` as a holding state, but no edge extraction worker exists yet. `cleanup_if_no_work` intentionally ignores `pending_edges` so models can unload even if that queue contains items. This will change once `extract_edges_task` is implemented.
+
+**Extract Relationships** (planned): Identifies relationships between entities with supporting facts. LLM returns relationships as integer indices referencing the provisional entity list. After extraction, `edge_operations.resolve_edge_pointers()` remaps to canonical UUIDs using the uuid_map. Exact-match deduplication merges edges across episodes via the `episodes` list field (`edge_operations.resolve_extracted_edge`). Once edges are extracted, the uuid_map is cleaned up from episode attributes.
+
+**Edge Tense Strategy - Hybrid Event/State Model**: Journal entries naturally document both temporal events and ongoing states. V2 uses **tense to encode semantic meaning**:
+
+**Event-Based Edges (Past Tense - Capturing Moments):**
+- **Met** - First encounter with someone (relationship milestone)
+- **Visited** - Went to a place (can occur multiple times)
+- **Attended** - Participated in a one-time event
+- **Started** - Began a relationship, job, or practice
+
+**State-Based Edges (Present Tense - Capturing Ongoing Patterns):**
+- **Knows** - Ongoing awareness/familiarity
+- **Supports** - Active support relationship
+- **WorksAt** - Employment relationship
+- **LivesAt** - Current residence
+- **SpendsTimeWith** - Repeated social interactions
+- **ConflictsWith** - Tension or friction in relationship
+- **ParticipatesIn** - Repeated participation in activity
+
+**Why This Works:**
+1. **Semantic authenticity**: Journal entries ARE retrospective - "I met Sarah" (past event) vs "Sarah supports me" (current state)
+2. **Natural queries**: "Show everyone I Met in 2024" and "Show everyone who Supports me" both read naturally
+3. **Growth tracking**: First meetings mark relationship beginnings, support patterns show current connection quality
+4. **Timeline + landscape**: Events provide temporal milestones, states describe current relationship fabric
+5. **Natural graph visualization**: "Alice Knows Bob" reads as "Alice knows Bob" (complete sentence)
+
+**LLM Classification**: Train DSPy optimizer to recognize event markers ("met", "visited", "went to", "attended") vs state markers ("is", "works at", "supports", "keeps visiting"). Temporal validity (valid_at/invalid_at) handles when states begin/end.
+
+**Verb Form Convention**: State edges use **third-person singular** (Knows, Supports, SpendsTimeWith) so graph triples read as natural sentences: "Alice Knows Bob" = "Alice knows Bob". Edge types are relationship descriptors, not literal query verbs. Past-tense event edges already have correct form (Met, Visited, Attended). Standard convention across knowledge graphs.
 
 Episodic edges (MENTIONS) are built via `edge_operations.build_episodic_edges()` to link episodes to entities.
 
@@ -79,7 +109,7 @@ charlie/
 └── V2_PLAN.md              # This document
 ```
 
-Backend modules operate independently on existing episodic nodes. UI code and importers only interact through `backend/__init__.py`. Currently implemented: episode creation with SELF entity seeding, multi-journal support, and global Redis operations for application metadata.
+Backend modules operate independently on existing episodic nodes. UI code and importers only interact through `backend/__init__.py`. Currently implemented: episode creation with author entity "I" seeding, multi-journal support, and global Redis operations for application metadata.
 
 ## Supported Queries
 
@@ -100,5 +130,6 @@ Backend modules operate independently on existing episodic nodes. UI code and im
 **DSPy**: Framework for optimizing LLM extraction prompts. Enables MIPROv2 teleprompter optimization to improve entity/edge extraction quality over time. Separates extraction logic (pure dspy.Module) from orchestration (database I/O).
 
 **llama.cpp**: Local LLM inference via CPU/GPU acceleration. Thread-safe for concurrent requests. Model runs entirely offline - no API calls, no cloud dependency. Supports structured output via JSON schema for entity/edge extraction.
+**Huey (single worker)**: Thread-based consumer for asynchronous extraction tasks; only the instruct model is loaded, and it is unloaded immediately when no episodes are pending.
 
 **State Tracking**: Episode processing state stored in database. Background workers poll for episodes needing processing. Progressive reveal: UI updates as operations complete asynchronously.

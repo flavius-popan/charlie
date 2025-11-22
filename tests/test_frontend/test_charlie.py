@@ -27,10 +27,12 @@ Compare against baselines (normal test run):
 """
 
 import asyncio
-import pytest
 from contextlib import asynccontextmanager
 from datetime import datetime
-from unittest.mock import AsyncMock, patch
+import subprocess
+from unittest.mock import AsyncMock, Mock, patch, mock_open
+
+import pytest
 
 from charlie import CharlieApp, HomeScreen, ViewScreen, EditScreen, SettingsScreen
 
@@ -46,6 +48,8 @@ async def app_test_context(app):
     try:
         async with app.run_test() as pilot:
             yield pilot
+            # Ensure orderly shutdown to avoid unawaited coroutine warnings
+            await pilot.exit()
     except asyncio.CancelledError:
         pass
 
@@ -59,10 +63,13 @@ def mock_database():
          patch('charlie.add_journal_entry', new_callable=AsyncMock) as mock_add, \
          patch('charlie.update_episode', new_callable=AsyncMock) as mock_update, \
          patch('charlie.delete_episode', new_callable=AsyncMock) as mock_delete, \
-         patch('charlie.shutdown_database') as mock_shutdown:
+         patch('charlie.shutdown_database') as mock_shutdown, \
+         patch('charlie.get_inference_enabled') as mock_get_inference_enabled, \
+         patch('charlie.set_inference_enabled') as mock_set_inference_enabled:
 
         mock_ensure.return_value = None
         mock_get_all.return_value = []
+        mock_get_inference_enabled.return_value = False
 
         yield {
             'ensure': mock_ensure,
@@ -72,6 +79,8 @@ def mock_database():
             'update': mock_update,
             'delete': mock_delete,
             'shutdown': mock_shutdown,
+            'get_inference_enabled': mock_get_inference_enabled,
+            'set_inference_enabled': mock_set_inference_enabled,
         }
 
 
@@ -90,6 +99,20 @@ class TestCharlieApp:
             assert app.title == "Charlie"
             assert app.theme == "catppuccin-mocha"
             assert isinstance(app.screen, HomeScreen)
+
+    @pytest.mark.asyncio
+    async def test_app_starts_worker_always(self, mock_database):
+        """Huey worker starts regardless of inference toggle; tasks enforce it."""
+        with patch('charlie.is_huey_consumer_running', return_value=False), \
+             patch('charlie.start_huey_consumer') as mock_start, \
+             patch('charlie.atexit.register'):
+
+            app = CharlieApp()
+            async with app_test_context(app) as pilot:
+                await pilot.pause()
+                await pilot.pause()  # allow call_after_refresh to run
+
+            mock_start.assert_called_once()
 
 
 class TestHomeScreen:
@@ -157,6 +180,23 @@ class TestHomeScreen:
             await pilot.pause()
 
             assert isinstance(app.screen, SettingsScreen)
+
+    @pytest.mark.asyncio
+    async def test_l_key_opens_logs_and_reload(self, mock_database):
+        """Should open Log screen and handle reload."""
+        app = CharlieApp()
+        async with app_test_context(app) as pilot:
+            await pilot.pause()
+
+            await pilot.press("l")
+            await pilot.pause()
+
+            from charlie import LogScreen
+            assert isinstance(app.screen, LogScreen)
+
+            await pilot.press("r")
+            await pilot.pause()
+            assert isinstance(app.screen, LogScreen)
 
     @pytest.mark.asyncio
     async def test_home_loads_episodes(self, mock_database):
@@ -356,8 +396,8 @@ class TestSettingsScreen:
             assert isinstance(app.screen, SettingsScreen)
 
     @pytest.mark.asyncio
-    async def test_settings_has_two_toggles(self, mock_database):
-        """Should display two example toggle switches."""
+    async def test_settings_shows_inference_toggle(self, mock_database):
+        """Should display inference toggle switch."""
         app = CharlieApp()
         async with app_test_context(app) as pilot:
             await pilot.pause()
@@ -366,28 +406,49 @@ class TestSettingsScreen:
 
             from textual.widgets import Switch
             switches = app.query(Switch)
-            assert len(switches) == 2
+            assert len(switches) == 1
 
-            toggle1 = app.query_one("#toggle1", Switch)
-            toggle2 = app.query_one("#toggle2", Switch)
-            assert toggle1 is not None
-            assert toggle2 is not None
+            toggle = app.query_one("#inference-toggle", Switch)
+            assert toggle is not None
 
     @pytest.mark.asyncio
-    async def test_settings_toggles_initial_states(self, mock_database):
-        """Should have correct initial toggle states."""
+    async def test_inference_toggle_calls_set_and_retains_focus(self, mock_database):
+        """Space toggles inference, calls setter once, and keeps focus for fast toggling."""
         app = CharlieApp()
         async with app_test_context(app) as pilot:
             await pilot.pause()
             await pilot.press("s")
             await pilot.pause()
 
-            from textual.widgets import Switch
-            toggle1 = app.query_one("#toggle1", Switch)
-            toggle2 = app.query_one("#toggle2", Switch)
+            switch = app.screen.query_one("#inference-toggle")
+            assert switch.has_focus
 
-            assert toggle1.value is False
-            assert toggle2.value is True
+            await pilot.press("space")
+            await pilot.pause()
+
+            mock_database["set_inference_enabled"].assert_called_once_with(True)
+            assert switch.has_focus
+
+    @pytest.mark.asyncio
+    async def test_settings_toggles_initial_state(self, mock_database):
+        """Should load initial state from backend."""
+        mock_database['get_inference_enabled'].return_value = True
+        with patch('charlie.is_huey_consumer_running', return_value=False), \
+             patch('charlie.start_huey_consumer'), \
+             patch('charlie.atexit.register'):
+            app = CharlieApp()
+            async with app_test_context(app) as pilot:
+                await pilot.pause()
+                await pilot.press("s")
+                await pilot.pause()
+
+                from textual.widgets import Switch
+                toggle = app.query_one("#inference-toggle", Switch)
+
+                assert toggle.value is True
+
+        # Reset for other tests
+        mock_database['get_inference_enabled'].return_value = False
 
     @pytest.mark.asyncio
     async def test_settings_closes_with_s_key(self, mock_database):
@@ -431,14 +492,15 @@ class TestSettingsScreen:
             await pilot.pause()
 
             from textual.widgets import Switch
-            toggle1 = app.query_one("#toggle1", Switch)
-            initial = toggle1.value
+            toggle = app.query_one("#inference-toggle", Switch)
+            initial = toggle.value
 
             await pilot.press("space")
             await pilot.pause()
 
-            # Toggle should have changed
-            assert toggle1.value != initial
+            # Toggle should have changed and persisted
+            assert toggle.value != initial
+            mock_database['set_inference_enabled'].assert_called_once_with(toggle.value)
 
     @pytest.mark.asyncio
     async def test_settings_vim_navigation(self, mock_database):
@@ -457,6 +519,31 @@ class TestSettingsScreen:
 
             # Basic test - bindings exist and don't crash
             assert isinstance(app.screen, SettingsScreen)
+
+    @pytest.mark.asyncio
+    async def test_settings_toggle_disables_worker(self, mock_database):
+        """Disabling inference should NOT stop the Huey worker (tasks honor toggle)."""
+        mock_database['get_inference_enabled'].return_value = True
+
+        with patch('charlie.is_huey_consumer_running', return_value=False), \
+             patch('charlie.start_huey_consumer'), \
+             patch('charlie.atexit.register'):
+
+            app = CharlieApp()
+            async with app_test_context(app) as pilot:
+                await pilot.pause()
+                await pilot.press("s")
+                await pilot.pause()
+
+                with patch.object(app, "stop_huey_worker") as mock_stop:
+                    from textual.widgets import Switch
+                    toggle = app.query_one("#inference-toggle", Switch)
+                    toggle.value = True  # starting state enabled
+                    await pilot.press("space")  # toggle off
+                    await pilot.pause()
+
+                    mock_stop.assert_not_called()
+                    mock_database['set_inference_enabled'].assert_called_with(False)
 
 
 class TestIntegration:
@@ -504,14 +591,34 @@ class TestIntegration:
             await pilot.pause()
 
             from textual.widgets import Switch
-            toggle1 = app.query_one("#toggle1", Switch)
-            initial = toggle1.value
+            toggle = app.query_one("#inference-toggle", Switch)
+            initial = toggle.value
 
             await pilot.press("space")
             await pilot.pause()
-            assert toggle1.value != initial
+            assert toggle.value != initial
+            mock_database['set_inference_enabled'].assert_called_once_with(toggle.value)
 
             # Close settings
             await pilot.press("escape")
             await pilot.pause()
             assert isinstance(app.screen, HomeScreen)
+
+
+class TestWorkerManagement:
+    """Tests for Huey worker lifecycle management."""
+
+    @pytest.mark.asyncio
+    async def test_worker_startup_notifies_on_failure(self, mock_database):
+        """App should surface an error if the consumer fails to start."""
+        app = CharlieApp()
+        async with app_test_context(app) as pilot:
+            await pilot.pause()
+
+            with patch('charlie.is_huey_consumer_running', return_value=False), \
+                 patch('charlie.start_huey_consumer', side_effect=RuntimeError("boom")), \
+                 patch('charlie.atexit.register'):
+
+                app.notify = Mock()
+                app._ensure_huey_worker_running()
+                app.notify.assert_called_once()

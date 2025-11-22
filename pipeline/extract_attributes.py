@@ -304,7 +304,7 @@ class ExtractAttributes:
 
         for node in nodes:
             if node.uuid == str(SELF_ENTITY_UUID):
-                logger.debug("Skipping SELF entity for attribute extraction")
+                logger.debug('Skipping author entity "I" for attribute extraction')
                 nodes_skipped += 1
                 continue
             entity_type_name = next((item for item in node.labels if item != 'Entity'), '')

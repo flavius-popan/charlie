@@ -1,4 +1,4 @@
-"""Utilities for anchoring journal entries to the author's SELF entity."""
+"""Utilities for anchoring journal entries to the author's canonical I entity."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from graphiti_core.utils.datetime_utils import utc_now
 
 
 SELF_ENTITY_UUID = UUID("11111111-1111-1111-1111-111111111111")
-SELF_ENTITY_NAME = "Self"
+SELF_ENTITY_NAME = "I"
 SELF_ENTITY_LABELS = ["Entity", "Person"]
 SELF_PROMPT_NOTE = (
     "Represents the journal author. Map any first-person pronouns (I/me/my/mine/myself) "

@@ -2,13 +2,39 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 DB_PATH = Path("data/charlie.db")
 DEFAULT_JOURNAL = "default"
 
-# TCP server for debugging (disabled by default)
-ENABLE_TCP_SERVER = False
+# Single switch to expose FalkorDB/Redis over TCP. Set to True to enable.
+REDIS_TCP_ENABLED = True
+
+# TCP server defaults (bind to localhost for safety).
 TCP_HOST = "127.0.0.1"
 TCP_PORT = 6379
 TCP_PASSWORD = None
+
+# Model configuration
+MODEL_REPO_ID = "unsloth/Qwen3-4B-Instruct-2507-GGUF"
+MODEL_QUANTIZATION = "Q4_K_M"
+
+# llama.cpp inference settings (OS/hardware specific)
+LLAMA_CPP_N_CTX = int(os.getenv("LLAMA_CTX_SIZE", "4096"))
+LLAMA_CPP_GPU_LAYERS = int(os.getenv("LLAMA_GPU_LAYERS", "-1"))
+LLAMA_CPP_VERBOSE = False
+
+# Generation parameters
+MODEL_CONFIG = {
+    "temp": 0.7,
+    "top_p": 0.8,
+    "top_k": 20,
+    "min_p": 0.0,
+    "presence_penalty": 0.0,
+    "max_tokens": 2048,
+}
+
+# Huey task queue configuration
+HUEY_WORKER_TYPE = "thread"
+HUEY_WORKERS = 1

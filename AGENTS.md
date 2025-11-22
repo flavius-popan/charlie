@@ -6,6 +6,10 @@ Unless I request a simple change, any discussion of architecture, design, featur
 
 You are only permitted to run read-only git operations to understand the project state. You ARE NOT permitted to run git add, commit, push, etc.
 
+## PYTHON ENVIRONMENT
+
+Always use the project's uv-managed virtual environment (e.g., `uv run ...`) instead of the system Python when running commands or tests.
+
 ## Testing Textual Applications
 
 **CRITICAL:** Never run the Textual app directly (e.g., `python charlie.py`) in a non-interactive shell or agent environment. It will hang or output raw terminal control codes.
@@ -24,6 +28,7 @@ You are only permitted to run read-only git operations to understand the project
 - Run inference tests: `pytest -m inference`
 - Run all tests: `pytest -m ""`
 - Use the `require_llm` fixture to skip if no LLM configured
+- Reuse the session-configured LLM (`dspy.settings.lm`) for all inference tests. Only tests that explicitly verify load/unload behavior should instantiate or unload models; everything else should use the shared model seeded by `configure_dspy_for_backend`/`reuse_session_lm`.
 
 **Pattern:**
 ```python
@@ -33,3 +38,7 @@ async def test_with_llm_call(isolated_graph, require_llm):
     # Test automatically skips if dspy.settings.lm is None
     # Test code that makes LLM calls via DSPy
 ```
+
+## Testing Best Practices
+
+*ALWAYS* use the respective conftest.py file for a given test suite for fixtures.

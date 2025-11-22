@@ -71,7 +71,7 @@ def _entities_json(entities: list[dict[str, Any]]) -> str:
             "name": entity["name"],
             "entity_types": entity.get("labels", ["Entity"]),
         }
-        if entity.get("is_author") or entity["name"] == "Self":
+        if entity.get("is_author") or entity["name"] == "I":
             entry["is_author"] = True
             entry["notes"] = entity.get("notes") or SELF_PROMPT_NOTE
         elif entity.get("notes"):
@@ -136,7 +136,7 @@ RAW_EXAMPLES: list[dict[str, Any]] = [
         ),
         "entities": [
             {
-                "name": "Self",
+                "name": "I",
                 "labels": ["Entity", "Person"],
                 "is_author": True,
                 "notes": SELF_PROMPT_NOTE,
@@ -149,13 +149,13 @@ RAW_EXAMPLES: list[dict[str, Any]] = [
         "reference_time": "2025-02-20T19:30:00Z",
         "relationships": [
             {
-                "source": "Self",
+                "source": "I",
                 "target": "Priya",
                 "relation": "SpendsTimeWith",
                 "fact": "I met Priya at Dolores Park.",
             },
             {
-                "source": "Self",
+                "source": "I",
                 "target": "breathing check-in",
                 "relation": "ParticipatesIn",
                 "fact": "I practiced the breathing check-in with Priya.",
@@ -174,7 +174,7 @@ RAW_EXAMPLES: list[dict[str, Any]] = [
         ),
         "entities": [
             {
-                "name": "Self",
+                "name": "I",
                 "labels": ["Entity", "Person"],
                 "is_author": True,
                 "notes": SELF_PROMPT_NOTE,
@@ -186,7 +186,7 @@ RAW_EXAMPLES: list[dict[str, Any]] = [
         "reference_time": "2025-02-18T06:40:00Z",
         "relationships": [
             {
-                "source": "Self",
+                "source": "I",
                 "target": "solo laps",
                 "relation": "ParticipatesIn",
                 "fact": "I walked solo laps after therapy.",
@@ -205,7 +205,7 @@ RAW_EXAMPLES: list[dict[str, Any]] = [
         ),
         "entities": [
             {
-                "name": "Self",
+                "name": "I",
                 "labels": ["Entity", "Person"],
                 "is_author": True,
                 "notes": SELF_PROMPT_NOTE,
@@ -217,19 +217,19 @@ RAW_EXAMPLES: list[dict[str, Any]] = [
         "reference_time": "2025-02-16T22:15:00Z",
         "relationships": [
             {
-                "source": "Self",
+                "source": "I",
                 "target": "Mom",
                 "relation": "Supports",
                 "fact": "I called Mom after my panic spike.",
             },
             {
                 "source": "Dr. Chen",
-                "target": "Self",
+                "target": "I",
                 "relation": "Supports",
                 "fact": "Dr. Chen texted me about my meds."
             },
             {
-                "source": "Self",
+                "source": "I",
                 "target": "panic spike call",
                 "relation": "ParticipatesIn",
                 "fact": "I called Mom during a panic spike.",
@@ -243,7 +243,7 @@ RAW_EXAMPLES: list[dict[str, Any]] = [
         ),
         "entities": [
             {
-                "name": "Self",
+                "name": "I",
                 "labels": ["Entity", "Person"],
                 "is_author": True,
                 "notes": SELF_PROMPT_NOTE,
@@ -257,18 +257,18 @@ RAW_EXAMPLES: list[dict[str, Any]] = [
         "relationships": [
             {
                 "source": "Mara",
-                "target": "Self",
+                "target": "I",
                 "relation": "Supports",
                 "fact": "Mara coaxed me into the sunrise plunge.",
             },
             {
                 "source": "Tino",
-                "target": "Self",
+                "target": "I",
                 "relation": "Supports",
                 "fact": "Tino cracked jokes during the plunge.",
             },
             {
-                "source": "Self",
+                "source": "I",
                 "target": "sunrise plunge",
                 "relation": "ParticipatesIn",
                 "fact": "I did a sunrise plunge with Mara and Tino.",
@@ -369,7 +369,7 @@ RAW_EXAMPLES: list[dict[str, Any]] = [
         ),
         "entities": [
             {
-                "name": "Self",
+                "name": "I",
                 "labels": ["Entity", "Person"],
                 "is_author": True,
                 "notes": SELF_PROMPT_NOTE,
@@ -381,13 +381,13 @@ RAW_EXAMPLES: list[dict[str, Any]] = [
         "reference_time": "2025-02-06T19:00:00Z",
         "relationships": [
             {
-                "source": "Self",
+                "source": "I",
                 "target": "Theo",
                 "relation": "SpendsTimeWith",
                 "fact": "I talked with Theo at journaling club.",
             },
             {
-                "source": "Self",
+                "source": "I",
                 "target": "Redwood Mutual Aid",
                 "relation": "RELATES_TO",
                 "fact": "I mentioned Redwood Mutual Aid to Theo.",
@@ -407,7 +407,7 @@ RAW_EXAMPLES: list[dict[str, Any]] = [
         ),
         "entities": [
             {
-                "name": "Self",
+                "name": "I",
                 "labels": ["Entity", "Person"],
                 "is_author": True,
                 "notes": SELF_PROMPT_NOTE,
@@ -421,7 +421,7 @@ RAW_EXAMPLES: list[dict[str, Any]] = [
         "relationships": [
             {
                 "source": "Kai",
-                "target": "Self",
+                "target": "I",
                 "relation": "SpendsTimeWith",
                 "fact": "Kai introduced me to Lou at Touchstone.",
             },
@@ -432,7 +432,7 @@ RAW_EXAMPLES: list[dict[str, Any]] = [
                 "fact": "Kai knew Lou from climbing.",
             },
             {
-                "source": "Self",
+                "source": "I",
                 "target": "bouldering session",
                 "relation": "ParticipatesIn",
                 "fact": "I did a goofy bouldering session with Kai and Lou.",
@@ -734,7 +734,7 @@ def _check_fact_quality_issues(edges: list[dict[str, Any]], entity_names: list[s
     """Automatically detect common fact quality issues."""
     issues = []
 
-    has_self = "Self" in [e.lower() for e in entity_names]
+    has_self = "i" in [e.lower() for e in entity_names]
 
     for edge in edges:
         fact = edge.get("fact", "").strip()
@@ -747,8 +747,8 @@ def _check_fact_quality_issues(edges: list[dict[str, Any]], entity_names: list[s
 
         fact_lower = fact.lower()
 
-        # Check for third-person references when Self is involved
-        if has_self and (source.lower() == "self" or target.lower() == "self"):
+        # Check for third-person references when the author is involved
+        if has_self and (source.lower() == "i" or target.lower() == "i"):
             if "the narrator" in fact_lower:
                 issues.append(
                     f"Uses 'the narrator' instead of first-person for {source} → {target}: \"{fact}\""
@@ -756,7 +756,7 @@ def _check_fact_quality_issues(edges: list[dict[str, Any]], entity_names: list[s
             elif " i " not in fact_lower and " my " not in fact_lower and " me " not in fact_lower:
                 if not fact.startswith("I "):
                     issues.append(
-                        f"Missing first-person perspective for Self relationship {source} → {target}: \"{fact}\""
+                        f"Missing first-person perspective for I relationship {source} → {target}: \"{fact}\""
                     )
 
         # Check for overly generic or template-like facts
@@ -801,7 +801,7 @@ def generate_feedback(
         for edge in expected_edges
     ])
 
-    has_self = "Self" in entity_names
+    has_self = "I" in entity_names
 
     feedback_prompt = f"""Evaluate this relationship extraction from a journal entry and provide specific, actionable feedback.
 
@@ -824,17 +824,17 @@ Provide feedback on:
 1. **Relationship Accuracy**: Are the (source, target, relation) tuples correct?
 2. **Completeness**: Are all important relationships from the journal entry captured?
 3. **Precision**: Are there any hallucinated relationships not supported by the text?
-4. **Fact Grounding**: {"Are facts properly written in FIRST PERSON (using 'I', 'my', 'me') when Self is involved? " if has_self else ""}Are facts grounded in the actual journal entry content, or do they sound analytical/detached?
+4. **Fact Grounding**: {"Are facts properly written in FIRST PERSON (using 'I', 'my', 'me') when I am involved? " if has_self else ""}Are facts grounded in the actual journal entry content, or do they sound analytical/detached?
 5. **Fact Conciseness**: Are facts SHORT and DIRECT (ideally one sentence)? Do they avoid emotional interpretation or explaining WHY things happened?
 
 CRITICAL RULES FOR FACTS:
-- When Self is a participant, facts MUST use first-person pronouns ("I spent time...", "I reached out...", "she checked on me...")
+- When I am a participant, facts MUST use first-person pronouns ("I spent time...", "I reached out...", "she checked on me...")
 - NEVER use "the narrator" - use "I/me/my" or the actual entity names
 - Facts should be SHORT, DIRECT, and FACTUAL - similar to concise journal summaries
 - State WHAT happened, not WHY or how people felt about it (unless the feeling is the core fact)
 - Avoid verbose explanations: "I reached out to Mom" NOT "I reached out to Mom for support after the panic spike"
 - Avoid analytical phrases: "indicating a", "suggesting that", "implying", etc.
-- Avoid overfitting: not every person entity relates to Self
+- Avoid overfitting: not every person entity relates to I
 
 Be specific and actionable in your feedback."""
 

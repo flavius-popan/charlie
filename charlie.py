@@ -1,5 +1,7 @@
 import asyncio
+import atexit
 import logging
+import os
 from pathlib import Path
 
 from textual.app import App, ComposeResult
@@ -12,11 +14,13 @@ from textual.widgets import (
     Label,
     ListItem,
     ListView,
+    Log as LogWidget,
     Markdown,
     Static,
     Switch,
     TextArea,
 )
+from textual.logging import TextualHandler
 
 from backend import add_journal_entry
 from backend.database import (
@@ -24,21 +28,63 @@ from backend.database import (
     ensure_database_ready,
     get_all_episodes,
     get_episode,
+    get_tcp_server_endpoint,
     shutdown_database,
     update_episode,
 )
+from backend.database.redis_ops import get_inference_enabled, set_inference_enabled
 from backend.settings import DEFAULT_JOURNAL
+from backend.services.queue import (
+    is_huey_consumer_running,
+    start_huey_consumer,
+    stop_huey_consumer,
+)
 
-LOGS_DIR = Path("logs")
+LOGS_DIR = Path(__file__).parent / "logs"
 LOGS_DIR.mkdir(exist_ok=True)
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.FileHandler(LOGS_DIR / "charlie.log"),
-    ],
-)
+os.environ.setdefault("TEXTUAL_LOG", str(LOGS_DIR / "charlie.log"))
+
+
+class _NoActiveAppFilter(logging.Filter):
+    """Allow records through only when no Textual app context is active."""
+
+    def filter(self, record: logging.LogRecord) -> bool:  # type: ignore[override]
+        from textual._context import active_app
+
+        try:
+            active_app.get()
+        except LookupError:
+            return True
+        return False
+
+
+def _configure_logging() -> None:
+    """Route all logging through Textual, with a file fallback for background threads."""
+    log_path = Path(os.environ["TEXTUAL_LOG"])
+
+    textual_handler = TextualHandler(stderr=False, stdout=False)
+    textual_handler.setFormatter(
+        logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    )
+
+    file_handler = logging.FileHandler(log_path, encoding="utf-8")
+    file_handler.setFormatter(
+        logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    )
+
+    logging.basicConfig(
+        level=logging.INFO,
+        handlers=[textual_handler, file_handler],
+        force=True,
+    )
+
+    # Quiet Huey per-task INFO logs; keep warnings/errors.
+    for name in ("huey", "huey.consumer", "huey.api", "huey.signals", "huey.queue"):
+        logging.getLogger(name).setLevel(logging.WARNING)
+
+
+_configure_logging()
 
 logger = logging.getLogger("charlie")
 
@@ -107,6 +153,16 @@ EMPTY_STATE_CAT = r"""
 class SettingsScreen(ModalScreen):
     """Modal screen for application settings."""
 
+    def __init__(self):
+        super().__init__()
+        # Default to enabled; actual state loaded on mount from Redis
+        try:
+            self.inference_enabled = get_inference_enabled()
+        except Exception:
+            self.inference_enabled = True
+        self._loading_toggle_state = False
+        self._toggle_worker = None
+
     BINDINGS = [
         Binding("s", "dismiss_modal", "Close", show=True),
         Binding("escape", "dismiss_modal", "Close", show=False),
@@ -118,17 +174,62 @@ class SettingsScreen(ModalScreen):
         yield Vertical(
             Label("Settings", id="settings-title"),
             Label(""),
-            Label("Example Toggle 1:"),
-            Switch(id="toggle1", value=False),
-            Label(""),
-            Label("Example Toggle 2:"),
-            Switch(id="toggle2", value=True),
+            Label("Enable background inference"),
+            Switch(id="inference-toggle", value=self.inference_enabled),
             id="settings-dialog",
         )
         yield Footer()
 
     def action_dismiss_modal(self) -> None:
         self.dismiss()
+
+    def on_switch_changed(self, event: Switch.Changed) -> None:
+        if event.switch.id != "inference-toggle":
+            return
+
+        if self._loading_toggle_state:
+            event.switch.value = self.inference_enabled
+            return
+
+        desired = event.value
+        previous = self.inference_enabled
+
+        event.switch.disabled = True
+        self._loading_toggle_state = True
+
+        # Run persistence off the UI thread to avoid freezes during model load/enqueue
+        self._toggle_worker = self.run_worker(
+            self._persist_inference_toggle(event.switch, desired, previous),
+            exclusive=True,
+            name="inference-toggle",
+        )
+
+    async def _persist_inference_toggle(self, switch: Switch, desired: bool, previous: bool):
+        try:
+            # Persist toggle and enqueue in a thread to keep UI responsive
+            await asyncio.to_thread(set_inference_enabled, desired)
+            self.inference_enabled = desired
+            self._on_toggle_success(switch, desired)
+        except Exception as exc:
+            logger.error("Failed to persist inference toggle: %s", exc, exc_info=True)
+            self._on_toggle_failure(switch, previous)
+        finally:
+            self._clear_toggle_loading(switch)
+
+    def _on_toggle_success(self, switch: Switch, value: bool) -> None:
+        switch.value = value
+        switch.disabled = False
+
+    def _on_toggle_failure(self, switch: Switch, previous: bool) -> None:
+        switch.value = previous
+        self.inference_enabled = previous
+        switch.disabled = False
+        self.notify("ai ded 💀 check logz", severity="error")
+
+    def _clear_toggle_loading(self, switch: Switch) -> None:
+        self._loading_toggle_state = False
+        switch.disabled = False
+        switch.focus()
 
 
 class HomeScreen(Screen):
@@ -139,6 +240,7 @@ class HomeScreen(Screen):
         Binding("space", "view_entry", "View", show=True),
         Binding("d", "delete_entry", "Delete", show=True),
         Binding("s", "open_settings", "Settings", show=True),
+        Binding("l", "open_logs", "Logs", show=True),
         Binding("q", "quit", "Quit", show=True),
         Binding("j", "cursor_down", "Down", show=False),
         Binding("k", "cursor_up", "Up", show=False),
@@ -174,6 +276,9 @@ class HomeScreen(Screen):
     async def _init_and_load(self):
         try:
             await ensure_database_ready(DEFAULT_JOURNAL)
+            # Start Huey worker after database is ready to avoid startup races
+            if hasattr(self.app, "_ensure_huey_worker_running"):
+                self.app._ensure_huey_worker_running()
             await self.load_episodes()
         except Exception as e:
             logger.error(f"Database initialization failed: {e}", exc_info=True)
@@ -262,8 +367,18 @@ class HomeScreen(Screen):
             logger.error(f"Failed to delete entry: {e}", exc_info=True)
             self.notify("Failed to delete entry", severity="error")
 
+    def _graceful_shutdown(self):
+        """Ensure worker stops before database teardown (idempotent)."""
+        try:
+            if hasattr(self.app, "stop_huey_worker"):
+                self.app.stop_huey_worker()
+        finally:
+            shutdown_database()
+
     def action_quit(self):
-        shutdown_database()
+        # Stop background worker before tearing down the database to avoid
+        # connection errors/backoff during shutdown.
+        self._graceful_shutdown()
         self.app.exit()
 
     def action_cursor_down(self):
@@ -286,6 +401,9 @@ class HomeScreen(Screen):
 
     def action_open_settings(self):
         self.app.push_screen(SettingsScreen())
+
+    def action_open_logs(self):
+        self.app.push_screen(LogScreen())
 
 
 class ViewScreen(Screen):
@@ -421,15 +539,127 @@ class EditScreen(Screen):
             raise
 
 
+class LogScreen(Screen):
+    """Screen for quick log inspection using Textual's Log widget."""
+
+    BINDINGS = [
+        Binding("r", "reload", "Reload", show=True),
+        Binding("escape", "close", "Close", show=True),
+        Binding("q", "close", "Close", show=False),
+    ]
+
+    def __init__(self, log_path: Path | None = None):
+        super().__init__()
+        self.log_path = log_path or Path(os.environ.get("TEXTUAL_LOG", LOGS_DIR / "charlie.log"))
+
+    def compose(self) -> ComposeResult:
+        yield Header(show_clock=False, icon="")
+        yield LogWidget(id="log-view", auto_scroll=True, max_lines=2000)
+        yield Footer()
+
+    async def on_mount(self):
+        await self._load_log()
+
+    async def on_screen_resume(self):
+        await self._load_log()
+
+    async def action_reload(self):
+        await self._load_log()
+
+    def action_close(self):
+        self.app.pop_screen()
+
+    async def _load_log(self):
+        log_widget = self.query_one("#log-view", LogWidget)
+        log_widget.clear()
+
+        if not self.log_path.exists():
+            log_widget.write_line("Log file has not been created yet.")
+            return
+
+        try:
+            lines = await asyncio.to_thread(self._tail_file, self.log_path, 2000)
+            log_widget.write_lines(lines)
+            log_widget.scroll_end(animate=False)
+        except Exception as exc:
+            log_widget.write_line(f"Failed to load log: {exc}")
+            logger.error("Failed to load log view: %s", exc, exc_info=True)
+
+    @staticmethod
+    def _tail_file(path: Path, max_lines: int) -> list[str]:
+        with path.open("r", encoding="utf-8", errors="replace") as f:
+            return [line.rstrip("\n") for line in f.readlines()[-max_lines:]]
+
+
 class CharlieApp(App):
     """A minimal journal TUI application."""
 
     TITLE = "Charlie"
 
+    def __init__(self):
+        super().__init__()
+
     async def on_mount(self):
         self.theme = "catppuccin-mocha"
         self.title = "Charlie"
         self.push_screen(HomeScreen())
+        # Worker is started after DB readiness in HomeScreen._init_and_load.
+
+    def _ensure_huey_worker_running(self):
+        """Start Huey consumer in-process if not already running."""
+        if is_huey_consumer_running():
+            return
+
+        try:
+            # Ensure task registry is populated before starting the consumer.
+            # Importing registers @huey.task functions with the shared Huey instance.
+            import backend.services.tasks  # noqa: F401
+
+            start_huey_consumer()
+            endpoint = get_tcp_server_endpoint()
+            if endpoint:
+                host, port = endpoint
+                logger.info(
+                    "Huey consumer running in-process using embedded Redis at %s:%d",
+                    host,
+                    port,
+                )
+            else:
+                logger.info(
+                    "Huey consumer running in-process using embedded Redis (unix socket)"
+                )
+            atexit.register(self._shutdown_huey)
+
+        except Exception as exc:
+            logger.error("Failed to start Huey worker: %s", exc, exc_info=True)
+            self.notify("huey ded 💀 check logz", severity="error", timeout=5)
+
+    def _shutdown_huey(self):
+        """Terminate Huey worker gracefully (finish current task first)."""
+        try:
+            stop_huey_consumer()
+        except Exception as exc:
+            logger.warning("Error while stopping Huey worker: %s", exc, exc_info=True)
+
+    def stop_huey_worker(self):
+        """Public wrapper to stop worker (used by UI handlers)."""
+        self._shutdown_huey()
+
+    def _graceful_shutdown(self):
+        """Stop background worker before tearing down the database."""
+        try:
+            self.stop_huey_worker()
+        finally:
+            try:
+                shutdown_database()
+            except Exception as exc:
+                logger.warning(
+                    "Database shutdown encountered an error: %s", exc, exc_info=True
+                )
+
+    def on_unmount(self):
+        # Covers exits triggered outside the key binding (e.g., cmd+q/ctrl+c)
+        self._graceful_shutdown()
 
 
 CharlieApp.CSS = """
@@ -478,6 +708,10 @@ Footer .footer--key {
 
 SettingsScreen {
     align: center middle;
+}
+
+#log-view {
+    height: 100%;
 }
 """
 

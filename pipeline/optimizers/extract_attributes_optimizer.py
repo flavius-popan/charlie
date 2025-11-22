@@ -2,7 +2,7 @@
 
 Uses LLM-as-judge (gpt-5-nano) to provide rich textual feedback for optimizing
 attribute extraction prompts. Focuses on Person attributes with human-grounded
-relationship labels and Self entity handling.
+relationship labels and author (I) entity handling.
 
 Usage:
     python -m pipeline.optimizers.extract_attributes_optimizer
@@ -138,7 +138,7 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
         build_example(
             episode_content="I talked gently to myself in the mirror before work so I wouldn't skip breakfast again.",
             previous_notes=["I promised Ines I'd practice kinder self-talk every morning."],
-            entity_name="Self",
+            entity_name="I",
             entity_type="Person",
             existing={"relationship_type": "author"},
             attributes={"relationship_type": "author"},
@@ -194,7 +194,7 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
         build_example(
             episode_content="I spiraled tonight and had to write myself a letter reminding me I deserve rest.",
             previous_notes=["I keep slipping into old burnout stories whenever deadlines stack up."],
-            entity_name="Self",
+            entity_name="I",
             entity_type="Person",
             existing={"relationship_type": "author"},
             attributes={"relationship_type": "author"},
@@ -202,7 +202,7 @@ def build_trainset() -> tuple[list[dspy.Example], list[dspy.Example]]:
         build_example(
             episode_content="I let myself nap after therapy and woke up tender but proud of that tiny kindness.",
             previous_notes=["Rest still feels illegal unless someone else insists."],
-            entity_name="Self",
+            entity_name="I",
             entity_type="Person",
             existing={"relationship_type": "author"},
             attributes={"relationship_type": "author"},
@@ -308,7 +308,7 @@ Incorrect: {incorrect}
 Provide feedback on:
 1. Relationship typing: Are Person relationship types human and natural (friend, coach, therapist)?
 2. Completeness: Are key attributes missing?
-3. Self entity handling: For the author's Self entity, is relationship_type="author" correct?
+3. Author identity handling: For the author's identity, is relationship_type="author" correct?
 
 Be specific and actionable."""
 
