@@ -1,5 +1,6 @@
 import asyncio
 import atexit
+import json
 import logging
 import os
 from pathlib import Path
@@ -16,6 +17,7 @@ from textual.widgets import (
     Label,
     ListItem,
     ListView,
+    LoadingIndicator,
     Log as LogWidget,
     Markdown,
     Static,
@@ -34,10 +36,11 @@ from backend.database import (
     shutdown_database,
     update_episode,
 )
-from backend.database.queries import delete_entity_mention, fetch_entities_for_episode
+from backend.database.queries import delete_entity_mention
 from backend.database.redis_ops import (
     get_episode_status,
     get_inference_enabled,
+    redis_ops,
     set_inference_enabled,
 )
 from backend.settings import DEFAULT_JOURNAL
@@ -134,13 +137,9 @@ class DeleteEntityModal(ModalScreen):
 
     def compose(self) -> ComposeResult:
         name = self.entity["name"]
-        ref_count = self.entity["ref_count"]
 
         message = f"Remove {name} from this entry?"
-        if ref_count > 1:
-            hint = f"(Will remain in {ref_count - 1} other entries)"
-        else:
-            hint = "(Will be removed entirely)"
+        hint = "(This only removes the connection from this entry)"
 
         yield Vertical(
             Label("Remove Connection?", id="delete-title"),
@@ -185,8 +184,6 @@ class EntitySidebar(Container):
         Binding("d", "delete_entity", "Delete", show=False),
     ]
 
-    CAT_SPINNER_FRAMES = [">^.^<", "^.^", ">^.^<", "^.^"]
-
     episode_uuid: reactive[str] = reactive("")
     journal: reactive[str] = reactive("")
     loading: reactive[bool] = reactive(True)
@@ -196,39 +193,23 @@ class EntitySidebar(Container):
         super().__init__(**kwargs)
         self.episode_uuid = episode_uuid
         self.journal = journal
-        self._spinner_index = 0
-        self._spinner_timer = None
 
     def compose(self) -> ComposeResult:
         yield Label("Connections", classes="sidebar-header")
         yield Container(id="entity-content")
-        yield Label("d: delete | ↑↓: navigate | c: close", classes="sidebar-footer")
+        yield Label("d: delete | ↑↓: navigate | c: close | l: logs", classes="sidebar-footer")
 
     def on_mount(self) -> None:
-        """Start spinner animation when mounted."""
-        if self.loading:
-            self._spinner_timer = self.set_interval(0.3, self._update_spinner)
+        """Render initial content."""
         self._render_content()
 
     def watch_loading(self, loading: bool) -> None:
         """Reactive: swap between loading indicator and entity list."""
-        if loading and self._spinner_timer is None:
-            self._spinner_timer = self.set_interval(0.3, self._update_spinner)
-        elif not loading and self._spinner_timer:
-            self._spinner_timer.stop()
-            self._spinner_timer = None
-
         self._render_content()
 
     def watch_entities(self, entities: list[dict]) -> None:
         """Reactive: re-render when entities change."""
         if not self.loading:
-            self._render_content()
-
-    def _update_spinner(self) -> None:
-        """Update spinner animation frame."""
-        self._spinner_index = (self._spinner_index + 1) % len(self.CAT_SPINNER_FRAMES)
-        if self.loading:
             self._render_content()
 
     def _render_content(self) -> None:
@@ -240,8 +221,7 @@ class EntitySidebar(Container):
         content_container.remove_children()
 
         if self.loading:
-            cat_frame = self.CAT_SPINNER_FRAMES[self._spinner_index]
-            content_container.mount(Label(f"{cat_frame} Slinging yarn..."))
+            content_container.mount(LoadingIndicator())
         elif not self.entities:
             content_container.mount(Label("No connections found"))
         else:
@@ -251,47 +231,38 @@ class EntitySidebar(Container):
                 formatted_label = self._format_entity_label(entity)
                 list_view.append(EntityListItem(formatted_label))
 
-            # Focus the list view after it's fully populated
             self.call_after_refresh(lambda: list_view.focus())
 
     def _format_entity_label(self, entity: dict) -> str:
-        """Format entity as 'Name [Type]' or 'Name [Type] (RefCount)' if > 1."""
+        """Format entity as 'Name [Type]'."""
         name = entity["name"]
-        labels = entity.get("labels", [])
-        ref_count = entity.get("ref_count", 1)
-
-        # Handle labels that might be nested or empty
-        if isinstance(labels, list) and labels:
-            # Flatten if nested
-            flat_labels = []
-            for label in labels:
-                if isinstance(label, list):
-                    flat_labels.extend(label)
-                else:
-                    flat_labels.append(label)
-
-            # Filter out "Entity" if there's a more specific type
-            specific_labels = [l for l in flat_labels if l != "Entity"]
-            entity_type = specific_labels[0] if specific_labels else "Entity"
-        else:
-            entity_type = "Entity"
-
-        # Only show ref count if > 1
-        if ref_count > 1:
-            return f"{name} [{entity_type}] ({ref_count})"
-        else:
-            return f"{name} [{entity_type}]"
+        entity_type = entity.get("type", "Entity")
+        return f"{name} [{entity_type}]"
 
     async def refresh_entities(self) -> None:
-        """Fetch and display entities for current episode."""
+        """Poll Redis for entity data."""
         try:
-            raw_entities = await fetch_entities_for_episode(
-                self.episode_uuid, self.journal
-            )
-            self.entities = raw_entities
-            self.loading = False
+            cache_key = f"journal:{self.journal}:{self.episode_uuid}"
+
+            while True:
+                with redis_ops() as r:
+                    nodes_json = r.hget(cache_key, "nodes")
+                    status = r.hget(cache_key, "status")
+
+                if nodes_json:
+                    nodes = json.loads(nodes_json.decode())
+                    filtered_nodes = [n for n in nodes if n["name"] != "I"]
+                    self.entities = filtered_nodes
+                    self.loading = False
+                    break
+                elif status and status.decode() == "done":
+                    self.entities = []
+                    self.loading = False
+                    break
+
+                await asyncio.sleep(0.5)
         except Exception as e:
-            logger.error(f"Failed to fetch entities: {e}", exc_info=True)
+            logger.error(f"Failed to fetch entities from Redis: {e}", exc_info=True)
             self.loading = False
 
     def action_delete_entity(self) -> None:
