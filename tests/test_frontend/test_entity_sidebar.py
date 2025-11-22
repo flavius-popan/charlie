@@ -3,6 +3,7 @@
 import pytest
 from unittest.mock import patch, AsyncMock
 from textual.app import App, ComposeResult
+from textual.screen import ModalScreen
 from textual.widgets import Label, ListView
 from charlie import EntitySidebar
 
@@ -139,3 +140,27 @@ async def test_entity_sidebar_refresh_entities():
             # Should update state
             assert sidebar.loading is False
             assert sidebar.entities == mock_entities
+
+
+@pytest.mark.asyncio
+async def test_entity_sidebar_shows_delete_confirmation():
+    """Pressing 'd' on entity should show confirmation modal."""
+    app = EntitySidebarTestApp(episode_uuid="test-uuid", journal="test")
+
+    async with app.run_test() as pilot:
+        sidebar = app.query_one(EntitySidebar)
+        sidebar.entities = [
+            {"uuid": "uuid-1", "name": "Sarah", "labels": ["Entity", "Person"], "ref_count": 3},
+        ]
+        sidebar.loading = False
+
+        # Focus list and select first item
+        list_view = sidebar.query_one(ListView)
+        list_view.focus()
+
+        # Press 'd' for delete
+        await pilot.press("d")
+
+        # Should show confirmation modal
+        modal = app.screen
+        assert isinstance(modal, ModalScreen)

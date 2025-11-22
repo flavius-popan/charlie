@@ -10,6 +10,7 @@ from textual.containers import Container, Horizontal, Vertical
 from textual.reactive import reactive
 from textual.screen import ModalScreen, Screen
 from textual.widgets import (
+    Button,
     Footer,
     Header,
     Label,
@@ -106,6 +107,59 @@ class EntityListItem(ListItem):
         yield Label(self.label_text)
 
 
+class DeleteEntityModal(ModalScreen):
+    """Confirmation modal for entity deletion."""
+
+    DEFAULT_CSS = """
+    DeleteEntityModal {
+        align: center middle;
+    }
+
+    #delete-dialog {
+        width: 60;
+        height: auto;
+        border: thick $background 80%;
+        background: $surface;
+        padding: 1 2;
+    }
+
+    #delete-dialog Button {
+        margin: 1 2 0 0;
+    }
+    """
+
+    def __init__(self, entity: dict):
+        super().__init__()
+        self.entity = entity
+
+    def compose(self) -> ComposeResult:
+        name = self.entity["name"]
+        ref_count = self.entity["ref_count"]
+
+        message = f"Remove {name} from this entry?"
+        if ref_count > 1:
+            hint = f"(Will remain in {ref_count - 1} other entries)"
+        else:
+            hint = "(Will be removed entirely)"
+
+        yield Vertical(
+            Label("Remove Connection?", id="delete-title"),
+            Label(message),
+            Label(hint),
+            Horizontal(
+                Button("Cancel", id="cancel", variant="default"),
+                Button("Remove", id="remove", variant="error"),
+            ),
+            id="delete-dialog",
+        )
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "remove":
+            self.dismiss(True)
+        else:
+            self.dismiss(False)
+
+
 class EntitySidebar(Container):
     """Sidebar showing entities connected to current episode."""
 
@@ -126,6 +180,10 @@ class EntitySidebar(Container):
         margin-top: 1;
     }
     """
+
+    BINDINGS = [
+        Binding("d", "delete_entity", "Delete", show=False),
+    ]
 
     CAT_SPINNER_FRAMES = [">^.^<", "^.^", ">^.^<", "^.^"]
 
@@ -214,6 +272,21 @@ class EntitySidebar(Container):
         except Exception as e:
             logger.error(f"Failed to fetch entities: {e}", exc_info=True)
             self.loading = False
+
+    def action_delete_entity(self) -> None:
+        """Show delete confirmation for selected entity."""
+        list_view = self.query_one(ListView)
+        if list_view.index is None or list_view.index < 0:
+            return
+
+        entity = self.entities[list_view.index]
+        self.app.push_screen(DeleteEntityModal(entity), self._handle_delete_result)
+
+    async def _handle_delete_result(self, confirmed: bool) -> None:
+        """Handle deletion confirmation result."""
+        if confirmed:
+            # Deletion logic will be implemented next
+            pass
 
 
 def extract_title(content: str) -> str | None:
