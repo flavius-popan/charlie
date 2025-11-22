@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import time
+import asyncio
+from unittest.mock import patch
 
 import pytest
 
@@ -58,3 +60,73 @@ def test_start_consumer_is_idempotent(falkordb_test_context):
         assert queue.is_huey_consumer_running()
     finally:
         queue.stop_huey_consumer()
+
+
+def test_delete_episode_cleans_redis_and_skips_reenqueue(falkordb_test_context):
+    """Deleting an episode should remove its Redis hash and prevent re-enqueue."""
+    from backend import add_journal_entry
+    from backend.database.persistence import delete_episode
+    from backend.database.redis_ops import (
+        enqueue_pending_episodes,
+        get_episode_status,
+        set_episode_status,
+        redis_ops,
+    )
+
+    # Isolate Redis episode keys for this test
+    with redis_ops() as r:
+        keys = list(r.scan_iter(match="episode:*"))
+        if keys:
+            r.delete(*keys)
+
+    content = "Short entry to test deletion cleanup."
+    episode_uuid = asyncio.run(add_journal_entry(content))
+
+    set_episode_status(episode_uuid, "pending_nodes", journal=DEFAULT_JOURNAL)
+
+    asyncio.run(delete_episode(episode_uuid, DEFAULT_JOURNAL))
+
+    assert get_episode_status(episode_uuid) is None
+    enqueued = enqueue_pending_episodes()
+    assert enqueued == 0
+
+
+def test_inference_toggle_unloads_and_reenqueues(falkordb_test_context):
+    """Inference disable should unload models; re-enable should re-enqueue pending episodes."""
+    from backend.database.redis_ops import (
+        enqueue_pending_episodes,
+        get_episode_status,
+        set_episode_status,
+        set_inference_enabled,
+        redis_ops,
+    )
+    from backend.inference import manager
+
+    # Isolate Redis episode keys for this test
+    with redis_ops() as r:
+        keys = list(r.scan_iter(match="episode:*"))
+        if keys:
+            r.delete(*keys)
+
+    episode_uuid = "episode-toggle-test"
+
+    set_episode_status(episode_uuid, "pending_nodes", journal=DEFAULT_JOURNAL)
+    set_inference_enabled(False)
+
+    with patch("backend.inference.manager.unload_all_models") as mock_unload:
+        manager.cleanup_if_no_work()
+        mock_unload.assert_called_once()
+
+    set_inference_enabled(True)
+
+    with patch("backend.services.tasks.extract_nodes_task") as mock_task:
+        enqueued = enqueue_pending_episodes()
+
+        mock_task.assert_called_once_with(episode_uuid, DEFAULT_JOURNAL)
+        assert enqueued == 1
+
+    # Cleanup
+    set_inference_enabled(True)
+    from backend.database.redis_ops import remove_episode_from_queue
+
+    remove_episode_from_queue(episode_uuid)

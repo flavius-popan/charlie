@@ -44,21 +44,24 @@ def unload_all_models() -> None:
 
 
 def cleanup_if_no_work() -> None:
-    """Unload models if no pending episodes remain (event-driven cleanup)."""
-    from backend.database.redis_ops import get_episodes_by_status
+    """Unload models when no active work remains (event-driven cleanup)."""
+    from backend.database.redis_ops import get_episodes_by_status, get_inference_enabled
+
+    # If inference is disabled, pending work is blocked; unload immediately
+    if not get_inference_enabled():
+        logger.info("Inference disabled, unloading models (pending work is blocked)")
+        unload_all_models()
+        return
 
     pending_nodes = get_episodes_by_status("pending_nodes")
-    # Intentionally do NOT block on pending_edges yet.
-    # Until edge extraction exists, episodes may sit in pending_edges as a staging
-    # state; model unloads should still proceed. When extract_edges_task lands,
-    # add a pending_edges check here to keep models warm for relationship runs.
-    # pending_edges = get_episodes_by_status("pending_edges")
+    pending_edges = get_episodes_by_status("pending_edges")
 
-    if len(pending_nodes) == 0:
-        logger.info("No pending work in queue, unloading models")
+    if len(pending_nodes) == 0 and len(pending_edges) == 0:
+        logger.info("No active work in queue, unloading models")
         unload_all_models()
     else:
         logger.debug(
-            "Work remains in queue (%d pending_nodes), keeping models loaded",
+            "Active work remains (%d pending_nodes, %d pending_edges), keeping models loaded",
             len(pending_nodes),
+            len(pending_edges),
         )

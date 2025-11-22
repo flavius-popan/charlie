@@ -4,7 +4,7 @@
 
 **Architecture**: See `plans/huey_orchestrator.md` for detailed rationale on thread safety, model persistence, and resource management.
 
-**Current Scope (Nov 21, 2025)**: Only `extract_nodes` is implemented. Episodes advance to `pending_edges` as a staging marker, but no edge worker exists yet. `cleanup_if_no_work` deliberately ignores `pending_edges` so models can unload; reinstate the pending_edges check once `extract_edges_task` is added.
+**Current Scope (Nov 22, 2025)**: Only `extract_nodes` is implemented. Episodes advance to `pending_edges` when entities are found, or to the terminal state `done` when none are found. Redis hashes stay resident for both active and terminal states (`pending_nodes`, `pending_edges`, `done`, `dead`) and are removed only when the episode itself is deleted from the graph. `cleanup_if_no_work` considers both `pending_nodes` and `pending_edges`, and unloads immediately when inference is disabled. An edge task will later transition `pending_edges` → `done`.
 
 ## Prerequisite: Lock DSPy Cache Location (simple, importable helper)
 
@@ -83,19 +83,20 @@
    - Comprehensive error handling for db/client/pool unavailability
 
 2. **Task Implementation** (`backend/services/tasks.py`):
-   - `extract_nodes_task()` - Entity extraction with state transition to pending_edges
-   - Checks episode status before processing (safe to enqueue multiple times)
-   - Respects inference toggle via `get_inference_enabled()`
+   - `extract_nodes_task()` - Entity extraction with state transitions:
+     - `pending_nodes` → `pending_edges` when entities found (uuid_map stored)
+     - `pending_nodes` → `done` when no entities extracted
+     - Exceptions/unrecoverable errors → `dead`
+   - Checks episode status before processing (idempotent, safe to enqueue multiple times)
+   - Respects inference toggle via `get_inference_enabled()` (returns early if disabled)
    - Uses model persistence via `get_model("llm")` from manager
-   - Calls `cleanup_if_no_work()` for event-driven model unload
-   - Transitions episode to pending_edges with uuid_map persistence (ready for future edge extraction)
+   - Calls `cleanup_if_no_work()` for event-driven model unload (honors inference-disabled fast-unload)
 
 3. **Inference Toggle & Recovery** (`backend/database/redis_ops.py`):
-   - `get_inference_enabled()` - Returns True if enabled (default: True)
-   - `set_inference_enabled(enabled: bool)` - Persists to Redis at `app:inference_enabled`
-   - `enqueue_pending_episodes()` - Scans and enqueues pending work when inference is enabled
-   - Setting survives app restarts via Redis storage
-   - Simplified state management: scan-based lookups; current pipeline has only the entity-extraction stage (more stages can be added later)
+   - `get_inference_enabled()` / `set_inference_enabled()` persisted in Redis
+   - `enqueue_pending_episodes()` scans `pending_nodes` and enqueues when inference is enabled; no-op when disabled
+   - Redis hashes are retained across terminal states; removal happens when the episode is deleted from the graph (keeps Redis/graph in sync)
+   - Simplified scan-based lookups; current pipeline has only the entity-extraction stage (edges future)
 
 4. **Test Coverage**: 15 passing unit tests
    - 5 tests for queue configuration and error handling
@@ -145,9 +146,9 @@
    - Background processing without blocking TUI
 
 4. **Architecture Validation**:
-   - Single-stage processing confirmed
+   - Pending episodes stay resident in Redis (active and terminal states) until the episode is deleted
    - Thread safety verified: `-k thread -w 1` ensures sequential execution
-   - Event-driven cleanup confirmed: `cleanup_if_no_work()` in task `finally` blocks
+   - Event-driven cleanup confirmed: `cleanup_if_no_work()` considers `pending_nodes` + `pending_edges` and unloads immediately if inference is disabled
    - No file descriptor leaks: proper cleanup in exception paths
 
 **Test Coverage**: All existing tests pass
@@ -264,44 +265,51 @@ huey = RedisHuey(
 ```python
 @huey.task()
 def extract_nodes_task(episode_uuid: str, journal: str):
-    """Background entity extraction (current implemented stage).
-
-    # Single-stage processing
-    Processes episode and removes from queue immediately upon completion.
-    """
+    """Background entity extraction (current implemented stage)."""
     from backend.database.redis_ops import (
         get_episode_status,
         get_inference_enabled,
-        remove_episode_from_queue,
+        set_episode_status,
     )
     from backend.inference.manager import get_model, cleanup_if_no_work
     from backend.graph.extract_nodes import extract_nodes
     import dspy
 
-    # Idempotency check
-    if get_episode_status(episode_uuid) != "pending_nodes":
-        return {"already_processed": True}
+    try:
+        if get_episode_status(episode_uuid) != "pending_nodes":
+            return {"already_processed": True}
 
-    # Respect inference toggle
-    if not get_inference_enabled():
-        return {"inference_disabled": True}
+        if not get_inference_enabled():
+            return {"inference_disabled": True}
 
-    lm = get_model('llm')
-    with dspy.context(lm=lm):
-        result = extract_nodes(episode_uuid, journal)
+        lm = get_model("llm")
+        with dspy.context(lm=lm):
+            result = extract_nodes(episode_uuid, journal)
 
-    # Single-stage processing: remove from queue when done
-    remove_episode_from_queue(episode_uuid)
-    cleanup_if_no_work()
-    return result
+        if result.extracted_count > 0:
+            set_episode_status(episode_uuid, "pending_edges", uuid_map=result.uuid_map)
+        else:
+            set_episode_status(episode_uuid, "done")
+
+        return {
+            "episode_uuid": result.episode_uuid,
+            "extracted_count": result.extracted_count,
+            "new_entities": result.new_entities,
+            "resolved_count": result.resolved_count,
+        }
+    except Exception:
+        set_episode_status(episode_uuid, "dead")
+        raise
+    finally:
+        cleanup_if_no_work()
 ```
 
 **Key points:**
-- Single-stage processing: `pending_nodes` → removed from queue
-- Tasks call `get_model()` from manager (model persistence)
-- Tasks call `cleanup_if_no_work()` at end (event-driven unload)
+- Explicit state machine: `pending_nodes` → `pending_edges` (entities) or `done` (none); errors → `dead`
+- Redis hashes are retained for terminal states; removal happens when the episode is deleted from the graph
+- Tasks call `get_model()` from manager (model persistence) and are idempotent via status check
+- `cleanup_if_no_work()` runs in `finally`, unloads when queues empty or inference is disabled
 - NO periodic cleanup task needed (work queue drives unload)
-- Use `backend.database.redis_ops` for episode status management
 
 ### Integration with Existing Code
 
@@ -329,10 +337,10 @@ extract_nodes_task(episode_uuid, journal)  # Enqueue immediately
 **Two-layer design with clear separation of concerns:**
 
 **Layer 1: Redis (State Tracker)**
-- Tracks episode lifecycle state: `pending_nodes` → [removed when complete]
-- **Architecture**: Single-stage processing
-- Provides discovery for UI, manual operations, crash recovery
-- Source of truth for "what needs processing"
+- Tracks episode lifecycle state: `pending_nodes` → (`pending_edges` | `done` | `dead`)
+- **Architecture**: Explicit terminal states; hashes stay until the episode is deleted
+- Provides discovery for UI, manual operations, crash recovery, and history (uuid_map)
+- Source of truth for "what needs processing" and what finished/failed
 
 **Layer 2: Huey (Work Executor)**
 - Executes tasks asynchronously (non-blocking UI)
@@ -355,13 +363,20 @@ extract_nodes_task():
   If not → already processed → exit
   ↓
   If yes AND get_inference_enabled():
-      Run extraction → remove from queue (current stage complete)
+      Run extraction
+      If entities found → status = "pending_edges"
+      If no entities → status = "done"
   ↓
   If yes BUT inference disabled:
       Exit (episode remains in Redis for later)
+  ↓
+  On exception:
+      status = "dead"
+  ↓
+  finally: cleanup_if_no_work()  # unload when no active work or inference is disabled
 ```
 
-**Key insight:** Redis and Huey serve different purposes - not redundant, but complementary. The queue state is owned by Redis; Huey executes whatever stages exist today (currently entity extraction) and clears the Redis hash when that episode’s work is done.
+**Key insight:** Redis and Huey serve different purposes - not redundant, but complementary. The queue state is owned by Redis; Huey executes whatever stages exist today (currently entity extraction) and leaves the hash in a terminal state (`done`/`dead`) until the episode is removed from the graph, preserving uuid_map history and keeping Redis/graph state aligned.
 
 ### Files to Modify
 
@@ -429,43 +444,40 @@ async def add_journal_entry(...) -> str:
 
 #### `backend/services/tasks.py`
 
-**Single-stage task implementation:**
+**Current task implementation (entity extraction stage):**
 ```python
 @huey.task()
 def extract_nodes_task(episode_uuid: str, journal: str):
     from backend.database.redis_ops import (
         get_episode_status,
         get_inference_enabled,
-        remove_episode_from_queue,
+        set_episode_status,
     )
     from backend.inference.manager import cleanup_if_no_work
 
-    # Check Redis state: is this episode still pending?
     current_status = get_episode_status(episode_uuid)
     if current_status != "pending_nodes":
-        # Already processed by another task
-        return {'already_processed': True}
+        return {"already_processed": True}
 
-    # Check if inference still enabled (may have changed since enqueue)
     if not get_inference_enabled():
-        # Leave episode in pending_nodes for later
-        return {'inference_disabled': True}
+        return {"inference_disabled": True}
 
-    # Proceed with extraction (current implemented stage)
     result = extract_nodes(episode_uuid, journal)
 
-    # Single-stage: remove from queue when done
-    remove_episode_from_queue(episode_uuid)
-    cleanup_if_no_work()
+    if result.extracted_count > 0:
+        set_episode_status(episode_uuid, "pending_edges", uuid_map=result.uuid_map)
+    else:
+        set_episode_status(episode_uuid, "done")
 
+    cleanup_if_no_work()
     return result
 ```
 
 **Key points:**
-- Tasks check Redis state first (idempotent - safe to enqueue multiple times)
-- Tasks check inference toggle before processing (respects user intent)
-- Tasks call `cleanup_if_no_work()` at end (event-driven unload)
-- No periodic cleanup task needed (work queue drives memory management)
+- Idempotent via Redis status check; safe to enqueue multiple times
+- Explicit terminal states retained in Redis (`done`, `dead`)
+- `pending_edges` is treated as active work until an edge task finalizes to `done`
+- `cleanup_if_no_work()` runs after every path (including disabled/exception cases)
 
 #### `backend/inference/manager.py`
 
@@ -478,10 +490,17 @@ def unload_all_models():
 
 def cleanup_if_no_work():
     """Unload models if no pending episodes remain (event-driven cleanup)."""
-    from backend.database.redis_ops import get_episodes_by_status
+    from backend.database.redis_ops import (
+        get_episodes_by_status,
+        get_inference_enabled,
+    )
+
+    if not get_inference_enabled():
+        unload_all_models()
+        return
 
     pending_nodes = get_episodes_by_status("pending_nodes")
-    pending_edges = get_episodes_by_status("pending_edges")  # For future expansion
+    pending_edges = get_episodes_by_status("pending_edges")  # Active until edge task completes
 
     if len(pending_nodes) == 0 and len(pending_edges) == 0:
         unload_all_models()
@@ -490,7 +509,7 @@ def cleanup_if_no_work():
 **Key points:**
 - No timeout parameter needed
 - No timestamp tracking needed
-- Simple rule: Empty work queue = unload immediately
+- Simple rule: If inference is disabled, unload immediately; otherwise unload when no active work (`pending_nodes`/`pending_edges`)
 - Called by tasks (event-driven, not periodic)
 
 ### Manual Re-enrichment Support (Future)
@@ -710,7 +729,8 @@ ps aux | grep huey_consumer
 python -c "
 from backend.database.redis_ops import get_episodes_by_status
 print('Pending nodes:', len(get_episodes_by_status('pending_nodes')))
-# Note: Single-stage processing - episodes removed from queue when complete
+print('Pending edges:', len(get_episodes_by_status('pending_edges')))
+# Note: Episode hashes stay for active and terminal states; removal happens when the episode is deleted
 "
 
 # Test settings persistence

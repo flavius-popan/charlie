@@ -361,16 +361,18 @@ async def delete_episode(episode_uuid: str, journal: str = DEFAULT_JOURNAL) -> N
     Raises:
         ValueError: If episode not found
 
-    Note:
-        Uses graphiti-core's EpisodicNode.delete for deletion.
-        This removes only the episode node itself.
-        Orphaned entity/edge cleanup will be implemented when extraction operations are added.
+    Behavior:
+        - Deletes the Episodic node
+        - Removes MENTIONS edges to entities
+        - Deletes entities that are no longer referenced by any episode
+        - Removes the episode hash from Redis queue (idempotent, best-effort)
 
-    Warning:
-        This does not clean up entities or edges that were extracted from this episode.
-        Use this for simple episode deletion during development/testing.
-        Full cleanup (with entity/edge orphan detection) will be added in future iterations.
+    Redis cleanup note:
+        Redis removal is best-effort; failures are logged but do not block graph deletion.
+        Queue operations are idempotent, so leftover hashes will not mutate graph data,
+        but they may emit retries/log noise until cleaned up manually.
     """
+    from backend.database.redis_ops import remove_episode_from_queue
     from graphiti_core.errors import NodeNotFoundError
     from backend.database.driver import get_driver
 
@@ -382,9 +384,30 @@ async def delete_episode(episode_uuid: str, journal: str = DEFAULT_JOURNAL) -> N
     except NodeNotFoundError as exc:
         raise ValueError(f"Episode {episode_uuid} not found") from exc
 
-    # Delete the episode
-    await episode.delete(driver)
-    logger.info("Deleted episode %s from journal %s", episode_uuid, journal)
+    # Remove MENTIONS edges to entities, delete episode, and prune entities with no remaining mentions
+    prune_query = """
+    MATCH (ent_episode:Episodic {uuid: $episode_uuid})
+    OPTIONAL MATCH (ent_episode)-[r:MENTIONS]->(entity:Entity)
+    WITH ent_episode, collect(distinct entity) AS ents, collect(r) AS rels
+    FOREACH (_ IN rels | DELETE _)
+    DELETE ent_episode
+    WITH ents
+    UNWIND ents AS ent
+    WITH DISTINCT ent
+    WHERE ent IS NOT NULL AND NOT (ent)<-[:MENTIONS]-()
+    DETACH DELETE ent
+    """
+    await driver.execute_query(prune_query, episode_uuid=episode_uuid)
+
+    # Keep Redis in sync (idempotent if already removed)
+    try:
+        remove_episode_from_queue(episode_uuid)
+    except Exception:
+        logger.warning(
+            "Failed to remove episode %s from Redis queue after deletion", episode_uuid, exc_info=True
+        )
+
+    logger.info("Deleted episode %s from journal %s (graph and Redis cleaned)", episode_uuid, journal)
 
 
 async def persist_entities_and_edges(

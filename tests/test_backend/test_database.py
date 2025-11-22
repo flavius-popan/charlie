@@ -219,6 +219,72 @@ def test_vecf32_empty_embedding(isolated_graph):
 
 
 @pytest.mark.asyncio
+async def test_episode_delete_prunes_entities_only_when_unreferenced(isolated_graph):
+    """Orphan pruning should keep shared entities until the last MENTIONS is removed."""
+    from backend.database.persistence import delete_episode
+    from backend.settings import DEFAULT_JOURNAL
+
+    # Two episodes referencing the same entity
+    isolated_graph.query(
+        f"""
+        CREATE (:Episodic {{
+                    uuid: 'ep-orphan-a',
+                    group_id: '{DEFAULT_JOURNAL}',
+                    content: 'Entry A',
+                    name: 'Entry A',
+                    source: 'text',
+                    source_description: 'test',
+                    entity_edges: [],
+                    created_at: '2025-01-01T00:00:00Z',
+                    valid_at: '2025-01-01T00:00:00Z'
+               }}),
+               (:Episodic {{
+                    uuid: 'ep-orphan-b',
+                    group_id: '{DEFAULT_JOURNAL}',
+                    content: 'Entry B',
+                    name: 'Entry B',
+                    source: 'text',
+                    source_description: 'test',
+                    entity_edges: [],
+                    created_at: '2025-01-01T00:00:00Z',
+                    valid_at: '2025-01-01T00:00:00Z'
+               }}),
+               (:Entity {{uuid: 'entity-shared', group_id: '{DEFAULT_JOURNAL}', name: 'Shared'}})
+        """
+    )
+    isolated_graph.query(
+        """
+        MATCH (a:Episodic {uuid: 'ep-orphan-a'}), (b:Episodic {uuid: 'ep-orphan-b'}), (ent:Entity {uuid: 'entity-shared'})
+        CREATE (a)-[:MENTIONS {uuid: 'm1'}]->(ent),
+               (b)-[:MENTIONS {uuid: 'm2'}]->(ent)
+        """
+    )
+
+    # Delete first episode: entity should remain, one MENTIONS should remain
+    await delete_episode("ep-orphan-a", DEFAULT_JOURNAL)
+    rows_after_first = _query_rows(
+        isolated_graph,
+        """
+        MATCH (ent:Entity {uuid: 'entity-shared'})
+        OPTIONAL MATCH ()-[r:MENTIONS]->(ent)
+        RETURN count(ent), count(r)
+        """,
+    )
+    assert rows_after_first == [[1, 1]], "Entity should persist while still referenced"
+
+    # Delete second episode: entity should now be pruned
+    await delete_episode("ep-orphan-b", DEFAULT_JOURNAL)
+    rows_after_second = _query_rows(
+        isolated_graph,
+        """
+        MATCH (ent:Entity {uuid: 'entity-shared'})
+        RETURN count(ent)
+        """,
+    )
+    assert rows_after_second == [[0]], "Entity should be removed when no MENTIONS remain"
+
+
+@pytest.mark.asyncio
 async def test_ensure_graph_ready_idempotent(isolated_graph):
     """ensure_graph_ready can rebuild indices multiple times without corrupting data."""
     await db_utils.ensure_graph_ready(delete_existing=True)

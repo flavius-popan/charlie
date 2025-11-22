@@ -30,12 +30,14 @@ def test_extract_nodes_task_inference_disabled(episode_uuid):
 
     with patch("backend.database.redis_ops.get_episode_status") as mock_status:
         with patch("backend.database.redis_ops.get_inference_enabled", create=True) as mock_enabled:
-            mock_status.return_value = "pending_nodes"
-            mock_enabled.return_value = False
+            with patch("backend.inference.manager.cleanup_if_no_work") as mock_cleanup:
+                mock_status.return_value = "pending_nodes"
+                mock_enabled.return_value = False
 
-            result = extract_nodes_task.call_local(episode_uuid, DEFAULT_JOURNAL)
+                result = extract_nodes_task.call_local(episode_uuid, DEFAULT_JOURNAL)
 
-            assert result["inference_disabled"] is True
+                assert result["inference_disabled"] is True
+                mock_cleanup.assert_called_once()
 
 
 def test_extract_nodes_task_with_entities_extracted(episode_uuid):
@@ -81,8 +83,8 @@ def test_extract_nodes_task_with_entities_extracted(episode_uuid):
                             mock_cleanup.assert_called_once()
 
 
-def test_extract_nodes_task_no_entities_removes_from_queue(episode_uuid):
-    """Task removes episode from queue when no entities extracted."""
+def test_extract_nodes_task_no_entities_marks_done(episode_uuid):
+    """Task marks episode done when no entities extracted."""
     from backend.services.tasks import extract_nodes_task
 
     mock_result = ExtractNodesResult(
@@ -98,7 +100,7 @@ def test_extract_nodes_task_no_entities_removes_from_queue(episode_uuid):
 
     with patch("backend.database.redis_ops.get_episode_status") as mock_status:
         with patch("backend.database.redis_ops.get_inference_enabled", create=True) as mock_enabled:
-            with patch("backend.database.redis_ops.remove_episode_from_queue") as mock_remove:
+            with patch("backend.database.redis_ops.set_episode_status") as mock_set_status:
                 with patch("backend.inference.manager.get_model") as mock_get_model:
                     with patch("backend.graph.extract_nodes.extract_nodes") as mock_extract:
                         with patch("backend.inference.manager.cleanup_if_no_work") as mock_cleanup:
@@ -111,7 +113,7 @@ def test_extract_nodes_task_no_entities_removes_from_queue(episode_uuid):
                             result = extract_nodes_task.call_local(episode_uuid, DEFAULT_JOURNAL)
 
                             assert result["extracted_count"] == 0
-                            mock_remove.assert_called_once_with(episode_uuid)
+                            mock_set_status.assert_called_once_with(episode_uuid, "done")
                             mock_cleanup.assert_called_once()
 
 
@@ -183,6 +185,35 @@ def test_extract_nodes_task_integration(
         assert status == "pending_edges"
 
 
+@pytest.mark.inference
+def test_extract_nodes_task_integration_no_entities_marks_done(
+    isolated_graph, cleanup_test_episodes, require_llm
+):
+    """Integration test: episodes with no extractable entities should end in done."""
+    from backend.services.tasks import extract_nodes_task
+    from backend.database.redis_ops import (
+        get_episode_status,
+        set_episode_status,
+        remove_episode_from_queue,
+    )
+    from backend import add_journal_entry
+
+    # Content chosen to be entity-free; skip if the model still extracts something.
+    content = "It was a quiet, rainy afternoon with nothing notable to report."
+    episode_uuid = asyncio.run(add_journal_entry(content))
+
+    set_episode_status(episode_uuid, "pending_nodes", journal=DEFAULT_JOURNAL)
+
+    result = extract_nodes_task.call_local(episode_uuid, DEFAULT_JOURNAL)
+
+    status = get_episode_status(episode_uuid)
+    if result["extracted_count"] > 0:
+        pytest.skip("LLM extracted entities unexpectedly; cannot verify done transition.")
+
+    assert status == "done"
+    remove_episode_from_queue(episode_uuid)
+
+
 def test_extract_nodes_task_cleanup_always_called(episode_uuid):
     """cleanup_if_no_work is called even when task exits early."""
     from backend.services.tasks import extract_nodes_task
@@ -203,18 +234,20 @@ def test_extract_nodes_task_cleanup_called_on_exception(episode_uuid):
 
     with patch("backend.database.redis_ops.get_episode_status") as mock_status:
         with patch("backend.database.redis_ops.get_inference_enabled", create=True) as mock_enabled:
-            with patch("backend.inference.manager.get_model") as mock_get_model:
-                with patch("backend.graph.extract_nodes.extract_nodes") as mock_extract:
-                    with patch("backend.inference.manager.cleanup_if_no_work") as mock_cleanup:
-                        mock_status.return_value = "pending_nodes"
-                        mock_enabled.return_value = True
-                        mock_get_model.return_value = Mock()
-                        mock_extract.side_effect = RuntimeError("Extraction failed")
+            with patch("backend.database.redis_ops.set_episode_status") as mock_set_status:
+                with patch("backend.inference.manager.get_model") as mock_get_model:
+                    with patch("backend.graph.extract_nodes.extract_nodes") as mock_extract:
+                        with patch("backend.inference.manager.cleanup_if_no_work") as mock_cleanup:
+                            mock_status.return_value = "pending_nodes"
+                            mock_enabled.return_value = True
+                            mock_get_model.return_value = Mock()
+                            mock_extract.side_effect = RuntimeError("Extraction failed")
 
-                        with pytest.raises(RuntimeError, match="Extraction failed"):
-                            extract_nodes_task.call_local(episode_uuid, DEFAULT_JOURNAL)
+                            with pytest.raises(RuntimeError, match="Extraction failed"):
+                                extract_nodes_task.call_local(episode_uuid, DEFAULT_JOURNAL)
 
-                        mock_cleanup.assert_called_once()
+                            mock_set_status.assert_called_with(episode_uuid, "dead")
+                            mock_cleanup.assert_called_once()
 
 
 def test_extract_nodes_task_removes_from_queue_on_success(episode_uuid):
@@ -265,3 +298,22 @@ def test_extract_nodes_task_idempotency_check(episode_uuid):
             assert result1["already_processed"] is True
             assert result2["already_processed"] is True
             assert mock_status.call_count == 2
+
+
+def test_extract_nodes_task_sets_dead_on_missing_episode(isolated_graph, cleanup_test_episodes):
+    """Integration: missing episode should move to dead after failure."""
+    from backend.services.tasks import extract_nodes_task
+    from backend.database.redis_ops import (
+        set_episode_status,
+        get_episode_status,
+        remove_episode_from_queue,
+    )
+
+    missing_uuid = "missing-episode-dead"
+    set_episode_status(missing_uuid, "pending_nodes", journal=DEFAULT_JOURNAL)
+
+    with pytest.raises(Exception):
+        extract_nodes_task.call_local(missing_uuid, DEFAULT_JOURNAL)
+
+    assert get_episode_status(missing_uuid) == "dead"
+    remove_episode_from_queue(missing_uuid)

@@ -115,8 +115,10 @@ def set_episode_status(
         uuid_map: Optional UUID mapping (provisional -> canonical)
 
     Note:
-        Episodes are removed from queue when processing completes.
-        This prevents unbounded growth - Redis contains only active queue items.
+        Episode hashes are retained for both active and terminal states.
+        Deletion is explicit (e.g., when an episode is removed from the graph),
+        not implicit on completion. This keeps Redis/graph state in sync and
+        preserves terminal metadata like uuid_map.
     """
     with redis_ops() as r:
         episode_key = f"episode:{episode_uuid}"

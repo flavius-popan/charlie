@@ -32,7 +32,6 @@ def extract_nodes_task(episode_uuid: str, journal: str):
     from backend.database.redis_ops import (
         get_episode_status,
         get_inference_enabled,
-        remove_episode_from_queue,
         set_episode_status,
     )
     from backend.graph.extract_nodes import extract_nodes
@@ -85,9 +84,9 @@ def extract_nodes_task(episode_uuid: str, journal: str):
             # extract_edges_task(episode_uuid, journal)
         else:
             # No entities extracted (only self or nothing) - no edges possible
-            remove_episode_from_queue(episode_uuid)
+            set_episode_status(episode_uuid, "done")
             logger.info(
-                "No entities extracted for episode %s, removed from queue",
+                "No entities extracted for episode %s, marked done",
                 episode_uuid,
             )
 
@@ -98,6 +97,12 @@ def extract_nodes_task(episode_uuid: str, journal: str):
             "resolved_count": result.resolved_count,
         }
     except Exception:
+        try:
+            set_episode_status(episode_uuid, "dead")
+        except Exception:
+            logger.warning(
+                "Failed to mark episode %s as dead after exception", episode_uuid, exc_info=True
+            )
         logger.exception("extract_nodes_task failed for episode %s", episode_uuid)
         raise
     finally:
