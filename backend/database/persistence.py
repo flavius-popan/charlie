@@ -293,6 +293,7 @@ async def update_episode(
     from datetime import datetime
     from graphiti_core.errors import NodeNotFoundError
     from backend.database.driver import get_driver
+    from backend.database.redis_ops import get_inference_enabled, set_episode_status
 
     driver = get_driver(journal)
 
@@ -306,9 +307,14 @@ async def update_episode(
     if content is None and name is None and valid_at is None:
         raise ValueError("At least one field must be provided for update")
 
+    # Track if content changed for re-extraction
+    content_changed = False
+    original_content = episode.content
+
     # Update only the provided fields
     if content is not None:
         episode.content = content
+        content_changed = content != original_content
 
     if name is not None:
         episode.name = name
@@ -349,6 +355,22 @@ async def update_episode(
     # Save back to database
     await episode.save(driver)
     logger.info("Updated episode %s in journal %s", episode_uuid, journal)
+
+    # Trigger node extraction if content changed
+    if content_changed:
+        set_episode_status(episode_uuid, "pending_nodes", journal=journal)
+
+        if get_inference_enabled():
+            try:
+                from backend.services.tasks import extract_nodes_task
+
+                extract_nodes_task(episode_uuid, journal)
+            except Exception as exc:
+                logger.warning(
+                    "Failed to enqueue extract_nodes_task for updated episode %s: %s",
+                    episode_uuid,
+                    exc,
+                )
 
 
 async def delete_episode(episode_uuid: str, journal: str = DEFAULT_JOURNAL) -> None:
