@@ -32,12 +32,7 @@ from backend.database import (
     shutdown_database,
     update_episode,
 )
-from backend.database.redis_ops import (
-    enqueue_pending_episodes,
-    get_inference_enabled,
-    set_inference_enabled,
-)
-from backend.inference.manager import cleanup_if_no_work
+from backend.database.redis_ops import get_inference_enabled, set_inference_enabled
 from backend.settings import DEFAULT_JOURNAL
 from backend.services.queue import (
     is_huey_consumer_running,
@@ -83,6 +78,10 @@ def _configure_logging() -> None:
         handlers=[textual_handler, file_handler],
         force=True,
     )
+
+    # Quiet Huey per-task INFO logs; keep warnings/errors.
+    for name in ("huey", "huey.consumer", "huey.api", "huey.signals", "huey.queue"):
+        logging.getLogger(name).setLevel(logging.WARNING)
 
 
 _configure_logging()
@@ -209,10 +208,6 @@ class SettingsScreen(ModalScreen):
         try:
             # Persist toggle and enqueue in a thread to keep UI responsive
             await asyncio.to_thread(set_inference_enabled, desired)
-            if desired:
-                await asyncio.to_thread(enqueue_pending_episodes)
-            else:
-                await asyncio.to_thread(cleanup_if_no_work)
             self.inference_enabled = desired
             self._on_toggle_success(switch, desired)
         except Exception as exc:
@@ -234,6 +229,7 @@ class SettingsScreen(ModalScreen):
     def _clear_toggle_loading(self, switch: Switch) -> None:
         self._loading_toggle_state = False
         switch.disabled = False
+        switch.focus()
 
 
 class HomeScreen(Screen):
@@ -634,12 +630,6 @@ class CharlieApp(App):
                 )
             atexit.register(self._shutdown_huey)
 
-            # On startup, re-enqueue any pending work that was left in Redis.
-            # Safe to call even if none exist; respects the inference toggle.
-            try:
-                enqueue_pending_episodes()
-            except Exception as exc:
-                logger.warning("Failed to enqueue pending episodes on startup: %s", exc, exc_info=True)
         except Exception as exc:
             logger.error("Failed to start Huey worker: %s", exc, exc_info=True)
             self.notify("huey ded 💀 check logz", severity="error", timeout=5)

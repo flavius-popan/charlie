@@ -33,22 +33,26 @@ def get_model(model_type: Literal["llm"] = "llm") -> DspyLM:
 
 def unload_all_models() -> None:
     """Unload all models to free memory."""
+    any_unloaded = False
     for model_type in MODELS:
         if MODELS[model_type] is not None:
             logger.info("Unloading %s model", model_type)
             MODELS[model_type] = None
+            any_unloaded = True
 
-    gc.collect()
-    logger.info("All models unloaded and memory freed")
+    if any_unloaded:
+        gc.collect()
+        logger.info("All models unloaded and memory freed")
 
 
 def cleanup_if_no_work() -> None:
     """Unload models when no active work remains (event-driven cleanup)."""
     from backend.database.redis_ops import get_episodes_by_status, get_inference_enabled
 
-    # If inference is disabled, pending work is blocked; unload immediately
+    # If inference is disabled, pending work is blocked; unload immediately (once)
+    models_loaded = any(model is not None for model in MODELS.values())
     if not get_inference_enabled():
-        logger.info("Inference disabled, unloading models (pending work is blocked)")
+        # Always call unload to ensure any loaded model is freed; log only on actual unload.
         unload_all_models()
         return
 
@@ -56,9 +60,15 @@ def cleanup_if_no_work() -> None:
     pending_edges = get_episodes_by_status("pending_edges")
 
     if len(pending_nodes) == 0:
-        logger.info(
-            "No pending node work; unloading models (pending_edges=%d)", len(pending_edges)
-        )
+        if models_loaded:
+            logger.info(
+                "No pending node work; unloading models (pending_edges=%d)", len(pending_edges)
+            )
+        else:
+            logger.debug(
+                "No pending node work; models already unloaded (pending_edges=%d)",
+                len(pending_edges),
+            )
         unload_all_models()
     else:
         logger.debug(

@@ -91,16 +91,16 @@ def test_delete_episode_cleans_redis_and_skips_reenqueue(falkordb_test_context):
     assert enqueued == 0
 
 
-def test_inference_toggle_unloads_and_reenqueues(falkordb_test_context):
-    """Inference disable should unload models; re-enable should re-enqueue pending episodes."""
+def test_inference_toggle_defers_work_to_orchestrator(falkordb_test_context):
+    """Toggle only flips the flag; unload happens via cleanup, enqueue via orchestrator."""
     from backend.database.redis_ops import (
-        enqueue_pending_episodes,
         get_episode_status,
         set_episode_status,
         set_inference_enabled,
         redis_ops,
     )
     from backend.inference import manager
+    from backend.services.tasks import orchestrate_inference_work
 
     # Isolate Redis episode keys for this test
     with redis_ops() as r:
@@ -120,10 +120,9 @@ def test_inference_toggle_unloads_and_reenqueues(falkordb_test_context):
     set_inference_enabled(True)
 
     with patch("backend.services.tasks.extract_nodes_task") as mock_task:
-        enqueued = enqueue_pending_episodes()
+        orchestrate_inference_work.call_local(reschedule=False)
 
         mock_task.assert_called_once_with(episode_uuid, DEFAULT_JOURNAL)
-        assert enqueued == 1
 
     # Cleanup
     set_inference_enabled(True)

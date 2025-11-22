@@ -20,6 +20,8 @@ from redis import ConnectionPool
 from backend.settings import DEFAULT_JOURNAL, HUEY_WORKER_TYPE, HUEY_WORKERS
 
 logger = logging.getLogger(__name__)
+for _name in ("huey", "huey.consumer", "huey.api", "huey.signals", "huey.queue"):
+    logging.getLogger(_name).setLevel(logging.WARNING)
 
 
 def _get_redis_connection() -> ConnectionPool:
@@ -130,6 +132,14 @@ def start_huey_consumer() -> None:
         HUEY_WORKER_TYPE,
         HUEY_WORKERS,
     )
+
+    # Kick off orchestrator loop (self-reschedules every few seconds)
+    try:
+        from backend.services.tasks import orchestrate_inference_work
+
+        orchestrate_inference_work.schedule(delay=0)
+    except Exception:
+        logger.warning("Failed to schedule orchestrate_inference_work on startup", exc_info=True)
 
 
 def stop_huey_consumer(timeout: float = 3.0) -> None:

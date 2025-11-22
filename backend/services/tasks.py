@@ -109,3 +109,22 @@ def extract_nodes_task(episode_uuid: str, journal: str):
             cleanup_if_no_work()
         except Exception:
             logger.warning("cleanup_if_no_work() failed after extract_nodes_task", exc_info=True)
+
+
+@huey.task()
+def orchestrate_inference_work(reschedule: bool = True):
+    """Maintenance loop: enqueue pending nodes and unload when idle/disabled."""
+    try:
+        from backend.database.redis_ops import enqueue_pending_episodes
+        from backend.inference.manager import cleanup_if_no_work
+
+        enqueue_pending_episodes()
+        cleanup_if_no_work()
+    except Exception:
+        logger.exception("orchestrate_inference_work failed")
+    finally:
+        if reschedule:
+            try:
+                orchestrate_inference_work.schedule(delay=3)
+            except Exception:
+                logger.exception("Failed to reschedule orchestrate_inference_work")
