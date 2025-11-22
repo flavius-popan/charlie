@@ -384,6 +384,36 @@ async def delete_episode(episode_uuid: str, journal: str = DEFAULT_JOURNAL) -> N
     except NodeNotFoundError as exc:
         raise ValueError(f"Episode {episode_uuid} not found") from exc
 
+    # Gather deletion stats before mutating the graph
+    stats_query = """
+    MATCH (ep:Episodic {uuid: $episode_uuid})
+    OPTIONAL MATCH (ep)-[:MENTIONS]->(ent:Entity)
+    WITH ep, collect(DISTINCT ent) AS ents
+    WITH ep, [e IN ents WHERE e IS NOT NULL AND size((e)<-[:MENTIONS]-()) = 1] AS doomed
+    OPTIONAL MATCH (d:Entity)-[rel]-() WHERE d IN doomed AND type(rel) <> 'MENTIONS'
+    RETURN coalesce(ep.name, '') AS episode_name,
+           size(doomed) AS doomed_entities,
+           [e IN doomed | coalesce(e.name, e.uuid)] AS doomed_entity_names,
+           count(DISTINCT rel) AS non_mention_edges
+    """
+    stats_records, _, _ = await driver.execute_query(stats_query, episode_uuid=episode_uuid)
+    stats = stats_records[0] if stats_records else {}
+    episode_name = stats.get("episode_name") or episode.name or ""
+    doomed_entities = int(stats.get("doomed_entities") or 0)
+    doomed_entity_names = stats.get("doomed_entity_names") or []
+    non_mention_edges = int(stats.get("non_mention_edges") or 0)
+
+    total_nodes_to_delete = 1 + doomed_entities  # episode + orphan entities
+    logger.info(
+        "Deleting episode %s (%s): removing %d nodes (1 episode + %d entities: %s) and %d non-MENTIONS edges",
+        episode_uuid,
+        episode_name,
+        total_nodes_to_delete,
+        doomed_entities,
+        ", ".join(doomed_entity_names) if doomed_entity_names else "none",
+        non_mention_edges,
+    )
+
     # Remove MENTIONS edges to entities, delete episode, and prune entities with no remaining mentions
     prune_query = """
     MATCH (ent_episode:Episodic {uuid: $episode_uuid})

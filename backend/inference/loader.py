@@ -23,15 +23,23 @@ logger = logging.getLogger(__name__)
 @contextlib.contextmanager
 def _suppress_stderr():
     """Temporarily redirect stderr to devnull to silence Metal backend warnings."""
-    stderr_fd = sys.stderr.fileno()
-    with open(os.devnull, 'w') as devnull:
+    try:
+        stderr_fd = sys.stderr.fileno()
         old_stderr = os.dup(stderr_fd)
+    except OSError:
+        # If stderr is unavailable (e.g., in some worker contexts), skip suppression.
+        yield
+        return
+
+    with open(os.devnull, "w") as devnull:
         try:
             os.dup2(devnull.fileno(), stderr_fd)
             yield
         finally:
-            os.dup2(old_stderr, stderr_fd)
-            os.close(old_stderr)
+            try:
+                os.dup2(old_stderr, stderr_fd)
+            finally:
+                os.close(old_stderr)
 
 
 def load_model(repo_id: str | None = None) -> Llama:

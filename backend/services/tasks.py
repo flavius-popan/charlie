@@ -8,7 +8,6 @@ import logging
 
 import backend.dspy_cache  # noqa: F401
 import dspy
-
 from .queue import huey
 
 logger = logging.getLogger(__name__)

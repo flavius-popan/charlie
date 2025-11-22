@@ -5,7 +5,6 @@ from __future__ import annotations
 import gc
 import logging
 from typing import Literal
-
 from .dspy_lm import DspyLM
 
 logger = logging.getLogger(__name__)
@@ -56,8 +55,10 @@ def cleanup_if_no_work() -> None:
     pending_nodes = get_episodes_by_status("pending_nodes")
     pending_edges = get_episodes_by_status("pending_edges")
 
-    if len(pending_nodes) == 0 and len(pending_edges) == 0:
-        logger.info("No active work in queue, unloading models")
+    if len(pending_nodes) == 0:
+        logger.info(
+            "No pending node work; unloading models (pending_edges=%d)", len(pending_edges)
+        )
         unload_all_models()
     else:
         logger.debug(

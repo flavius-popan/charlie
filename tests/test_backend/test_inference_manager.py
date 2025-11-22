@@ -19,22 +19,21 @@ def test_cleanup_unloads_when_inference_disabled():
 
 
 def test_cleanup_keeps_models_when_active_work():
-    """Keep models loaded when pending work exists."""
+    """Keep models loaded when pending node work exists."""
     with patch("backend.database.redis_ops.get_inference_enabled", return_value=True):
         with patch(
             "backend.database.redis_ops.get_episodes_by_status",
-            side_effect=[["ep1"], []],
+            side_effect=[["ep1"], ["edge-pending"]],
         ) as mock_status:
             with patch("backend.inference.manager.unload_all_models") as mock_unload:
                 manager.cleanup_if_no_work()
 
                 mock_status.assert_any_call("pending_nodes")
-                mock_status.assert_any_call("pending_edges")
                 mock_unload.assert_not_called()
 
 
-def test_cleanup_keeps_models_when_pending_edges_only():
-    """pending_edges are treated as active work."""
+def test_cleanup_unloads_when_pending_edges_only():
+    """pending_edges should not keep the model loaded (LLM used only for node extraction)."""
     with patch("backend.database.redis_ops.get_inference_enabled", return_value=True):
         with patch(
             "backend.database.redis_ops.get_episodes_by_status",
@@ -45,7 +44,7 @@ def test_cleanup_keeps_models_when_pending_edges_only():
 
                 mock_status.assert_any_call("pending_nodes")
                 mock_status.assert_any_call("pending_edges")
-                mock_unload.assert_not_called()
+                mock_unload.assert_called_once()
 
 
 def test_cleanup_unloads_when_no_active_work():
