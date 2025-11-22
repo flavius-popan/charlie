@@ -34,18 +34,6 @@ async def test_entity_sidebar_shows_loading_initially():
 
 
 @pytest.mark.asyncio
-async def test_entity_sidebar_has_header():
-    """Should have 'Connections' header."""
-    app = EntitySidebarTestApp()
-
-    async with app.run_test():
-        sidebar = app.query_one(EntitySidebar)
-        # Just verify the header label exists with the right class
-        header_label = sidebar.query_one(".sidebar-header", Label)
-        assert header_label is not None
-
-
-@pytest.mark.asyncio
 async def test_entity_sidebar_shows_loading_indicator_when_loading():
     """Should show LoadingIndicator when loading."""
     app = EntitySidebarTestApp()

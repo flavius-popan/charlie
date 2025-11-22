@@ -13,13 +13,14 @@ from backend.database.redis_ops import set_episode_status
 class ViewScreenTestApp(App):
     """Test app for ViewScreen."""
 
-    def __init__(self, episode_uuid: str = "test-uuid", journal: str = "test"):
+    def __init__(self, episode_uuid: str = "test-uuid", journal: str = "test", from_edit: bool = True):
         super().__init__()
         self.episode_uuid = episode_uuid
         self.journal = journal
+        self.from_edit = from_edit
 
     def on_mount(self) -> None:
-        self.push_screen(ViewScreen(episode_uuid=self.episode_uuid, journal=self.journal))
+        self.push_screen(ViewScreen(episode_uuid=self.episode_uuid, journal=self.journal, from_edit=self.from_edit))
 
 
 @pytest.mark.asyncio

@@ -169,11 +169,6 @@ class EntitySidebar(Container):
         padding: 1;
     }
 
-    EntitySidebar .sidebar-header {
-        text-style: bold;
-        margin-bottom: 1;
-    }
-
     EntitySidebar .sidebar-footer {
         color: $text-muted;
         margin-top: 1;
@@ -195,9 +190,8 @@ class EntitySidebar(Container):
         self.journal = journal
 
     def compose(self) -> ComposeResult:
-        yield Label("Connections", classes="sidebar-header")
         yield Container(id="entity-content")
-        yield Label("d: delete | ↑↓: navigate | c: close | l: logs", classes="sidebar-footer")
+        yield Label("d: delete | ↑↓: navigate | c: close", classes="sidebar-footer")
 
     def on_mount(self) -> None:
         """Render initial content and attempt immediate cache fetch."""
@@ -638,12 +632,13 @@ class ViewScreen(Screen):
     }
     """
 
-    def __init__(self, episode_uuid: str, journal: str = DEFAULT_JOURNAL):
+    def __init__(self, episode_uuid: str, journal: str = DEFAULT_JOURNAL, from_edit: bool = False):
         super().__init__()
         self.episode_uuid = episode_uuid
         self.journal = journal
         self.episode = None
         self._poll_timer = None
+        self.from_edit = from_edit  # Track if opened from EditScreen
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False, icon="")
@@ -659,11 +654,17 @@ class ViewScreen(Screen):
 
     async def on_mount(self):
         await self.load_episode()
+
+        # Show sidebar only if coming from EditScreen
+        sidebar = self.query_one("#entity-sidebar", EntitySidebar)
+        if not self.from_edit:
+            sidebar.display = False
+            return  # Skip polling and cache check when sidebar hidden
+
         # Give EntitySidebar a moment to check cache on mount
         await asyncio.sleep(0.05)
 
         # Only start polling if sidebar is still loading (cache miss)
-        sidebar = self.query_one("#entity-sidebar", EntitySidebar)
         if sidebar.loading:
             # Cache doesn't have data - start polling for extraction job
             self._poll_timer = self.set_interval(0.5, self._check_job_status)
@@ -695,9 +696,17 @@ class ViewScreen(Screen):
         self.app.pop_screen()
 
     def action_toggle_connections(self) -> None:
-        """Toggle sidebar visibility."""
+        """Toggle sidebar visibility and focus if opened."""
         sidebar = self.query_one("#entity-sidebar", EntitySidebar)
         sidebar.display = not sidebar.display
+
+        # Focus sidebar when opened
+        if sidebar.display and sidebar.entities:
+            try:
+                list_view = sidebar.query_one(ListView)
+                self.set_focus(list_view)
+            except:
+                pass  # No ListView yet (still loading)
 
     def action_show_logs(self) -> None:
         """Navigate to log viewer."""
@@ -783,7 +792,7 @@ class EditScreen(Screen):
                     await update_episode(uuid, name=title)
                 # Navigate to ViewScreen instead of popping
                 self.app.pop_screen()  # Pop EditScreen
-                self.app.push_screen(ViewScreen(uuid, DEFAULT_JOURNAL))
+                self.app.push_screen(ViewScreen(uuid, DEFAULT_JOURNAL, from_edit=True))
             else:
                 if title:
                     await update_episode(self.episode_uuid, content=content, name=title)
@@ -791,7 +800,7 @@ class EditScreen(Screen):
                     await update_episode(self.episode_uuid, content=content)
                 # Navigate to ViewScreen for existing entries too
                 self.app.pop_screen()  # Pop EditScreen
-                self.app.push_screen(ViewScreen(self.episode_uuid, DEFAULT_JOURNAL))
+                self.app.push_screen(ViewScreen(self.episode_uuid, DEFAULT_JOURNAL, from_edit=True))
 
         except Exception as e:
             logger.error(f"Failed to save entry: {e}", exc_info=True)
