@@ -25,6 +25,10 @@
 - ✅ Task 10: Entity Deletion - Confirmation Modal (commit: 16c610a)
 - ✅ Task 11: Entity Deletion - Database Integration (commit: 2c3161d)
 - ✅ Task 12: Update Existing ViewScreen Call Sites (commit: 8a7509b)
+- ✅ **Bug Fix:** Fixed async callback issue in ViewScreen polling (changed to sync with run_worker)
+- ✅ **Bug Fix:** Updated status check to use "pending_edges"/"done" instead of "completed"
+- ✅ **Enhancement:** Improved entity formatting (ref_count only shown if > 1, better label handling)
+- ✅ **Enhancement:** Auto-focus sidebar ListView when entities load for keyboard navigation
 
 **Remaining:**
 - Task 13: Integration Test - Full Workflow
@@ -71,7 +75,7 @@ async def test_full_workflow_create_view_delete_entity():
 
                     with patch("charlie.delete_entity_mention", new_callable=AsyncMock):
                         with patch("charlie.get_episode_status") as mock_status:
-                            mock_status.return_value = "completed"
+                            mock_status.return_value = "pending_edges"
 
                             app = CharlieApp()
 

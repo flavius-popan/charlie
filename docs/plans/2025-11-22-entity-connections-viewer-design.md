@@ -67,10 +67,10 @@ ViewScreen
 5. Stop polling timer
 6. Call new database function: `fetch_entities_for_episode(episode_uuid, journal)`
 7. Filter out SELF entity from results
-8. Transform entities to display format: `{name} [{type}] ({ref_count})`
+8. Transform entities to display format: `{name} [{type}]` or `{name} [{type}] ({ref_count})` if > 1
    - Type filtering: Show most specific label (e.g., "Person" not "Entity, Person")
    - Only show "Entity" if it's the only label
-   - Ref count format: "(4)" for 4 mentions across all episodes
+   - Ref count format: "(4)" for 4 mentions - only shown when ref_count > 1 to reduce clutter
 9. Populate ListView with entity items
 10. Footer shows: "d: delete | ↑↓: navigate | c: close"
 
@@ -181,8 +181,9 @@ class EntitySidebar(Container):
     async def refresh_entities(self) -> None:
         """Fetch and display entities for current episode."""
         raw_entities = await fetch_entities_for_episode(self.episode_uuid, self.journal)
-        self.entities = self._format_entities(raw_entities)
+        self.entities = raw_entities
         self.loading = False
+        # Note: ListView auto-focuses after rendering via call_after_refresh in _render_content
 ```
 
 ### ViewScreen Modifications
@@ -215,11 +216,18 @@ class ViewScreen(Screen):
         """Start polling for extraction job completion."""
         self._poll_timer = self.set_interval(0.5, self._check_job_status)
 
-    async def _check_job_status(self) -> None:
+    def _check_job_status(self) -> None:
         """Poll Huey for job completion, then refresh entities."""
-        if await job_is_complete(self.episode_uuid):
-            self._poll_timer.stop()
-            await self.query_one(EntitySidebar).refresh_entities()
+        status = get_episode_status(self.episode_uuid)
+
+        # Job complete when status is "pending_edges", "done", or None (old episodes)
+        if status in ("pending_edges", "done", None):
+            if self._poll_timer:
+                self._poll_timer.stop()
+                self._poll_timer = None
+
+            sidebar = self.query_one("#entity-sidebar", EntitySidebar)
+            self.run_worker(sidebar.refresh_entities(), exclusive=True)
 ```
 
 ### CSS Styling (proportions)
@@ -353,6 +361,26 @@ async def test_entity_with_multiple_types():
     # Setup: Entity with labels ["Entity", "Person", "Organization"]
     # Assert: Shows only first non-Entity type "Person"
 ```
+
+## Implementation Notes & Bug Fixes
+
+### Bug Fixes Applied (2025-11-22)
+
+1. **Async Callback Issue**
+   - Problem: `_check_job_status` was async but `set_interval` doesn't await callbacks
+   - Fix: Changed to synchronous function, use `run_worker()` to schedule async `refresh_entities()`
+
+2. **Status Check Mismatch**
+   - Problem: Polling checked for "completed" status but tasks set "pending_edges"/"done"
+   - Fix: Updated check to `if status in ("pending_edges", "done", None)`
+
+3. **Entity Formatting Issues**
+   - Problem: Labels showing as `[[]]`, ref_count always showing `(1)` causing clutter
+   - Fix: Handle nested/malformed labels gracefully, only show ref_count if > 1
+
+4. **Missing Keyboard Focus**
+   - Problem: Sidebar required mouse to focus for keyboard navigation
+   - Fix: Auto-focus ListView after rendering using `call_after_refresh()`
 
 ## Future Enhancements
 
