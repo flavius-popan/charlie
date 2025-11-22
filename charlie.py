@@ -514,7 +514,7 @@ class HomeScreen(Screen):
         """Handle ListView selection (Enter key)."""
         if self.episodes and event.list_view.index is not None:
             episode = self.episodes[event.list_view.index]
-            self.app.push_screen(ViewScreen(episode["uuid"]))
+            self.app.push_screen(ViewScreen(episode["uuid"], DEFAULT_JOURNAL))
 
     async def load_episodes(self):
         try:
@@ -570,7 +570,7 @@ class HomeScreen(Screen):
             list_view = self.query_one("#episodes-list", ListView)
             if list_view.index is not None:
                 episode = self.episodes[list_view.index]
-                self.app.push_screen(ViewScreen(episode["uuid"]))
+                self.app.push_screen(ViewScreen(episode["uuid"], DEFAULT_JOURNAL))
         except Exception as e:
             logger.error(f"Failed to open view screen: {e}", exc_info=True)
 
