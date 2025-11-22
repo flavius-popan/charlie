@@ -55,6 +55,10 @@ LOGS_DIR.mkdir(exist_ok=True)
 
 os.environ.setdefault("TEXTUAL_LOG", str(LOGS_DIR / "charlie.log"))
 
+# Editing presence detection TTL (seconds)
+# Models stay loaded for this duration after last keystroke
+EDITING_PRESENCE_TTL = 120
+
 
 class _NoActiveAppFilter(logging.Filter):
     """Allow records through only when no Textual app context is active."""
@@ -756,9 +760,9 @@ class EditScreen(Screen):
         """Set Redis key when user types to indicate active editing session."""
         try:
             with redis_ops() as r:
-                r.setex("editing:active", 120, "active")
+                r.setex("editing:active", EDITING_PRESENCE_TTL, "active")
         except Exception as e:
-            logger.debug(f"Failed to set editing presence key: {e}")
+            logger.debug("Failed to set editing presence key: %s", e)
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False, icon="")
@@ -794,14 +798,13 @@ class EditScreen(Screen):
             with redis_ops() as r:
                 r.delete("editing:active")
         except Exception as e:
-            logger.debug(f"Failed to delete editing presence key: {e}")
+            logger.debug("Failed to delete editing presence key: %s", e)
 
     def on_unmount(self) -> None:
         """Delete Redis key when screen is unmounted."""
         self._delete_editing_key()
 
     async def action_save_and_return(self):
-        self._delete_editing_key()
         await self.save_entry()
 
     async def save_entry(self):

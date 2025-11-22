@@ -61,7 +61,7 @@ def cleanup_if_no_work() -> None:
         with redis_ops() as r:
             user_is_editing = r.exists("editing:active")
     except Exception as e:
-        logger.debug(f"Failed to check editing presence: {e}")
+        logger.debug("Failed to check editing presence: %s", e)
         user_is_editing = False
 
     if user_is_editing:

@@ -15,6 +15,16 @@ def clear_huey_queue(isolated_graph):
 
     Note: Requires isolated_graph to ensure real Redis is available
     (PriorityRedisHuey needs zadd which FakeClient doesn't provide).
+
+    Safety: Updates Huey's connection pool to point to the current test
+    database. This is safe because:
+    1. isolated_graph creates a new temp database per test
+    2. autouse=True ensures this runs before every test in this module
+    3. The consumer is stopped before pool update to prevent mid-flight tasks
+    4. Tests in this module don't run the consumer (just enqueue tasks)
+
+    This prevents connection errors when tests create new temporary databases
+    with different socket paths than the Huey instance was initialized with.
     """
     from backend.database.redis_ops import redis_ops
     from backend.services import queue

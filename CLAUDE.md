@@ -1,2 +1,2 @@
 - Always add imports to the top of the module, no inline imports!
-- Opt for using hardcoded constants unless I explicity ask to check for an env var
+- Opt for using hardcoded constants unless I explicitly ask to check for an env var
