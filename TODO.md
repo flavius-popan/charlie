@@ -4,6 +4,7 @@
 - Use [SBERT](https://sbert.net/docs/quickstart.html) with embedding & reranking/cross-encoder models
   - https://huggingface.co/mlx-community/Qwen3-Embedding-4B-4bit-DWQ
   - https://huggingface.co/tomaarsen/Qwen3-Reranker-0.6B-seq-cls (Requires mlx-lm conversion!)
+- Handle new model downloads to avoid blocking TUI
 
 ## Non-Technical
 
