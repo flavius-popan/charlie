@@ -530,7 +530,7 @@ class HomeScreen(Screen):
 
 
 class ViewScreen(Screen):
-    """Screen for viewing a journal entry in read-only mode.
+    """Screen for viewing a journal entry in read-only mode with entity sidebar.
 
     WARNING: Do NOT use recompose() in this screen - Markdown widget
     has internal state (scroll position) that would be lost.
@@ -538,20 +538,41 @@ class ViewScreen(Screen):
 
     BINDINGS = [
         Binding("e", "edit_entry", "Edit", show=True),
+        Binding("c", "toggle_connections", "Connections", show=True),
         Binding("q", "back", "Back", show=True),
         Binding("escape", "back", "Back", show=False),
         Binding("space", "back", "Back", show=False),
         Binding("enter", "back", "Back", show=False),
     ]
 
-    def __init__(self, episode_uuid: str):
+    DEFAULT_CSS = """
+    ViewScreen Horizontal {
+        height: 100%;
+    }
+
+    ViewScreen #journal-content {
+        width: 3fr;
+        padding: 1 2;
+    }
+    """
+
+    def __init__(self, episode_uuid: str, journal: str = DEFAULT_JOURNAL):
         super().__init__()
         self.episode_uuid = episode_uuid
+        self.journal = journal
         self.episode = None
+        self._poll_timer = None
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False, icon="")
-        yield Markdown("Loading...", id="content")
+        yield Horizontal(
+            Markdown("Loading...", id="journal-content"),
+            EntitySidebar(
+                episode_uuid=self.episode_uuid,
+                journal=self.journal,
+                id="entity-sidebar"
+            ),
+        )
         yield Footer()
 
     async def on_mount(self):
@@ -566,7 +587,7 @@ class ViewScreen(Screen):
             self.episode = await get_episode(self.episode_uuid)
 
             if self.episode:
-                markdown = self.query_one("#content", Markdown)
+                markdown = self.query_one("#journal-content", Markdown)
                 await markdown.update(self.episode["content"])
             else:
                 logger.error(f"Episode not found: {self.episode_uuid}")
@@ -582,6 +603,11 @@ class ViewScreen(Screen):
 
     def action_back(self):
         self.app.pop_screen()
+
+    def action_toggle_connections(self) -> None:
+        """Toggle sidebar visibility."""
+        sidebar = self.query_one("#entity-sidebar", EntitySidebar)
+        sidebar.display = not sidebar.display
 
 
 class EditScreen(Screen):
