@@ -626,6 +626,7 @@ class ViewScreen(Screen):
     BINDINGS = [
         Binding("e", "edit_entry", "Edit", show=True),
         Binding("c", "toggle_connections", "Connections", show=True),
+        Binding("l", "show_logs", "Logs", show=True),
         Binding("q", "back", "Back", show=True),
         Binding("escape", "back", "Back", show=False),
         Binding("space", "back", "Back", show=False),
@@ -697,6 +698,10 @@ class ViewScreen(Screen):
         """Toggle sidebar visibility."""
         sidebar = self.query_one("#entity-sidebar", EntitySidebar)
         sidebar.display = not sidebar.display
+
+    def action_show_logs(self) -> None:
+        """Navigate to log viewer."""
+        self.app.push_screen(LogScreen())
 
     def _check_job_status(self) -> None:
         """Poll Huey for job completion, then refresh entities."""

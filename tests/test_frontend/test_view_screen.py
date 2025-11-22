@@ -4,8 +4,9 @@ import asyncio
 import pytest
 from unittest.mock import patch, AsyncMock
 from textual.app import App, ComposeResult
+from textual.screen import Screen
 from textual.widgets import Markdown
-from charlie import ViewScreen, EntitySidebar
+from charlie import ViewScreen, EntitySidebar, LogScreen
 from backend.database.redis_ops import set_episode_status
 
 
@@ -85,3 +86,24 @@ async def test_view_screen_polls_job_status():
 
             # Timer should be stopped
             # (Note: Can't directly assert timer.stop() was called, but can check side effects)
+
+
+@pytest.mark.asyncio
+async def test_view_screen_log_viewer_toggle():
+    """Test that 'l' key navigates to log viewer."""
+    with patch("charlie.get_episode", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = {
+            "uuid": "test-uuid",
+            "content": "# Test",
+        }
+
+        app = ViewScreenTestApp(episode_uuid="test-uuid", journal="test")
+
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            await pilot.press("l")
+
+            await pilot.pause()
+
+            assert isinstance(app.screen, LogScreen)
