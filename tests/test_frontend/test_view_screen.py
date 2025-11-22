@@ -77,8 +77,8 @@ async def test_view_screen_polls_job_status():
             # Poll timer should be running
             assert screen._poll_timer is not None
 
-            # Complete the job
-            set_episode_status("test-uuid", "completed")
+            # Complete the job (node extraction finished)
+            set_episode_status("test-uuid", "pending_edges")
 
             # Wait for poll to detect completion
             await asyncio.sleep(0.6)  # Longer than poll interval

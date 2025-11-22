@@ -251,22 +251,43 @@ class EntitySidebar(Container):
                 formatted_label = self._format_entity_label(entity)
                 list_view.append(EntityListItem(formatted_label))
 
+            # Focus the list view after it's fully populated
+            self.call_after_refresh(lambda: list_view.focus())
+
     def _format_entity_label(self, entity: dict) -> str:
-        """Format entity as 'Name [Type] (RefCount)'."""
+        """Format entity as 'Name [Type]' or 'Name [Type] (RefCount)' if > 1."""
         name = entity["name"]
-        labels = entity["labels"]
-        ref_count = entity["ref_count"]
+        labels = entity.get("labels", [])
+        ref_count = entity.get("ref_count", 1)
 
-        # Filter out "Entity" if there's a more specific type
-        specific_labels = [l for l in labels if l != "Entity"]
-        entity_type = specific_labels[0] if specific_labels else "Entity"
+        # Handle labels that might be nested or empty
+        if isinstance(labels, list) and labels:
+            # Flatten if nested
+            flat_labels = []
+            for label in labels:
+                if isinstance(label, list):
+                    flat_labels.extend(label)
+                else:
+                    flat_labels.append(label)
 
-        return f"{name} [{entity_type}] ({ref_count})"
+            # Filter out "Entity" if there's a more specific type
+            specific_labels = [l for l in flat_labels if l != "Entity"]
+            entity_type = specific_labels[0] if specific_labels else "Entity"
+        else:
+            entity_type = "Entity"
+
+        # Only show ref count if > 1
+        if ref_count > 1:
+            return f"{name} [{entity_type}] ({ref_count})"
+        else:
+            return f"{name} [{entity_type}]"
 
     async def refresh_entities(self) -> None:
         """Fetch and display entities for current episode."""
         try:
-            raw_entities = await fetch_entities_for_episode(self.episode_uuid, self.journal)
+            raw_entities = await fetch_entities_for_episode(
+                self.episode_uuid, self.journal
+            )
             self.entities = raw_entities
             self.loading = False
         except Exception as e:
@@ -295,11 +316,7 @@ class EntitySidebar(Container):
 
         try:
             # Delete from database
-            await delete_entity_mention(
-                self.episode_uuid,
-                entity["uuid"],
-                self.journal
-            )
+            await delete_entity_mention(self.episode_uuid, entity["uuid"], self.journal)
 
             # Remove from local state
             new_entities = [e for e in self.entities if e["uuid"] != entity["uuid"]]
@@ -424,7 +441,9 @@ class SettingsScreen(ModalScreen):
             name="inference-toggle",
         )
 
-    async def _persist_inference_toggle(self, switch: Switch, desired: bool, previous: bool):
+    async def _persist_inference_toggle(
+        self, switch: Switch, desired: bool, previous: bool
+    ):
         try:
             # Persist toggle and enqueue in a thread to keep UI responsive
             await asyncio.to_thread(set_inference_enabled, desired)
@@ -667,7 +686,7 @@ class ViewScreen(Screen):
             EntitySidebar(
                 episode_uuid=self.episode_uuid,
                 journal=self.journal,
-                id="entity-sidebar"
+                id="entity-sidebar",
             ),
         )
         yield Footer()
@@ -708,18 +727,18 @@ class ViewScreen(Screen):
         sidebar = self.query_one("#entity-sidebar", EntitySidebar)
         sidebar.display = not sidebar.display
 
-    async def _check_job_status(self) -> None:
+    def _check_job_status(self) -> None:
         """Poll Huey for job completion, then refresh entities."""
         status = get_episode_status(self.episode_uuid)
 
-        # Job is complete when status is "completed" or None (old episodes)
-        if status in ("completed", None):
+        # Job is complete when node extraction finishes (pending_edges/done) or None (old episodes)
+        if status in ("pending_edges", "done", None):
             if self._poll_timer:
                 self._poll_timer.stop()
                 self._poll_timer = None
 
             sidebar = self.query_one("#entity-sidebar", EntitySidebar)
-            await sidebar.refresh_entities()
+            self.run_worker(sidebar.refresh_entities(), exclusive=True)
 
 
 class EditScreen(Screen):
@@ -815,7 +834,9 @@ class LogScreen(Screen):
 
     def __init__(self, log_path: Path | None = None):
         super().__init__()
-        self.log_path = log_path or Path(os.environ.get("TEXTUAL_LOG", LOGS_DIR / "charlie.log"))
+        self.log_path = log_path or Path(
+            os.environ.get("TEXTUAL_LOG", LOGS_DIR / "charlie.log")
+        )
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False, icon="")

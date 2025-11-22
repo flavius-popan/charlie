@@ -86,7 +86,7 @@ async def test_entity_sidebar_displays_entities():
 
 @pytest.mark.asyncio
 async def test_entity_sidebar_formats_entity_labels():
-    """Should format entities as 'Name [Type] (RefCount)'."""
+    """Should format entities as 'Name [Type]' or 'Name [Type] (RefCount)' if > 1."""
     app = EntitySidebarTestApp()
 
     async with app.run_test() as pilot:
@@ -108,15 +108,15 @@ async def test_entity_sidebar_formats_entity_labels():
         item1_label = items[0].label_text if isinstance(items[0], EntityListItem) else ""
         item2_label = items[1].label_text if isinstance(items[1], EntityListItem) else ""
 
-        # First item: show most specific type (Person, not Entity)
+        # First item: show most specific type (Person, not Entity) and ref_count > 1
         assert "Sarah" in item1_label
         assert "[Person]" in item1_label
         assert "(3)" in item1_label
 
-        # Second item: show Entity when it's the only type
+        # Second item: show Entity when it's the only type, no ref_count when = 1
         assert "Park" in item2_label
         assert "[Entity]" in item2_label
-        assert "(1)" in item2_label
+        assert "(1)" not in item2_label
 
 
 @pytest.mark.asyncio
