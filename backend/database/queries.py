@@ -122,7 +122,22 @@ async def delete_entity_mention(
         journal: Journal name
 
     Returns:
-        True if entity was fully deleted (orphaned), False if only edge removed
+        True if entity was fully deleted (orphaned)
+        False if only edge removed OR if edge didn't exist
+
+    Note:
+        Returns False when the MENTIONS edge doesn't exist. In the UI context
+        (deletion triggered from entity list), this edge case shouldn't occur.
+
+    Example:
+        # Remove mention and potentially delete entity
+        was_deleted = await delete_entity_mention(ep_uuid, entity_uuid)
+        if was_deleted:
+            # Entity removed from knowledge graph entirely
+            pass
+        else:
+            # Entity still exists in other episodes
+            pass
     """
     import asyncio
     from backend.database.driver import get_driver
