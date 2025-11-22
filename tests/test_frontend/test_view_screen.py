@@ -7,7 +7,6 @@ from textual.app import App, ComposeResult
 from textual.screen import Screen
 from textual.widgets import Markdown
 from charlie import ViewScreen, EntitySidebar, LogScreen
-from backend.database.redis_ops import set_episode_status
 
 
 class ViewScreenTestApp(App):
@@ -69,24 +68,24 @@ async def test_view_screen_polls_job_status():
             "content": "# Test",
         }
 
-        app = ViewScreenTestApp(episode_uuid="test-uuid", journal="test")
+        # Mock get_episode_status to control polling behavior
+        with patch("charlie.get_episode_status") as mock_status:
+            # Start with pending, then complete
+            mock_status.side_effect = ["pending_nodes", "pending_nodes", "pending_edges"]
 
-        async with app.run_test():
-            screen = app.screen
-            # Set job to pending initially
-            set_episode_status("test-uuid", "pending_nodes")
+            app = ViewScreenTestApp(episode_uuid="test-uuid", journal="test")
 
-            # Poll timer should be running
-            assert screen._poll_timer is not None
+            async with app.run_test():
+                screen = app.screen
 
-            # Complete the job (node extraction finished)
-            set_episode_status("test-uuid", "pending_edges")
+                # Poll timer should be running (sidebar is loading, no cached data)
+                assert screen._poll_timer is not None
 
-            # Wait for poll to detect completion
-            await asyncio.sleep(0.6)  # Longer than poll interval
+                # Wait for poll to detect completion
+                await asyncio.sleep(0.6)  # Longer than poll interval
 
-            # Timer should be stopped
-            # (Note: Can't directly assert timer.stop() was called, but can check side effects)
+                # Timer should be stopped after job completes
+                # (Note: Can't directly assert timer.stop() was called, but can check side effects)
 
 
 @pytest.mark.asyncio
