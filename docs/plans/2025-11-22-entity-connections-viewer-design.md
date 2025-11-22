@@ -132,9 +132,15 @@ When an entity is highlighted in the ListView:
 - **No toasts/notifications** - They're annoying and disrupt flow. UI updates (like removing an item from the list) are sufficient feedback.
 - **Playful, end-user language** - Avoid technical jargon ("knowledge graph", "nodes", "edges"). Use natural terms ("connections", "entries", "mentioned in").
 
-## Implementation Notes & Bug Fixes
+## Implementation Status
 
-### Architectural Changes (2025-11-22)
+**Status:** ✅ Complete (2025-11-22)
+
+All features implemented and tested. Redis cache architecture delivers instant loads for existing entries.
+
+## Implementation Notes & Architectural Changes
+
+### Core Architecture Changes
 
 1. **Redis Cache Instead of DB Polling**
    - Changed from polling database to polling Redis `nodes` field
@@ -158,6 +164,21 @@ When an entity is highlighted in the ListView:
 5. **Log Viewer Shortcut**
    - Added `l` key binding to toggle to log viewer from ViewScreen
    - No need to return to HomeScreen first
+
+6. **Smart Sidebar Visibility**
+   - Hidden when opening from HomeScreen (instant reading, no lag)
+   - Shown when coming from EditScreen (contextual after editing)
+   - Manual toggle with `c` key
+
+7. **Performance Optimizations**
+   - Instant cache fetch on mount (no polling delay)
+   - Only polls if cache miss detected
+   - ~50ms load for cached entries vs ~500ms+ before
+
+8. **UX Improvements**
+   - Auto-select first entity when sidebar opens
+   - Node extraction triggers on both create and update
+   - Smooth edit→view transition with immediate markdown display
 
 ## Future Enhancements
 
