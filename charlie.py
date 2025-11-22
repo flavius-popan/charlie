@@ -34,7 +34,11 @@ from backend.database import (
     update_episode,
 )
 from backend.database.queries import fetch_entities_for_episode
-from backend.database.redis_ops import get_inference_enabled, set_inference_enabled
+from backend.database.redis_ops import (
+    get_episode_status,
+    get_inference_enabled,
+    set_inference_enabled,
+)
 from backend.settings import DEFAULT_JOURNAL
 from backend.services.queue import (
     is_huey_consumer_running,
@@ -577,6 +581,8 @@ class ViewScreen(Screen):
 
     async def on_mount(self):
         await self.load_episode()
+        # Start polling for extraction job completion
+        self._poll_timer = self.set_interval(0.5, self._check_job_status)
 
     async def on_screen_resume(self):
         """Called when returning to this screen."""
@@ -608,6 +614,19 @@ class ViewScreen(Screen):
         """Toggle sidebar visibility."""
         sidebar = self.query_one("#entity-sidebar", EntitySidebar)
         sidebar.display = not sidebar.display
+
+    async def _check_job_status(self) -> None:
+        """Poll Huey for job completion, then refresh entities."""
+        status = get_episode_status(self.episode_uuid)
+
+        # Job is complete when status is "completed" or None (old episodes)
+        if status in ("completed", None):
+            if self._poll_timer:
+                self._poll_timer.stop()
+                self._poll_timer = None
+
+            sidebar = self.query_one("#entity-sidebar", EntitySidebar)
+            await sidebar.refresh_entities()
 
 
 class EditScreen(Screen):
