@@ -41,7 +41,7 @@ async def test_entity_sidebar_shows_loading_indicator_when_loading():
     async with app.run_test():
         sidebar = app.query_one(EntitySidebar)
         sidebar.loading = True
-        sidebar._render_content()
+        sidebar._update_content()
 
         content = sidebar.query_one("#entity-content")
         loading_indicator = content.query_one(LoadingIndicator)
@@ -209,39 +209,32 @@ async def test_entity_sidebar_batch_update_triggers_single_render():
     """Batch update should trigger only one render, not multiple."""
     app = EntitySidebarTestApp(episode_uuid="test-uuid", journal="test")
 
-    mock_entities = [
-        {"uuid": "uuid-1", "name": "Sarah", "type": "Person"},
-        {"uuid": "uuid-2", "name": "Park", "type": "Place"},
-    ]
+    async with app.run_test() as pilot:
+        sidebar = app.query_one(EntitySidebar)
 
-    mock_redis = MagicMock()
-    mock_redis.hget.side_effect = lambda key, field: (
-        json.dumps(mock_entities).encode() if field == "nodes" else None
-    )
+        # Track render calls
+        render_count = 0
+        original_render = sidebar._update_content
 
-    with patch("charlie.redis_ops") as mock_redis_ops:
-        mock_redis_ops.return_value.__enter__.return_value = mock_redis
-        mock_redis_ops.return_value.__exit__.return_value = None
+        def counting_render():
+            nonlocal render_count
+            render_count += 1
+            original_render()
 
-        async with app.run_test() as pilot:
-            sidebar = app.query_one(EntitySidebar)
+        sidebar._update_content = counting_render
 
-            # Track render calls
-            render_count = 0
-            original_render = sidebar._render_content
+        # Simulate batch update like refresh_entities does
+        with app.batch_update():
+            sidebar.entities = [
+                {"uuid": "uuid-1", "name": "Sarah", "type": "Person"},
+                {"uuid": "uuid-2", "name": "Park", "type": "Place"},
+            ]
+            sidebar.loading = False
 
-            def counting_render():
-                nonlocal render_count
-                render_count += 1
-                original_render()
+        await pilot.pause()
 
-            with patch.object(sidebar, '_render_content', side_effect=counting_render):
-                await sidebar.refresh_entities()
-                await pilot.pause()
-
-            # Should be called max 2 times: once on mount, once after batch update
-            # Not 3+ times (which would indicate double render from reactive properties)
-            assert render_count <= 2, f"Expected max 2 renders, got {render_count}"
+        # Batch update should trigger only one content update from watchers
+        assert render_count == 1, f"Expected 1 render from batch update, got {render_count}"
 
 
 @pytest.mark.asyncio
@@ -339,3 +332,86 @@ async def test_entity_sidebar_refresh_with_malformed_json():
 
                 # Error should be logged (called at least once)
                 assert mock_logger.error.call_count >= 1
+
+
+@pytest.mark.asyncio
+async def test_entity_sidebar_preserves_content_after_toggle():
+    """Content should persist when toggling display visibility."""
+    app = EntitySidebarTestApp(episode_uuid="test-uuid", journal="test")
+
+    async with app.run_test() as pilot:
+        sidebar = app.query_one(EntitySidebar)
+
+        sidebar.entities = [
+            {"uuid": "uuid-1", "name": "Sarah", "type": "Person"},
+            {"uuid": "uuid-2", "name": "Park", "type": "Place"},
+        ]
+        sidebar.loading = False
+
+        await pilot.pause()
+
+        list_view = sidebar.query_one(ListView)
+        assert list_view is not None
+        initial_items = len(list(list_view.children))
+        assert initial_items == 2
+
+        sidebar.display = False
+        await pilot.pause()
+
+        sidebar.display = True
+        await pilot.pause()
+
+        try:
+            list_view = sidebar.query_one(ListView)
+            items = list(list_view.children)
+            assert len(items) == 2, f"Expected 2 entities after toggle, got {len(items)}"
+        except Exception as e:
+            raise AssertionError(f"ListView query failed after toggle: {e}")
+
+
+@pytest.mark.asyncio
+async def test_entity_sidebar_refresh_triggered_on_manual_display():
+    """Manual refresh should load entities when sidebar is displayed while loading."""
+    app = EntitySidebarTestApp(episode_uuid="test-uuid", journal="test")
+
+    mock_entities = [
+        {"uuid": "uuid-1", "name": "Sarah", "type": "Person"},
+        {"uuid": "uuid-2", "name": "Park", "type": "Place"},
+    ]
+
+    mock_redis = MagicMock()
+    mock_redis.hget.side_effect = lambda key, field: (
+        json.dumps(mock_entities).encode() if field == "nodes" else None
+    )
+
+    with patch("charlie.redis_ops") as mock_redis_ops:
+        mock_redis_ops.return_value.__enter__.return_value = mock_redis
+        mock_redis_ops.return_value.__exit__.return_value = None
+
+        async with app.run_test() as pilot:
+            sidebar = app.query_one(EntitySidebar)
+
+            # Simulate home→view scenario: sidebar hidden and still loading
+            sidebar.display = False
+            sidebar.loading = True
+            sidebar.entities = []
+            await pilot.pause()
+
+            # Simulate action_toggle_connections logic
+            sidebar.display = True
+            if sidebar.loading:
+                sidebar.run_worker(sidebar.refresh_entities(), exclusive=True)
+            sidebar._update_content()
+
+            await pilot.pause()
+            await asyncio.sleep(0.1)
+            await pilot.pause()
+
+            # Should have loaded entities
+            assert sidebar.loading is False, f"Should have finished loading"
+            assert len(sidebar.entities) == 2, f"Expected 2 entities, got {len(sidebar.entities)}"
+
+            # Verify UI shows entities
+            list_view = sidebar.query_one(ListView)
+            items = list(list_view.children)
+            assert len(items) == 2

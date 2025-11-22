@@ -199,21 +199,21 @@ class EntitySidebar(Container):
 
     def on_mount(self) -> None:
         """Render initial content and attempt immediate cache fetch."""
-        self._render_content()
+        self._update_content()
         # Attempt immediate cache fetch - if data exists, show instantly
         self.run_worker(self.refresh_entities(), exclusive=True)
 
     def watch_loading(self, loading: bool) -> None:
         """Reactive: swap between loading indicator and entity list."""
-        self._render_content()
+        self._update_content()
 
     def watch_entities(self, entities: list[dict]) -> None:
         """Reactive: re-render when entities change."""
         if not self.loading:
-            self._render_content()
+            self._update_content()
 
-    def _render_content(self) -> None:
-        """Render either loading state or entity list."""
+    def _update_content(self) -> None:
+        """Update container content based on loading state and entity data."""
         if not self.is_mounted:
             return
 
@@ -710,15 +710,19 @@ class ViewScreen(Screen):
         sidebar = self.query_one("#entity-sidebar", EntitySidebar)
         sidebar.display = not sidebar.display
 
-        # Focus sidebar when opened
-        if sidebar.display and sidebar.entities:
-            try:
-                list_view = sidebar.query_one(ListView)
-                if list_view.index is None:
-                    list_view.index = 0
-                self.set_focus(list_view)
-            except:
-                pass  # No ListView yet (still loading)
+        if sidebar.display:
+            if sidebar.loading:
+                sidebar.run_worker(sidebar.refresh_entities(), exclusive=True)
+            sidebar._update_content()
+
+            if sidebar.entities:
+                try:
+                    list_view = sidebar.query_one(ListView)
+                    if list_view.index is None:
+                        list_view.index = 0
+                    self.set_focus(list_view)
+                except:
+                    pass
 
     def action_show_logs(self) -> None:
         """Navigate to log viewer."""
