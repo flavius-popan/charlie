@@ -200,8 +200,10 @@ class EntitySidebar(Container):
         yield Label("d: delete | ↑↓: navigate | c: close | l: logs", classes="sidebar-footer")
 
     def on_mount(self) -> None:
-        """Render initial content."""
+        """Render initial content and attempt immediate cache fetch."""
         self._render_content()
+        # Attempt immediate cache fetch - if data exists, show instantly
+        self.run_worker(self.refresh_entities(), exclusive=True)
 
     def watch_loading(self, loading: bool) -> None:
         """Reactive: swap between loading indicator and entity list."""
@@ -240,27 +242,19 @@ class EntitySidebar(Container):
         return f"{name} [{entity_type}]"
 
     async def refresh_entities(self) -> None:
-        """Poll Redis for entity data."""
+        """Fetch entity data from Redis cache (single attempt, no polling)."""
         try:
             cache_key = f"journal:{self.journal}:{self.episode_uuid}"
 
-            while True:
-                with redis_ops() as r:
-                    nodes_json = r.hget(cache_key, "nodes")
-                    status = r.hget(cache_key, "status")
+            with redis_ops() as r:
+                nodes_json = r.hget(cache_key, "nodes")
 
-                if nodes_json:
-                    nodes = json.loads(nodes_json.decode())
-                    filtered_nodes = [n for n in nodes if n["name"] != "I"]
-                    self.entities = filtered_nodes
-                    self.loading = False
-                    break
-                elif status and status.decode() == "done":
-                    self.entities = []
-                    self.loading = False
-                    break
-
-                await asyncio.sleep(0.5)
+            if nodes_json:
+                nodes = json.loads(nodes_json.decode())
+                filtered_nodes = [n for n in nodes if n["name"] != "I"]
+                self.entities = filtered_nodes
+                self.loading = False
+            # If no data found, keep loading=True (ViewScreen will handle polling)
         except Exception as e:
             logger.error(f"Failed to fetch entities from Redis: {e}", exc_info=True)
             self.loading = False
@@ -665,8 +659,14 @@ class ViewScreen(Screen):
 
     async def on_mount(self):
         await self.load_episode()
-        # Start polling for extraction job completion
-        self._poll_timer = self.set_interval(0.5, self._check_job_status)
+        # Give EntitySidebar a moment to check cache on mount
+        await asyncio.sleep(0.05)
+
+        # Only start polling if sidebar is still loading (cache miss)
+        sidebar = self.query_one("#entity-sidebar", EntitySidebar)
+        if sidebar.loading:
+            # Cache doesn't have data - start polling for extraction job
+            self._poll_timer = self.set_interval(0.5, self._check_job_status)
 
     async def on_screen_resume(self):
         """Called when returning to this screen."""
