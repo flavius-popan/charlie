@@ -752,6 +752,14 @@ class EditScreen(Screen):
         self.is_new_entry = episode_uuid is None
         self.episode = None
 
+    def on_text_area_changed(self, event: TextArea.Changed) -> None:
+        """Set Redis key when user types to indicate active editing session."""
+        try:
+            with redis_ops() as r:
+                r.setex("editing:active", 120, "active")
+        except Exception as e:
+            logger.debug(f"Failed to set editing presence key: {e}")
+
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False, icon="")
         yield TextArea("", id="editor")
@@ -780,7 +788,20 @@ class EditScreen(Screen):
             self.notify("Error loading entry", severity="error")
             self.app.pop_screen()
 
+    def _delete_editing_key(self) -> None:
+        """Delete Redis editing presence key."""
+        try:
+            with redis_ops() as r:
+                r.delete("editing:active")
+        except Exception as e:
+            logger.debug(f"Failed to delete editing presence key: {e}")
+
+    def on_unmount(self) -> None:
+        """Delete Redis key when screen is unmounted."""
+        self._delete_editing_key()
+
     async def action_save_and_return(self):
+        self._delete_editing_key()
         await self.save_entry()
 
     async def save_entry(self):
@@ -826,7 +847,7 @@ class EditScreen(Screen):
         if get_inference_enabled():
             try:
                 from backend.services.tasks import extract_nodes_task
-                extract_nodes_task(episode_uuid, journal)
+                extract_nodes_task(episode_uuid, journal, priority=1)
             except Exception as exc:
                 logger.warning(
                     "Failed to enqueue extract_nodes_task for %s: %s", episode_uuid, exc

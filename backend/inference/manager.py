@@ -47,13 +47,25 @@ def unload_all_models() -> None:
 
 def cleanup_if_no_work() -> None:
     """Unload models when no active work remains (event-driven cleanup)."""
-    from backend.database.redis_ops import get_episodes_by_status, get_inference_enabled
+    from backend.database.redis_ops import get_episodes_by_status, get_inference_enabled, redis_ops
 
     # If inference is disabled, pending work is blocked; unload immediately (once)
     models_loaded = any(model is not None for model in MODELS.values())
     if not get_inference_enabled():
         # Always call unload to ensure any loaded model is freed; log only on actual unload.
         unload_all_models()
+        return
+
+    # Check if user is actively editing (keeps models warm)
+    try:
+        with redis_ops() as r:
+            user_is_editing = r.exists("editing:active")
+    except Exception as e:
+        logger.debug(f"Failed to check editing presence: {e}")
+        user_is_editing = False
+
+    if user_is_editing:
+        logger.debug("User is actively editing, keeping models loaded")
         return
 
     pending_nodes = get_episodes_by_status("pending_nodes")

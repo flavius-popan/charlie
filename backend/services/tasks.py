@@ -27,6 +27,11 @@ def extract_nodes_task(episode_uuid: str, journal: str):
     Note:
         This task is idempotent - checks Redis state before processing.
         Safe to enqueue multiple times for the same episode.
+
+        Priority can be passed via kwargs when enqueueing:
+        - extract_nodes_task(uuid, journal, priority=1) for user-triggered
+        - extract_nodes_task(uuid, journal) or priority=0 for background tasks
+        Higher priority numbers are processed first.
     """
     from backend.database.redis_ops import (
         get_episode_status,

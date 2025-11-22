@@ -240,6 +240,7 @@ def enqueue_pending_episodes() -> int:
     Note:
         Only enqueues if inference is enabled.
         Safe to call multiple times - tasks check status for idempotency.
+        Background tasks are enqueued with priority=0 (low priority).
     """
     if not get_inference_enabled():
         return 0
@@ -251,6 +252,6 @@ def enqueue_pending_episodes() -> int:
     for episode_uuid in pending:
         data = get_episode_data(episode_uuid)
         journal = data.get("journal", "")
-        extract_nodes_task(episode_uuid, journal)
+        extract_nodes_task(episode_uuid, journal, priority=0)
 
     return len(pending)

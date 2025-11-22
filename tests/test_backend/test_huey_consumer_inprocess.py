@@ -122,7 +122,7 @@ def test_inference_toggle_defers_work_to_orchestrator(falkordb_test_context):
     with patch("backend.services.tasks.extract_nodes_task") as mock_task:
         orchestrate_inference_work.call_local(reschedule=False)
 
-        mock_task.assert_called_once_with(episode_uuid, DEFAULT_JOURNAL)
+        mock_task.assert_called_once_with(episode_uuid, DEFAULT_JOURNAL, priority=0)
 
     # Cleanup
     set_inference_enabled(True)
@@ -141,6 +141,10 @@ def test_start_huey_consumer_schedules_orchestrator_once(monkeypatch):
 
         def ping(self):
             return True
+
+        def zadd(self, key, mapping):
+            # Stub for PriorityRedisHuey support
+            return len(mapping)
 
     class FakeDB:
         client = FakeClient()

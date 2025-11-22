@@ -13,7 +13,7 @@ import time
 from threading import Thread
 from typing import Optional
 
-from huey import RedisHuey
+from huey import PriorityRedisHuey
 from huey.consumer import Consumer
 from redis import ConnectionPool
 
@@ -54,8 +54,8 @@ def _get_redis_connection() -> ConnectionPool:
     return connection_pool
 
 
-# RedisHuey supports async tasks via asyncio integration
-huey = RedisHuey(
+# PriorityRedisHuey supports priority queueing (higher priority = processed first)
+huey = PriorityRedisHuey(
     "charlie",
     connection_pool=_get_redis_connection(),
 )
