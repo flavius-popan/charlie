@@ -111,6 +111,8 @@ class EntitySidebar(Container):
     }
     """
 
+    CAT_SPINNER_FRAMES = [">^.^<", "^.^", ">^.^<", "^.^"]
+
     episode_uuid: reactive[str] = reactive("")
     journal: reactive[str] = reactive("")
     loading: reactive[bool] = reactive(True)
@@ -120,11 +122,50 @@ class EntitySidebar(Container):
         super().__init__(**kwargs)
         self.episode_uuid = episode_uuid
         self.journal = journal
+        self._spinner_index = 0
+        self._spinner_timer = None
 
     def compose(self) -> ComposeResult:
         yield Label("Connections", classes="sidebar-header")
         yield Container(id="entity-content")
         yield Label("d: delete | ↑↓: navigate | c: close", classes="sidebar-footer")
+
+    def on_mount(self) -> None:
+        """Start spinner animation when mounted."""
+        if self.loading:
+            self._spinner_timer = self.set_interval(0.3, self._update_spinner)
+        self._render_content()
+
+    def watch_loading(self, loading: bool) -> None:
+        """Reactive: swap between loading indicator and entity list."""
+        if loading and self._spinner_timer is None:
+            self._spinner_timer = self.set_interval(0.3, self._update_spinner)
+        elif not loading and self._spinner_timer:
+            self._spinner_timer.stop()
+            self._spinner_timer = None
+
+        self._render_content()
+
+    def _update_spinner(self) -> None:
+        """Update spinner animation frame."""
+        self._spinner_index = (self._spinner_index + 1) % len(self.CAT_SPINNER_FRAMES)
+        if self.loading:
+            self._render_content()
+
+    def _render_content(self) -> None:
+        """Render either loading state or entity list."""
+        if not self.is_mounted:
+            return
+
+        content_container = self.query_one("#entity-content", Container)
+        content_container.remove_children()
+
+        if self.loading:
+            cat_frame = self.CAT_SPINNER_FRAMES[self._spinner_index]
+            content_container.mount(Label(f"{cat_frame} Slinging yarn..."))
+        else:
+            # Entity list will be rendered here later
+            content_container.mount(Label("No connections found"))
 
 
 def extract_title(content: str) -> str | None:

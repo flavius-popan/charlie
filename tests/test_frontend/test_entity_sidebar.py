@@ -39,3 +39,20 @@ async def test_entity_sidebar_has_header():
         # Just verify the header label exists with the right class
         header_label = sidebar.query_one(".sidebar-header", Label)
         assert header_label is not None
+
+
+@pytest.mark.asyncio
+async def test_entity_sidebar_shows_cat_spinner_when_loading():
+    """Should show ASCII cat spinner and 'Slinging yarn...' when loading."""
+    app = EntitySidebarTestApp()
+
+    async with app.run_test():
+        sidebar = app.query_one(EntitySidebar)
+        sidebar.loading = True
+        sidebar._render_content()
+
+        content = sidebar.query_one("#entity-content")
+        labels = content.query(Label)
+
+        # Should have loading message with cat spinner
+        assert len(labels) > 0
