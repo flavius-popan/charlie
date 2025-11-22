@@ -77,10 +77,8 @@ This document explains how Charlie’s background inference pipeline works today
   - Re-enqueue by setting status to pending_nodes and calling `enqueue_pending_episodes` (only when inference is enabled).
 
 ## Known Limitations and Next Steps
-- No watchdog/auto-restart for the consumer thread; a crash requires app restart. A lightweight watchdog could monitor `is_huey_consumer_running` and restart the consumer using the existing start/stop helpers.
 - Edge extraction tasks are not implemented; pending_edges remains a terminal-active state placeholder.
 - First-time model download can block the consumer thread; consider prefetching models or surfacing progress.
 
 ## Operational Notes
 - Redis TCP is currently enabled by default for local debugging; disable or password-protect before release to avoid port conflicts or unintended exposure.
-- The in-process consumer design is the source of truth; ignore older docs that referenced an external huey_consumer process.
