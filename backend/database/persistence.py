@@ -264,7 +264,7 @@ async def update_episode(
     content: str | None = None,
     name: str | None = None,
     valid_at: Any | None = None,
-) -> None:
+) -> bool:
     """Update episode fields (content, name, valid_at only).
 
     Args:
@@ -274,6 +274,9 @@ async def update_episode(
         name: New title/name (optional)
         valid_at: New reference time as timezone-aware datetime object (optional)
                   Accepts datetime objects or ISO 8601 strings (converted to datetime)
+
+    Returns:
+        bool: True if content changed and requires node extraction, False otherwise
 
     Raises:
         ValueError: If episode not found, no fields provided, or invalid datetime format
@@ -356,21 +359,11 @@ async def update_episode(
     await episode.save(driver)
     logger.info("Updated episode %s in journal %s", episode_uuid, journal)
 
-    # Trigger node extraction if content changed
+    # Mark episode for node extraction if content changed
     if content_changed:
         set_episode_status(episode_uuid, "pending_nodes", journal=journal)
 
-        if get_inference_enabled():
-            try:
-                from backend.services.tasks import extract_nodes_task
-
-                extract_nodes_task(episode_uuid, journal)
-            except Exception as exc:
-                logger.warning(
-                    "Failed to enqueue extract_nodes_task for updated episode %s: %s",
-                    episode_uuid,
-                    exc,
-                )
+    return content_changed
 
 
 async def delete_episode(episode_uuid: str, journal: str = DEFAULT_JOURNAL) -> None:

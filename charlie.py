@@ -796,22 +796,41 @@ class EditScreen(Screen):
                 uuid = await add_journal_entry(content=content)
                 if title:
                     await update_episode(uuid, name=title)
-                # Navigate to ViewScreen instead of popping
+                # Navigate to ViewScreen FIRST
                 self.app.pop_screen()  # Pop EditScreen
                 self.app.push_screen(ViewScreen(uuid, DEFAULT_JOURNAL, from_edit=True))
+                # THEN enqueue extraction task in background
+                self._enqueue_extraction_task(uuid, DEFAULT_JOURNAL)
             else:
+                # Update episode and check if content changed
                 if title:
-                    await update_episode(self.episode_uuid, content=content, name=title)
+                    content_changed = await update_episode(self.episode_uuid, content=content, name=title)
                 else:
-                    await update_episode(self.episode_uuid, content=content)
-                # Navigate to ViewScreen for existing entries too
+                    content_changed = await update_episode(self.episode_uuid, content=content)
+                # Navigate to ViewScreen FIRST
                 self.app.pop_screen()  # Pop EditScreen
                 self.app.push_screen(ViewScreen(self.episode_uuid, DEFAULT_JOURNAL, from_edit=True))
+                # THEN enqueue extraction task in background if content changed
+                if content_changed:
+                    self._enqueue_extraction_task(self.episode_uuid, DEFAULT_JOURNAL)
 
         except Exception as e:
             logger.error(f"Failed to save entry: {e}", exc_info=True)
             self.notify("Failed to save entry", severity="error")
             raise
+
+    def _enqueue_extraction_task(self, episode_uuid: str, journal: str):
+        """Enqueue node extraction task in background (non-blocking)."""
+        from backend.database.redis_ops import get_inference_enabled
+
+        if get_inference_enabled():
+            try:
+                from backend.services.tasks import extract_nodes_task
+                extract_nodes_task(episode_uuid, journal)
+            except Exception as exc:
+                logger.warning(
+                    "Failed to enqueue extract_nodes_task for %s: %s", episode_uuid, exc
+                )
 
 
 class LogScreen(Screen):

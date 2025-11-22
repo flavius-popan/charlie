@@ -1,4 +1,4 @@
-"""Tests for add_journal_entry queue integration."""
+"""Tests for add_journal_entry status tracking."""
 
 from __future__ import annotations
 
@@ -8,35 +8,32 @@ import pytest
 
 
 @pytest.mark.asyncio
-async def test_add_journal_entry_enqueues_when_enabled():
-    """Should enqueue extract_nodes_task when inference is enabled."""
+async def test_add_journal_entry_sets_pending_status():
+    """Should persist episode and set pending_nodes status."""
     from backend import add_journal_entry
 
     with patch("backend.persist_episode", new_callable=AsyncMock) as mock_persist, \
-        patch("backend.set_episode_status") as mock_set_status, \
-        patch("backend.get_inference_enabled", return_value=True) as mock_get_enabled, \
-        patch("backend.services.tasks.extract_nodes_task") as mock_extract_task:
+        patch("backend.set_episode_status") as mock_set_status:
 
         episode_uuid = await add_journal_entry("Test content", journal="test")
 
+        # Verify episode was persisted
         mock_persist.assert_awaited()
-        mock_set_status.assert_called_once()
-        mock_get_enabled.assert_called_once()
-        mock_extract_task.assert_called_once_with(episode_uuid, "test")
+
+        # Verify status was set to pending_nodes (task will be enqueued by caller)
+        mock_set_status.assert_called_once_with(episode_uuid, "pending_nodes", journal="test")
 
 
 @pytest.mark.asyncio
-async def test_add_journal_entry_skips_enqueue_when_disabled():
-    """Should not enqueue task when inference is disabled, but still set status."""
+async def test_add_journal_entry_returns_uuid():
+    """Should return the episode UUID after creation."""
     from backend import add_journal_entry
 
     with patch("backend.persist_episode", new_callable=AsyncMock), \
-        patch("backend.set_episode_status") as mock_set_status, \
-        patch("backend.get_inference_enabled", return_value=False) as mock_get_enabled, \
-        patch("backend.services.tasks.extract_nodes_task") as mock_extract_task:
+        patch("backend.set_episode_status"):
 
-        await add_journal_entry("Content", journal="default")
+        episode_uuid = await add_journal_entry("Content", journal="default")
 
-        mock_set_status.assert_called_once()
-        mock_get_enabled.assert_called_once()
-        mock_extract_task.assert_not_called()
+        # Verify UUID is returned
+        assert episode_uuid is not None
+        assert isinstance(episode_uuid, str)

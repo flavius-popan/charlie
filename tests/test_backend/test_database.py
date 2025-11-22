@@ -1098,36 +1098,25 @@ async def test_persist_entities_and_edges(isolated_graph):
 
 @pytest.mark.asyncio
 async def test_update_episode_triggers_extraction_when_content_changes(isolated_graph):
-    """Test that update_episode() triggers node extraction when content changes."""
+    """Test that update_episode() returns True and sets status when content changes."""
     from backend import add_journal_entry
     from backend.database import update_episode
-    from backend.database.redis_ops import get_episode_status, set_inference_enabled
-    from backend.settings import DEFAULT_JOURNAL
-    from unittest.mock import patch, MagicMock
-
-    # Enable inference so tasks get enqueued
-    set_inference_enabled(True)
+    from backend.database.redis_ops import get_episode_status, set_episode_status
 
     # Create an episode
     original_content = "Original content"
     uuid_str = await add_journal_entry(original_content)
 
     # Clear the pending status from creation
-    from backend.database.redis_ops import set_episode_status
     set_episode_status(uuid_str, "done")
 
-    # Mock extract_nodes_task to track if it's called
-    mock_task = MagicMock()
-    mock_task.return_value = None
+    # Update the content
+    new_content = "Updated content with different text"
+    content_changed = await update_episode(uuid_str, content=new_content)
 
-    with patch("backend.services.tasks.extract_nodes_task", mock_task):
-        # Update the content
-        new_content = "Updated content with different text"
-        await update_episode(uuid_str, content=new_content)
+    # Verify function returns True when content changes
+    assert content_changed is True, "Expected content_changed to be True"
 
-        # Verify Redis status is set to pending_nodes
-        status = get_episode_status(uuid_str)
-        assert status == "pending_nodes", f"Expected pending_nodes but got {status}"
-
-        # Verify extract_nodes_task was called
-        mock_task.assert_called_once_with(uuid_str, DEFAULT_JOURNAL)
+    # Verify Redis status is set to pending_nodes
+    status = get_episode_status(uuid_str)
+    assert status == "pending_nodes", f"Expected pending_nodes but got {status}"
