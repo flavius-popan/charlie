@@ -693,13 +693,17 @@ class EditScreen(Screen):
                 uuid = await add_journal_entry(content=content)
                 if title:
                     await update_episode(uuid, name=title)
+                # Navigate to ViewScreen instead of popping
+                self.app.pop_screen()  # Pop EditScreen
+                self.app.push_screen(ViewScreen(uuid, DEFAULT_JOURNAL))
             else:
                 if title:
                     await update_episode(self.episode_uuid, content=content, name=title)
                 else:
                     await update_episode(self.episode_uuid, content=content)
-
-            self.app.pop_screen()
+                # Navigate to ViewScreen for existing entries too
+                self.app.pop_screen()  # Pop EditScreen
+                self.app.push_screen(ViewScreen(self.episode_uuid, DEFAULT_JOURNAL))
 
         except Exception as e:
             logger.error(f"Failed to save entry: {e}", exc_info=True)

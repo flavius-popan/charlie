@@ -622,3 +622,38 @@ class TestWorkerManagement:
                 app.notify = Mock()
                 app._ensure_huey_worker_running()
                 app.notify.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_edit_screen_esc_goes_to_view_screen():
+    """ESC from EditScreen should navigate to ViewScreen, not HomeScreen."""
+    from charlie import EditScreen, ViewScreen
+    from textual.app import App
+
+    class TestApp(App):
+        def on_mount(self):
+            self.push_screen(EditScreen(episode_uuid=None))
+
+    with patch("charlie.add_journal_entry", new_callable=AsyncMock) as mock_add:
+        mock_add.return_value = "new-uuid"
+
+        with patch("charlie.update_episode", new_callable=AsyncMock):
+            with patch("charlie.get_episode", new_callable=AsyncMock) as mock_get:
+                mock_get.return_value = {"uuid": "new-uuid", "content": "# Test Entry\nSome content"}
+
+                app = TestApp()
+
+                async with app.run_test() as pilot:
+                    screen = app.screen
+                    # Type some content
+                    from textual.widgets import TextArea
+                    editor = screen.query_one("#editor", TextArea)
+                    editor.text = "# Test Entry\nSome content"
+
+                    # Press ESC
+                    await pilot.press("escape")
+                    await pilot.pause()
+
+                    # Should navigate to ViewScreen, not pop to HomeScreen
+                    assert isinstance(app.screen, ViewScreen)
+                    assert app.screen.episode_uuid == "new-uuid"
