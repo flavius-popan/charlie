@@ -56,3 +56,61 @@ async def test_entity_sidebar_shows_cat_spinner_when_loading():
 
         # Should have loading message with cat spinner
         assert len(labels) > 0
+
+
+@pytest.mark.asyncio
+async def test_entity_sidebar_displays_entities():
+    """Should display entities in ListView when loaded."""
+    app = EntitySidebarTestApp()
+
+    async with app.run_test():
+        sidebar = app.query_one(EntitySidebar)
+        # Set entities
+        sidebar.entities = [
+            {"uuid": "uuid-1", "name": "Sarah", "labels": ["Entity", "Person"], "ref_count": 3},
+            {"uuid": "uuid-2", "name": "Central Park", "labels": ["Entity", "Place"], "ref_count": 1},
+        ]
+        sidebar.loading = False
+
+        # Should have ListView
+        list_view = sidebar.query_one(ListView)
+        assert list_view is not None
+
+        # Should have 2 items
+        items = list(list_view.children)
+        assert len(items) == 2
+
+
+@pytest.mark.asyncio
+async def test_entity_sidebar_formats_entity_labels():
+    """Should format entities as 'Name [Type] (RefCount)'."""
+    app = EntitySidebarTestApp()
+
+    async with app.run_test() as pilot:
+        sidebar = app.query_one(EntitySidebar)
+        sidebar.entities = [
+            {"uuid": "uuid-1", "name": "Sarah", "labels": ["Entity", "Person"], "ref_count": 3},
+            {"uuid": "uuid-2", "name": "Park", "labels": ["Entity"], "ref_count": 1},
+        ]
+        sidebar.loading = False
+
+        # Wait for compose to complete
+        await pilot.pause()
+
+        list_view = sidebar.query_one(ListView)
+        items = list(list_view.children)
+
+        # Get label text from EntityListItems
+        from charlie import EntityListItem
+        item1_label = items[0].label_text if isinstance(items[0], EntityListItem) else ""
+        item2_label = items[1].label_text if isinstance(items[1], EntityListItem) else ""
+
+        # First item: show most specific type (Person, not Entity)
+        assert "Sarah" in item1_label
+        assert "[Person]" in item1_label
+        assert "(3)" in item1_label
+
+        # Second item: show Entity when it's the only type
+        assert "Park" in item2_label
+        assert "[Entity]" in item2_label
+        assert "(1)" in item2_label

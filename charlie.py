@@ -90,6 +90,17 @@ _configure_logging()
 logger = logging.getLogger("charlie")
 
 
+class EntityListItem(ListItem):
+    """A list item for displaying entity information."""
+
+    def __init__(self, label_text: str, **kwargs):
+        super().__init__(**kwargs)
+        self.label_text = label_text
+
+    def compose(self) -> ComposeResult:
+        yield Label(self.label_text)
+
+
 class EntitySidebar(Container):
     """Sidebar showing entities connected to current episode."""
 
@@ -146,6 +157,11 @@ class EntitySidebar(Container):
 
         self._render_content()
 
+    def watch_entities(self, entities: list[dict]) -> None:
+        """Reactive: re-render when entities change."""
+        if not self.loading:
+            self._render_content()
+
     def _update_spinner(self) -> None:
         """Update spinner animation frame."""
         self._spinner_index = (self._spinner_index + 1) % len(self.CAT_SPINNER_FRAMES)
@@ -163,9 +179,26 @@ class EntitySidebar(Container):
         if self.loading:
             cat_frame = self.CAT_SPINNER_FRAMES[self._spinner_index]
             content_container.mount(Label(f"{cat_frame} Slinging yarn..."))
-        else:
-            # Entity list will be rendered here later
+        elif not self.entities:
             content_container.mount(Label("No connections found"))
+        else:
+            list_view = ListView()
+            content_container.mount(list_view)
+            for entity in self.entities:
+                formatted_label = self._format_entity_label(entity)
+                list_view.append(EntityListItem(formatted_label))
+
+    def _format_entity_label(self, entity: dict) -> str:
+        """Format entity as 'Name [Type] (RefCount)'."""
+        name = entity["name"]
+        labels = entity["labels"]
+        ref_count = entity["ref_count"]
+
+        # Filter out "Entity" if there's a more specific type
+        specific_labels = [l for l in labels if l != "Entity"]
+        entity_type = specific_labels[0] if specific_labels else "Entity"
+
+        return f"{name} [{entity_type}] ({ref_count})"
 
 
 def extract_title(content: str) -> str | None:
