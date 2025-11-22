@@ -120,10 +120,33 @@ def extract_nodes_task(episode_uuid: str, journal: str):
 def orchestrate_inference_work(reschedule: bool = True):
     """Maintenance loop: enqueue pending nodes and unload when idle/disabled."""
     try:
-        from backend.database.redis_ops import enqueue_pending_episodes
-        from backend.inference.manager import cleanup_if_no_work
+        from backend.database.redis_ops import enqueue_pending_episodes, redis_ops
+        from backend.inference.manager import cleanup_if_no_work, get_model
 
         enqueue_pending_episodes()
+
+        # Pre-load models if user is actively editing (warm models in background)
+        # Note: cleanup_if_no_work() below also checks editing:active and will NOT
+        # unload these pre-loaded models. The model stays warm until user saves.
+        # This tight coupling is intentional - both functions must check the same flag.
+        #
+        # Timing: Orchestrator runs every 3s, so models load within 0-3s of first
+        # keystroke. Quick edits (<3s) may not benefit from pre-loading and could
+        # still experience cold starts. For best UX, users should type for >3s.
+        try:
+            with redis_ops() as r:
+                user_is_editing = r.exists("editing:active")
+        except Exception as e:
+            logger.debug("Failed to check editing presence: %s", e)
+            user_is_editing = False
+
+        if user_is_editing:
+            try:
+                logger.debug("User is editing, pre-loading models")
+                get_model("llm")
+            except Exception as e:
+                logger.warning("Failed to pre-load model during editing: %s", e, exc_info=True)
+
         cleanup_if_no_work()
     except Exception:
         logger.exception("orchestrate_inference_work failed")
