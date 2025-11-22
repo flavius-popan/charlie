@@ -111,12 +111,25 @@ async def delete_entity_mention(
 
     result = await asyncio.to_thread(_locked_query)
 
+    was_deleted = False
     raw = getattr(result, "_raw_response", None)
     if raw and len(raw) >= 2:
         rows = raw[1]
         if rows and len(rows) > 0:
-            return bool(_decode_value(rows[0][0]))
-    return False
+            was_deleted = bool(_decode_value(rows[0][0]))
+
+    from backend.database.redis_ops import redis_ops
+    import json
+
+    with redis_ops() as r:
+        cache_key = f"journal:{journal}:{episode_uuid}"
+        nodes_json = r.hget(cache_key, "nodes")
+        if nodes_json:
+            nodes = json.loads(nodes_json.decode())
+            updated_nodes = [n for n in nodes if n["uuid"] != entity_uuid]
+            r.hset(cache_key, "nodes", json.dumps(updated_nodes))
+
+    return was_deleted
 
 
 # Future query operations:

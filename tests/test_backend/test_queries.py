@@ -57,3 +57,36 @@ async def test_delete_entity_mention_shared(isolated_graph, require_llm):
     was_deleted = await delete_entity_mention(ep1_uuid, sarah["uuid"], "test_journal")
 
     assert was_deleted is False
+
+
+@pytest.mark.inference
+@pytest.mark.asyncio
+async def test_delete_entity_mention_updates_redis_cache(isolated_graph, require_llm):
+    """Test that deletion removes entity from Redis cache."""
+    episode_uuid = await add_journal_entry(
+        content="I met Sarah and John at the park.",
+        journal="test_journal"
+    )
+    await extract_nodes(episode_uuid=episode_uuid, journal="test_journal")
+
+    with redis_ops() as r:
+        cache_key = f"journal:test_journal:{episode_uuid}"
+        nodes_json = r.hget(cache_key, "nodes")
+        entities = json.loads(nodes_json.decode())
+        initial_count = len(entities)
+        assert initial_count >= 2
+
+        entity_to_delete = entities[0]
+        entity_uuid = entity_to_delete["uuid"]
+        entity_name = entity_to_delete["name"]
+
+    await delete_entity_mention(episode_uuid, entity_uuid, "test_journal")
+
+    with redis_ops() as r:
+        cache_key = f"journal:test_journal:{episode_uuid}"
+        nodes_json = r.hget(cache_key, "nodes")
+        updated_entities = json.loads(nodes_json.decode())
+
+        assert len(updated_entities) == initial_count - 1
+        assert entity_uuid not in [e["uuid"] for e in updated_entities]
+        assert entity_name not in [e["name"] for e in updated_entities]
