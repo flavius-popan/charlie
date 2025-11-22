@@ -227,7 +227,11 @@ class EntitySidebar(Container):
                 formatted_label = self._format_entity_label(entity)
                 list_view.append(EntityListItem(formatted_label))
 
-            self.call_after_refresh(lambda: list_view.focus())
+            def focus_and_select():
+                list_view.index = 0
+                list_view.focus()
+
+            self.call_after_refresh(focus_and_select)
 
     def _format_entity_label(self, entity: dict) -> str:
         """Format entity as 'Name [Type]'."""
@@ -704,6 +708,8 @@ class ViewScreen(Screen):
         if sidebar.display and sidebar.entities:
             try:
                 list_view = sidebar.query_one(ListView)
+                if list_view.index is None:
+                    list_view.index = 0
                 self.set_focus(list_view)
             except:
                 pass  # No ListView yet (still loading)

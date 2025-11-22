@@ -176,3 +176,29 @@ async def test_entity_sidebar_deletes_entity():
 
             assert len(sidebar.entities) == 1
             assert sidebar.entities[0]["name"] == "Park"
+
+
+@pytest.mark.asyncio
+async def test_entity_sidebar_auto_selects_first_item():
+    """Should auto-select first entity when entities load."""
+    app = EntitySidebarTestApp(episode_uuid="test-uuid", journal="test")
+
+    async with app.run_test() as pilot:
+        sidebar = app.query_one(EntitySidebar)
+
+        # Verify index is None initially (no selection)
+        await pilot.pause()
+
+        # Now set entities
+        sidebar.entities = [
+            {"uuid": "uuid-1", "name": "Sarah", "type": "Person"},
+            {"uuid": "uuid-2", "name": "Park", "type": "Place"},
+        ]
+        sidebar.loading = False
+
+        await pilot.pause()
+
+        list_view = sidebar.query_one(ListView)
+        # The bug is that index might still be None - user has to manually press arrow keys
+        # After fix, index should be 0 automatically
+        assert list_view.index == 0, f"Expected index 0 but got {list_view.index}"

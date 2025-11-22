@@ -107,3 +107,38 @@ async def test_view_screen_log_viewer_toggle():
             await pilot.pause()
 
             assert isinstance(app.screen, LogScreen)
+
+
+@pytest.mark.asyncio
+async def test_view_screen_toggle_connections_auto_selects_first_item():
+    """Test that toggling connections pane auto-selects first item."""
+    with patch("charlie.get_episode", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = {
+            "uuid": "test-uuid",
+            "content": "# Test",
+        }
+
+        app = ViewScreenTestApp(episode_uuid="test-uuid", journal="test", from_edit=False)
+
+        async with app.run_test() as pilot:
+            screen = app.screen
+            sidebar = screen.query_one(EntitySidebar)
+
+            # Populate entities
+            sidebar.entities = [
+                {"uuid": "uuid-1", "name": "Sarah", "type": "Person"},
+                {"uuid": "uuid-2", "name": "Park", "type": "Place"},
+            ]
+            sidebar.loading = False
+
+            await pilot.pause()
+
+            # Toggle connections on
+            await pilot.press("c")
+
+            await pilot.pause()
+
+            # Should auto-select first item
+            from textual.widgets import ListView
+            list_view = sidebar.query_one(ListView)
+            assert list_view.index == 0, f"Expected index 0 but got {list_view.index}"
