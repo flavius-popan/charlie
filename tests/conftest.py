@@ -11,6 +11,7 @@ for attempted suppressions.
 
 import sys
 from pathlib import Path
+import pytest
 
 # Ensure project root is importable when running tests directly.
 ROOT = Path(__file__).resolve().parents[1]
@@ -28,4 +29,11 @@ try:
     redislite.client.RedisMixin._cleanup = noop_cleanup
 except (ImportError, AttributeError):
     pass
+
+
+def pytest_configure(config):
+    """Override default marker expression when -m all is specified."""
+    markexpr = config.getoption("-m", default="")
+    if markexpr == "all":
+        config.option.markexpr = ""
 

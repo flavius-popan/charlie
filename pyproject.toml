@@ -30,6 +30,7 @@ python_functions = ["test_*"]
 addopts = "-m 'not inference'"
 markers = [
     "inference: marks tests that make real LLM inference calls (expensive, skipped by default)",
+    "all: run all tests including those marked as inference",
 ]
 filterwarnings = [
     "ignore:Support for class-based `config` is deprecated:DeprecationWarning",

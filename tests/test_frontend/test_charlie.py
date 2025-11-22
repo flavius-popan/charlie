@@ -182,6 +182,23 @@ class TestHomeScreen:
             assert isinstance(app.screen, SettingsScreen)
 
     @pytest.mark.asyncio
+    async def test_l_key_opens_logs_and_reload(self, mock_database):
+        """Should open Log screen and handle reload."""
+        app = CharlieApp()
+        async with app_test_context(app) as pilot:
+            await pilot.pause()
+
+            await pilot.press("l")
+            await pilot.pause()
+
+            from charlie import LogScreen
+            assert isinstance(app.screen, LogScreen)
+
+            await pilot.press("r")
+            await pilot.pause()
+            assert isinstance(app.screen, LogScreen)
+
+    @pytest.mark.asyncio
     async def test_home_loads_episodes(self, mock_database):
         """Should load and display episodes from database."""
         mock_episodes = [
@@ -393,6 +410,24 @@ class TestSettingsScreen:
 
             toggle = app.query_one("#inference-toggle", Switch)
             assert toggle is not None
+
+    @pytest.mark.asyncio
+    async def test_inference_toggle_calls_set_and_retains_focus(self, mock_database):
+        """Space toggles inference, calls setter once, and keeps focus for fast toggling."""
+        app = CharlieApp()
+        async with app_test_context(app) as pilot:
+            await pilot.pause()
+            await pilot.press("s")
+            await pilot.pause()
+
+            switch = app.screen.query_one("#inference-toggle")
+            assert switch.has_focus
+
+            await pilot.press("space")
+            await pilot.pause()
+
+            mock_database["set_inference_enabled"].assert_called_once_with(True)
+            assert switch.has_focus
 
     @pytest.mark.asyncio
     async def test_settings_toggles_initial_state(self, mock_database):

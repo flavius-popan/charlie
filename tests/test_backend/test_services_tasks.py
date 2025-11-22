@@ -317,3 +317,29 @@ def test_extract_nodes_task_sets_dead_on_missing_episode(isolated_graph, cleanup
 
     assert get_episode_status(missing_uuid) == "dead"
     remove_episode_from_queue(missing_uuid)
+
+
+def test_orchestrate_inference_work_reschedules_and_runs_once():
+    """orchestrate_inference_work should enqueue and cleanup, then reschedule in 3s."""
+    from backend.services.tasks import orchestrate_inference_work
+
+    with patch("backend.database.redis_ops.enqueue_pending_episodes") as mock_enqueue, \
+         patch("backend.inference.manager.cleanup_if_no_work") as mock_cleanup, \
+         patch.object(orchestrate_inference_work, "schedule") as mock_schedule:
+
+        orchestrate_inference_work.call_local()
+
+        mock_enqueue.assert_called_once()
+        mock_cleanup.assert_called_once()
+        mock_schedule.assert_called_once()
+        args, kwargs = mock_schedule.call_args
+        assert kwargs.get("delay") == 3
+
+
+def test_orchestrate_inference_work_reschedule_disabled():
+    """Reschedule should be skipped when reschedule=False."""
+    from backend.services.tasks import orchestrate_inference_work
+
+    with patch.object(orchestrate_inference_work, "schedule") as mock_schedule:
+        orchestrate_inference_work.call_local(reschedule=False)
+        mock_schedule.assert_not_called()

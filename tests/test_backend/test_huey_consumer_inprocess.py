@@ -129,3 +129,68 @@ def test_inference_toggle_defers_work_to_orchestrator(falkordb_test_context):
     from backend.database.redis_ops import remove_episode_from_queue
 
     remove_episode_from_queue(episode_uuid)
+
+
+def test_start_huey_consumer_schedules_orchestrator_once(monkeypatch):
+    """start_huey_consumer should kick off orchestrator scheduling without duplicate threads."""
+    from backend.services import queue
+
+    # Fake Redis client with required attributes
+    class FakeClient:
+        connection_pool = object()
+
+        def ping(self):
+            return True
+
+    class FakeDB:
+        client = FakeClient()
+
+    # Stub lifecycle to provide fake DB/graph
+    import backend.database.lifecycle as lifecycle
+    monkeypatch.setattr(lifecycle, "_db", FakeDB())
+    monkeypatch.setattr(lifecycle, "_ensure_graph", lambda journal: (None, None))
+
+    # Avoid starting real consumer threads
+    class DummyConsumer:
+        def __init__(*args, **kwargs):
+            pass
+
+        def run(self):
+            return
+
+        def stop(self, graceful=True):
+            return
+
+    calls = {}
+
+    def dummy_thread(target, name=None, daemon=None):
+        calls["thread_started"] = True
+
+        class DummyThread:
+            def __init__(self, target):
+                self._target = target
+
+            def start(self):
+                # Don't actually spin a thread; just note it.
+                calls["thread_run"] = True
+
+            def is_alive(self):
+                return False
+
+            def join(self, timeout=None):
+                return
+
+        return DummyThread(target)
+
+    monkeypatch.setattr(queue, "InProcessConsumer", DummyConsumer)
+    monkeypatch.setattr(queue, "Thread", dummy_thread)
+
+    with patch("backend.services.tasks.orchestrate_inference_work.schedule") as mock_schedule:
+        # Reset globals
+        queue._consumer = None
+        queue._consumer_thread = None
+
+        queue.start_huey_consumer()
+
+        mock_schedule.assert_called_once_with(delay=0)
+        assert calls.get("thread_started")
