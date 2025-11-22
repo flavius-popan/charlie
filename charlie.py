@@ -34,7 +34,7 @@ from backend.database import (
     shutdown_database,
     update_episode,
 )
-from backend.database.queries import fetch_entities_for_episode
+from backend.database.queries import delete_entity_mention, fetch_entities_for_episode
 from backend.database.redis_ops import (
     get_episode_status,
     get_inference_enabled,
@@ -284,9 +284,29 @@ class EntitySidebar(Container):
 
     async def _handle_delete_result(self, confirmed: bool) -> None:
         """Handle deletion confirmation result."""
-        if confirmed:
-            # Deletion logic will be implemented next
-            pass
+        if not confirmed:
+            return
+
+        list_view = self.query_one(ListView)
+        if list_view.index is None or list_view.index < 0:
+            return
+
+        entity = self.entities[list_view.index]
+
+        try:
+            # Delete from database
+            await delete_entity_mention(
+                self.episode_uuid,
+                entity["uuid"],
+                self.journal
+            )
+
+            # Remove from local state
+            new_entities = [e for e in self.entities if e["uuid"] != entity["uuid"]]
+            self.entities = new_entities
+
+        except Exception as e:
+            logger.error(f"Failed to delete entity mention: {e}", exc_info=True)
 
 
 def extract_title(content: str) -> str | None:

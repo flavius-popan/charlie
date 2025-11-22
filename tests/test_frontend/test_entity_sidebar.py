@@ -1,10 +1,11 @@
 """Tests for EntitySidebar widget."""
 
+import asyncio
 import pytest
 from unittest.mock import patch, AsyncMock
 from textual.app import App, ComposeResult
 from textual.screen import ModalScreen
-from textual.widgets import Label, ListView
+from textual.widgets import Button, Label, ListView
 from charlie import EntitySidebar
 
 
@@ -164,3 +165,39 @@ async def test_entity_sidebar_shows_delete_confirmation():
         # Should show confirmation modal
         modal = app.screen
         assert isinstance(modal, ModalScreen)
+
+
+@pytest.mark.asyncio
+async def test_entity_sidebar_deletes_entity():
+    """Confirming deletion should remove entity from list."""
+    app = EntitySidebarTestApp(episode_uuid="test-uuid", journal="test")
+
+    with patch("charlie.delete_entity_mention", new_callable=AsyncMock) as mock_delete:
+        mock_delete.return_value = False  # Not fully deleted
+
+        async with app.run_test() as pilot:
+            sidebar = app.query_one(EntitySidebar)
+            sidebar.entities = [
+                {"uuid": "uuid-1", "name": "Sarah", "labels": ["Entity", "Person"], "ref_count": 3},
+                {"uuid": "uuid-2", "name": "Park", "labels": ["Entity", "Place"], "ref_count": 1},
+            ]
+            sidebar.loading = False
+
+            list_view = sidebar.query_one(ListView)
+            list_view.focus()
+            list_view.index = 0  # Select Sarah
+
+            # Press 'd' and confirm
+            await pilot.press("d")
+            modal = app.screen
+            remove_button = modal.query_one("#remove", Button)
+            remove_button.press()
+
+            await asyncio.sleep(0.1)  # Let deletion process
+
+            # Should have called delete
+            mock_delete.assert_called_once_with("test-uuid", "uuid-1", "test")
+
+            # Sarah should be removed from list
+            assert len(sidebar.entities) == 1
+            assert sidebar.entities[0]["name"] == "Park"
