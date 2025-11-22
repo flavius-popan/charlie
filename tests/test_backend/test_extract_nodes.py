@@ -371,3 +371,38 @@ async def test_extract_nodes_uuid_map_correctness(isolated_graph, require_llm):
 
     if result2.exact_matches > 0 or result2.fuzzy_matches > 0:
         assert len(sarah_mappings) > 0, "uuid_map should map to existing entities when dedupe occurs"
+
+
+@pytest.mark.inference
+@pytest.mark.asyncio
+async def test_extract_nodes_writes_to_redis_cache(isolated_graph, require_llm):
+    """Test that extract_nodes writes entity data to Redis after DB write."""
+    from backend import add_journal_entry, extract_nodes
+    from backend.settings import DEFAULT_JOURNAL
+    from backend.database.redis_ops import redis_ops
+    import json
+
+    content = "I met Sarah at Starbucks today."
+    episode_uuid = await add_journal_entry(content)
+
+    result = await extract_nodes(episode_uuid, DEFAULT_JOURNAL)
+
+    with redis_ops() as r:
+        cache_key = f"journal:{DEFAULT_JOURNAL}:{episode_uuid}"
+        nodes_json = r.hget(cache_key, "nodes")
+        assert nodes_json is not None, "Should write nodes to Redis cache"
+
+        nodes = json.loads(nodes_json.decode())
+        assert len(nodes) >= 2, f"Should have at least Sarah and Starbucks (found {len(nodes)})"
+
+        entity_names = [n["name"] for n in nodes]
+        assert "Sarah" in entity_names
+        assert "Starbucks" in entity_names
+
+        for node in nodes:
+            assert "uuid" in node
+            assert "name" in node
+            assert "type" in node
+            assert isinstance(node["uuid"], str)
+            assert isinstance(node["name"], str)
+            assert isinstance(node["type"], str)

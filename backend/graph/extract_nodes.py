@@ -325,6 +325,21 @@ async def extract_nodes(
         journal=journal,
     )
 
+    from backend.database.redis_ops import redis_ops
+    import json
+
+    with redis_ops() as r:
+        cache_key = f"journal:{journal}:{episode_uuid}"
+        nodes_data = []
+        for node in nodes:
+            most_specific_label = node.labels[-1] if len(node.labels) > 1 else "Entity"
+            nodes_data.append({
+                "uuid": node.uuid,
+                "name": node.name,
+                "type": most_specific_label,
+            })
+        r.hset(cache_key, "nodes", json.dumps(nodes_data))
+
     new_entities = sum(1 for node in nodes if node.uuid not in existing_uuid_set)
     exact_matches = len([p for p in duplicate_pairs if p[0].name.lower() == p[1].name.lower()])
     fuzzy_matches = len([p for p in duplicate_pairs if p[0].name.lower() != p[1].name.lower()])
