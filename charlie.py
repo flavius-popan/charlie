@@ -796,9 +796,8 @@ class EditScreen(Screen):
                 uuid = await add_journal_entry(content=content)
                 if title:
                     await update_episode(uuid, name=title)
-                # Navigate to ViewScreen FIRST
-                self.app.pop_screen()  # Pop EditScreen
-                self.app.push_screen(ViewScreen(uuid, DEFAULT_JOURNAL, from_edit=True))
+                # Navigate to ViewScreen (atomic screen replacement)
+                self.app.switch_screen(ViewScreen(uuid, DEFAULT_JOURNAL, from_edit=True))
                 # THEN enqueue extraction task in background
                 self._enqueue_extraction_task(uuid, DEFAULT_JOURNAL)
             else:
@@ -807,9 +806,8 @@ class EditScreen(Screen):
                     content_changed = await update_episode(self.episode_uuid, content=content, name=title)
                 else:
                     content_changed = await update_episode(self.episode_uuid, content=content)
-                # Navigate to ViewScreen FIRST
-                self.app.pop_screen()  # Pop EditScreen
-                self.app.push_screen(ViewScreen(self.episode_uuid, DEFAULT_JOURNAL, from_edit=True))
+                # Navigate to ViewScreen (atomic screen replacement)
+                self.app.switch_screen(ViewScreen(self.episode_uuid, DEFAULT_JOURNAL, from_edit=True))
                 # THEN enqueue extraction task in background if content changed
                 if content_changed:
                     self._enqueue_extraction_task(self.episode_uuid, DEFAULT_JOURNAL)
