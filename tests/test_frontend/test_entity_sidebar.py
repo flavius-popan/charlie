@@ -1,6 +1,7 @@
 """Tests for EntitySidebar widget."""
 
 import pytest
+from unittest.mock import patch, AsyncMock
 from textual.app import App, ComposeResult
 from textual.widgets import Label, ListView
 from charlie import EntitySidebar
@@ -114,3 +115,27 @@ async def test_entity_sidebar_formats_entity_labels():
         assert "Park" in item2_label
         assert "[Entity]" in item2_label
         assert "(1)" in item2_label
+
+
+@pytest.mark.asyncio
+async def test_entity_sidebar_refresh_entities():
+    """Should fetch entities from database and update state."""
+    app = EntitySidebarTestApp(episode_uuid="test-uuid", journal="test")
+
+    mock_entities = [
+        {"uuid": "uuid-1", "name": "Sarah", "labels": ["Entity", "Person"], "ref_count": 2},
+    ]
+
+    with patch("charlie.fetch_entities_for_episode", new_callable=AsyncMock) as mock_fetch:
+        mock_fetch.return_value = mock_entities
+
+        async with app.run_test():
+            sidebar = app.query_one(EntitySidebar)
+            await sidebar.refresh_entities()
+
+            # Should have called fetch with correct args
+            mock_fetch.assert_called_once_with("test-uuid", "test")
+
+            # Should update state
+            assert sidebar.loading is False
+            assert sidebar.entities == mock_entities

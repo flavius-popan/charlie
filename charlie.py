@@ -33,6 +33,7 @@ from backend.database import (
     shutdown_database,
     update_episode,
 )
+from backend.database.queries import fetch_entities_for_episode
 from backend.database.redis_ops import get_inference_enabled, set_inference_enabled
 from backend.settings import DEFAULT_JOURNAL
 from backend.services.queue import (
@@ -199,6 +200,16 @@ class EntitySidebar(Container):
         entity_type = specific_labels[0] if specific_labels else "Entity"
 
         return f"{name} [{entity_type}] ({ref_count})"
+
+    async def refresh_entities(self) -> None:
+        """Fetch and display entities for current episode."""
+        try:
+            raw_entities = await fetch_entities_for_episode(self.episode_uuid, self.journal)
+            self.entities = raw_entities
+            self.loading = False
+        except Exception as e:
+            logger.error(f"Failed to fetch entities: {e}", exc_info=True)
+            self.loading = False
 
 
 def extract_title(content: str) -> str | None:
