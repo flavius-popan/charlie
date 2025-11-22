@@ -6,7 +6,8 @@ from pathlib import Path
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Vertical
+from textual.containers import Container, Horizontal, Vertical
+from textual.reactive import reactive
 from textual.screen import ModalScreen, Screen
 from textual.widgets import (
     Footer,
@@ -87,6 +88,43 @@ def _configure_logging() -> None:
 _configure_logging()
 
 logger = logging.getLogger("charlie")
+
+
+class EntitySidebar(Container):
+    """Sidebar showing entities connected to current episode."""
+
+    DEFAULT_CSS = """
+    EntitySidebar {
+        width: 1fr;
+        border-left: solid $accent;
+        padding: 1;
+    }
+
+    EntitySidebar .sidebar-header {
+        text-style: bold;
+        margin-bottom: 1;
+    }
+
+    EntitySidebar .sidebar-footer {
+        color: $text-muted;
+        margin-top: 1;
+    }
+    """
+
+    episode_uuid: reactive[str] = reactive("")
+    journal: reactive[str] = reactive("")
+    loading: reactive[bool] = reactive(True)
+    entities: reactive[list[dict]] = reactive([])
+
+    def __init__(self, episode_uuid: str, journal: str, **kwargs):
+        super().__init__(**kwargs)
+        self.episode_uuid = episode_uuid
+        self.journal = journal
+
+    def compose(self) -> ComposeResult:
+        yield Label("Connections", classes="sidebar-header")
+        yield Container(id="entity-content")
+        yield Label("d: delete | ↑↓: navigate | c: close", classes="sidebar-footer")
 
 
 def extract_title(content: str) -> str | None:
