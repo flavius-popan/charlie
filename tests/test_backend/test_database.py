@@ -1102,13 +1102,14 @@ async def test_update_episode_triggers_extraction_when_content_changes(isolated_
     from backend import add_journal_entry
     from backend.database import update_episode
     from backend.database.redis_ops import get_episode_status, set_episode_status
+    from backend.settings import DEFAULT_JOURNAL
 
     # Create an episode
     original_content = "Original content"
     uuid_str = await add_journal_entry(original_content)
 
     # Clear the pending status from creation
-    set_episode_status(uuid_str, "done")
+    set_episode_status(uuid_str, "done", DEFAULT_JOURNAL)
 
     # Update the content
     new_content = "Updated content with different text"
@@ -1118,7 +1119,7 @@ async def test_update_episode_triggers_extraction_when_content_changes(isolated_
     assert content_changed is True, "Expected content_changed to be True"
 
     # Verify Redis status is set to pending_nodes
-    status = get_episode_status(uuid_str)
+    status = get_episode_status(uuid_str, DEFAULT_JOURNAL)
     assert status == "pending_nodes", f"Expected pending_nodes but got {status}"
 
 
@@ -1128,6 +1129,7 @@ async def test_update_episode_returns_false_when_content_unchanged(isolated_grap
     from backend import add_journal_entry
     from backend.database import update_episode, get_episode
     from backend.database.redis_ops import get_episode_status, set_episode_status
+    from backend.settings import DEFAULT_JOURNAL
 
     # Create an episode
     original_content = "Test content"
@@ -1135,7 +1137,7 @@ async def test_update_episode_returns_false_when_content_unchanged(isolated_grap
     uuid_str = await add_journal_entry(original_content, title=original_name)
 
     # Clear the pending status from creation
-    set_episode_status(uuid_str, "done")
+    set_episode_status(uuid_str, "done", DEFAULT_JOURNAL)
 
     # Update only the name (no content parameter)
     new_name = "Updated Title"
@@ -1145,7 +1147,7 @@ async def test_update_episode_returns_false_when_content_unchanged(isolated_grap
     assert content_changed is False, "Expected content_changed to be False when content not updated"
 
     # Verify Redis status is NOT "pending_nodes"
-    status = get_episode_status(uuid_str)
+    status = get_episode_status(uuid_str, DEFAULT_JOURNAL)
     assert status != "pending_nodes", f"Status should not be pending_nodes, got {status}"
 
     # Verify name was actually updated
@@ -1159,13 +1161,14 @@ async def test_update_episode_returns_false_when_content_identical(isolated_grap
     from backend import add_journal_entry
     from backend.database import update_episode
     from backend.database.redis_ops import get_episode_status, set_episode_status
+    from backend.settings import DEFAULT_JOURNAL
 
     # Create an episode
     original_content = "Test content"
     uuid_str = await add_journal_entry(original_content)
 
     # Clear the pending status from creation
-    set_episode_status(uuid_str, "done")
+    set_episode_status(uuid_str, "done", DEFAULT_JOURNAL)
 
     # Update with identical content
     content_changed = await update_episode(uuid_str, content="Test content")
@@ -1174,5 +1177,5 @@ async def test_update_episode_returns_false_when_content_identical(isolated_grap
     assert content_changed is False, "Expected content_changed to be False when content identical"
 
     # Verify Redis status is NOT "pending_nodes"
-    status = get_episode_status(uuid_str)
+    status = get_episode_status(uuid_str, DEFAULT_JOURNAL)
     assert status != "pending_nodes", f"Status should not be pending_nodes, got {status}"

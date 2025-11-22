@@ -296,7 +296,7 @@ async def update_episode(
     from datetime import datetime
     from graphiti_core.errors import NodeNotFoundError
     from backend.database.driver import get_driver
-    from backend.database.redis_ops import get_inference_enabled, set_episode_status
+    from backend.database.redis_ops import get_inference_enabled, set_episode_status, get_journal_cache_key, redis_ops
 
     driver = get_driver(journal)
 
@@ -359,9 +359,12 @@ async def update_episode(
     await episode.save(driver)
     logger.info("Updated episode %s in journal %s", episode_uuid, journal)
 
-    # Mark episode for node extraction if content changed
+    # Mark episode for node extraction if content changed and invalidate cache
     if content_changed:
-        set_episode_status(episode_uuid, "pending_nodes", journal=journal)
+        set_episode_status(episode_uuid, "pending_nodes", journal)
+        with redis_ops() as r:
+            cache_key = get_journal_cache_key(journal, episode_uuid)
+            r.hdel(cache_key, "nodes")
 
     return content_changed
 
@@ -446,7 +449,7 @@ async def delete_episode(episode_uuid: str, journal: str = DEFAULT_JOURNAL) -> N
 
     # Keep Redis in sync (idempotent if already removed)
     try:
-        remove_episode_from_queue(episode_uuid)
+        remove_episode_from_queue(episode_uuid, journal)
     except Exception:
         logger.warning(
             "Failed to remove episode %s from Redis queue after deletion", episode_uuid, exc_info=True

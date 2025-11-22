@@ -21,7 +21,7 @@ async def test_add_journal_entry_sets_pending_status():
         mock_persist.assert_awaited()
 
         # Verify status was set to pending_nodes (task will be enqueued by caller)
-        mock_set_status.assert_called_once_with(episode_uuid, "pending_nodes", journal="test")
+        mock_set_status.assert_called_once_with(episode_uuid, "pending_nodes", "test")
 
 
 @pytest.mark.asyncio

@@ -726,7 +726,7 @@ class ViewScreen(Screen):
 
     def _check_job_status(self) -> None:
         """Poll Huey for job completion, then refresh entities."""
-        status = get_episode_status(self.episode_uuid)
+        status = get_episode_status(self.episode_uuid, self.journal)
 
         # Job is complete when node extraction finishes (pending_edges/done) or None (old episodes)
         if status in ("pending_edges", "done", None):

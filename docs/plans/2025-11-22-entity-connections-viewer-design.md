@@ -74,12 +74,17 @@ ViewScreen
 10. Populate ListView with entity items
 11. Footer shows: "d: delete | ↑↓: navigate | c: close | l: logs"
 
-### Redis Cache Structure (updated)
+### Redis Cache Structure
 
-Journal hash contains:
-- Existing fields: `episode_uuid`, `content`, `status`, etc.
-- **New field** `nodes`: JSON string `[{"uuid": "entity-uuid", "name": "Sarah", "type": "Person"}, ...]`
-- No TTL - persists indefinitely until entry updated/deleted
+**Unified Key:** `journal:<journal>:<uuid>` (single hash per episode)
+
+Contains all episode metadata:
+- `status`: Processing state (pending_nodes, pending_edges, done, dead)
+- `journal`: Journal name
+- `uuid_map`: UUID mapping (provisional → canonical)
+- `nodes`: Extracted entities JSON `[{"uuid": "...", "name": "Sarah", "type": "Person"}, ...]`
+
+Cache persists indefinitely (no TTL) and is deleted atomically with episode deletion.
 
 ### Reactive State
 
@@ -142,9 +147,11 @@ All features implemented and tested. Redis cache architecture delivers instant l
 
 ### Core Architecture Changes
 
-1. **Redis Cache Instead of DB Polling**
-   - Changed from polling database to polling Redis `nodes` field
-   - Entity data written to cache AFTER successful DB write by `extract_nodes` task
+1. **Unified Redis Cache Architecture**
+   - Single `journal:<journal>:<uuid>` key stores all episode metadata
+   - Eliminated dual-key fragmentation (previously had separate processing queue keys)
+   - Cache deleted atomically with episode - no orphaned data
+   - Entity data written AFTER successful DB write by `extract_nodes` task
    - Ensures cache integrity - no stale/invalid data
 
 2. **Simplified UI Display**

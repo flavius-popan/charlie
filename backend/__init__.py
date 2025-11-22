@@ -174,7 +174,7 @@ async def add_journal_entry(
     await persist_episode(episode, journal=journal)
 
     # Mark episode as pending node extraction (task will be enqueued by caller)
-    set_episode_status(episode_uuid, "pending_nodes", journal=journal)
+    set_episode_status(episode_uuid, "pending_nodes", journal)
 
     return episode_uuid
 
