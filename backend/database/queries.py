@@ -54,9 +54,66 @@ async def get_all_episodes(journal: str = DEFAULT_JOURNAL) -> list[dict]:
     return sorted(episodes, key=lambda ep: ep['valid_at'], reverse=True)
 
 
+async def fetch_entities_for_episode(
+    episode_uuid: str, journal: str = DEFAULT_JOURNAL
+) -> list[dict]:
+    """Fetch all entities mentioned in a specific episode, excluding SELF.
+
+    Args:
+        episode_uuid: Episode UUID to query
+        journal: Journal name
+
+    Returns:
+        List of entity dicts with keys: uuid, name, labels, ref_count
+        where ref_count is total mentions across all episodes
+    """
+    # Note: Uses low-level driver access because graphiti-core doesn't provide
+    # Entity query abstractions. For EpisodicNode queries, prefer the high-level
+    # APIs (see get_episode, get_all_episodes).
+    import asyncio
+    from backend.database.driver import get_driver
+    from backend.database.utils import SELF_ENTITY_UUID, to_cypher_literal, _decode_value
+
+    driver = get_driver(journal)
+    graph = driver._graph
+    lock = driver._lock
+
+    episode_literal = to_cypher_literal(episode_uuid)
+    self_literal = to_cypher_literal(str(SELF_ENTITY_UUID))
+
+    query = f"""
+    MATCH (ep:Episodic {{uuid: {episode_literal}}})-[:MENTIONS]->(e:Entity)
+    WHERE e.uuid <> {self_literal}
+    WITH e
+    OPTIONAL MATCH (e)<-[r:MENTIONS]-()
+    RETURN e.uuid as uuid, e.name as name, e.labels as labels, count(r) as ref_count
+    ORDER BY e.name
+    """
+
+    def _locked_query():
+        with lock:
+            return graph.query(query)
+
+    result = await asyncio.to_thread(_locked_query)
+
+    entities = []
+    raw = getattr(result, "_raw_response", None)
+    if raw and len(raw) >= 2:
+        rows = raw[1]
+        for row in rows:
+            entities.append({
+                "uuid": _decode_value(row[0]),
+                "name": _decode_value(row[1]),
+                "labels": _decode_value(row[2]) if row[2] else ["Entity"],
+                "ref_count": _decode_value(row[3]) if len(row) > 3 else 0,
+            })
+
+    return entities
+
+
 # Future query operations:
 # - Time-range queries
 # - Entity timelines
 # - Search operations
 
-__all__ = ["get_episode", "get_all_episodes"]
+__all__ = ["get_episode", "get_all_episodes", "fetch_entities_for_episode"]
