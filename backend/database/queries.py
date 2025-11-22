@@ -111,9 +111,59 @@ async def fetch_entities_for_episode(
     return entities
 
 
+async def delete_entity_mention(
+    episode_uuid: str, entity_uuid: str, journal: str = DEFAULT_JOURNAL
+) -> bool:
+    """Delete MENTIONS edge between episode and entity, and entity if orphaned.
+
+    Args:
+        episode_uuid: Episode UUID
+        entity_uuid: Entity UUID to remove mention of
+        journal: Journal name
+
+    Returns:
+        True if entity was fully deleted (orphaned), False if only edge removed
+    """
+    import asyncio
+    from backend.database.driver import get_driver
+    from backend.database.utils import to_cypher_literal, _decode_value
+
+    driver = get_driver(journal)
+    graph = driver._graph
+    lock = driver._lock
+
+    episode_literal = to_cypher_literal(episode_uuid)
+    entity_literal = to_cypher_literal(entity_uuid)
+
+    # Delete the MENTIONS edge, then delete entity if orphaned
+    query = f"""
+    MATCH (ep:Episodic {{uuid: {episode_literal}}})-[r:MENTIONS]->(ent:Entity {{uuid: {entity_literal}}})
+    DELETE r
+    WITH ent
+    OPTIONAL MATCH (ent)<-[remaining:MENTIONS]-()
+    WITH ent, count(remaining) as remaining_refs
+    WHERE remaining_refs = 0
+    DETACH DELETE ent
+    RETURN remaining_refs = 0 as was_deleted
+    """
+
+    def _locked_query():
+        with lock:
+            return graph.query(query)
+
+    result = await asyncio.to_thread(_locked_query)
+
+    raw = getattr(result, "_raw_response", None)
+    if raw and len(raw) >= 2:
+        rows = raw[1]
+        if rows and len(rows) > 0:
+            return bool(_decode_value(rows[0][0]))
+    return False
+
+
 # Future query operations:
 # - Time-range queries
 # - Entity timelines
 # - Search operations
 
-__all__ = ["get_episode", "get_all_episodes", "fetch_entities_for_episode"]
+__all__ = ["get_episode", "get_all_episodes", "fetch_entities_for_episode", "delete_entity_mention"]
