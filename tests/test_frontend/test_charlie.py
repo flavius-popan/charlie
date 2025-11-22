@@ -657,3 +657,282 @@ async def test_edit_screen_esc_goes_to_view_screen():
                     # Should navigate to ViewScreen, not pop to HomeScreen
                     assert isinstance(app.screen, ViewScreen)
                     assert app.screen.episode_uuid == "new-uuid"
+
+
+@pytest.mark.asyncio
+async def test_edit_screen_enqueues_extraction_for_new_entry(mock_database):
+    """EditScreen should enqueue extraction task when creating new entry with inference enabled."""
+    mock_database['add'].return_value = "new-uuid"
+    mock_database['get_inference_enabled'].return_value = True
+
+    with patch('backend.services.tasks.extract_nodes_task') as mock_extract_task:
+        app = CharlieApp()
+        async with app_test_context(app) as pilot:
+            await pilot.pause()
+
+            await pilot.press("n")
+            await pilot.pause()
+
+            from textual.widgets import TextArea
+            editor = app.query_one("#editor", TextArea)
+            editor.text = "# New Entry\nTest content"
+
+            await pilot.press("escape")
+            await pilot.pause()
+
+            mock_extract_task.assert_called_once_with("new-uuid", "default")
+
+
+@pytest.mark.asyncio
+async def test_edit_screen_enqueues_extraction_when_content_changes(mock_database):
+    """EditScreen should enqueue extraction task when editing existing entry and content changes."""
+    mock_episode = {
+        "uuid": "existing-uuid",
+        "content": "# Original\nOriginal content",
+        "name": "Original",
+        "valid_at": datetime(2025, 11, 19, 10, 0, 0)
+    }
+    mock_database['get_all'].return_value = [mock_episode]
+    mock_database['get'].return_value = mock_episode
+    mock_database['update'].return_value = True  # Content changed
+    mock_database['get_inference_enabled'].return_value = True
+
+    with patch('backend.services.tasks.extract_nodes_task') as mock_extract_task:
+        app = CharlieApp()
+        async with app_test_context(app) as pilot:
+            await pilot.pause()
+
+            await pilot.press("space")
+            await pilot.pause()
+            await pilot.pause()
+
+            await pilot.press("e")
+            await pilot.pause()
+
+            from textual.widgets import TextArea
+            editor = app.query_one("#editor", TextArea)
+            editor.text = "# Updated\nNew content"
+
+            await pilot.press("escape")
+            await pilot.pause()
+
+            mock_extract_task.assert_called_once_with("existing-uuid", "default")
+
+
+@pytest.mark.asyncio
+async def test_edit_screen_skips_extraction_when_content_unchanged(mock_database):
+    """EditScreen should NOT enqueue extraction task when content is unchanged."""
+    mock_episode = {
+        "uuid": "existing-uuid",
+        "content": "# Original\nOriginal content",
+        "name": "Original",
+        "valid_at": datetime(2025, 11, 19, 10, 0, 0)
+    }
+    mock_database['get_all'].return_value = [mock_episode]
+    mock_database['get'].return_value = mock_episode
+    mock_database['update'].return_value = False  # Content NOT changed
+    mock_database['get_inference_enabled'].return_value = True
+
+    with patch('backend.services.tasks.extract_nodes_task') as mock_extract_task:
+        app = CharlieApp()
+        async with app_test_context(app) as pilot:
+            await pilot.pause()
+
+            await pilot.press("space")
+            await pilot.pause()
+            await pilot.pause()
+
+            await pilot.press("e")
+            await pilot.pause()
+
+            from textual.widgets import TextArea
+            editor = app.query_one("#editor", TextArea)
+            editor.text = "# Original\nOriginal content"
+
+            await pilot.press("escape")
+            await pilot.pause()
+
+            mock_extract_task.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_edit_screen_skips_extraction_when_inference_disabled(mock_database):
+    """EditScreen should NOT enqueue extraction task when inference is disabled."""
+    mock_database['add'].return_value = "new-uuid"
+    mock_database['get_inference_enabled'].return_value = False
+
+    with patch('backend.services.tasks.extract_nodes_task') as mock_extract_task:
+        app = CharlieApp()
+        async with app_test_context(app) as pilot:
+            await pilot.pause()
+
+            await pilot.press("n")
+            await pilot.pause()
+
+            from textual.widgets import TextArea
+            editor = app.query_one("#editor", TextArea)
+            editor.text = "# New Entry\nTest content"
+
+            await pilot.press("escape")
+            await pilot.pause()
+
+            mock_extract_task.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_edit_screen_uses_switch_screen_not_pop_push(mock_database):
+    """EditScreen should use switch_screen() for navigation, not pop_screen() + push_screen()."""
+    mock_database['add'].return_value = "new-uuid"
+    mock_database['get_inference_enabled'].return_value = True
+
+    with patch('backend.services.tasks.extract_nodes_task'):
+        app = CharlieApp()
+        async with app_test_context(app) as pilot:
+            await pilot.pause()
+
+            await pilot.press("n")
+            await pilot.pause()
+
+            from textual.widgets import TextArea
+            editor = app.query_one("#editor", TextArea)
+            editor.text = "# New Entry\nTest content"
+
+            # Spy on switch_screen
+            with patch.object(app, 'switch_screen', wraps=app.switch_screen) as mock_switch:
+                await pilot.press("escape")
+                await pilot.pause()
+
+                mock_switch.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_edit_screen_navigates_to_view_screen_before_task_enqueue(mock_database):
+    """EditScreen should navigate to ViewScreen before enqueueing extraction task."""
+    mock_database['add'].return_value = "new-uuid"
+    mock_database['get_inference_enabled'].return_value = True
+
+    from charlie import ViewScreen
+
+    screen_type_when_task_enqueued = None
+
+    def capture_screen_type(episode_uuid, journal):
+        nonlocal screen_type_when_task_enqueued
+        screen_type_when_task_enqueued = type(app.screen)
+
+    with patch('backend.services.tasks.extract_nodes_task', side_effect=capture_screen_type) as mock_extract_task:
+        app = CharlieApp()
+        async with app_test_context(app) as pilot:
+            await pilot.pause()
+
+            await pilot.press("n")
+            await pilot.pause()
+
+            from textual.widgets import TextArea
+            editor = app.query_one("#editor", TextArea)
+            editor.text = "# New Entry\nTest content"
+
+            await pilot.press("escape")
+            await pilot.pause()
+
+            mock_extract_task.assert_called_once()
+            assert screen_type_when_task_enqueued == ViewScreen, \
+                f"Expected ViewScreen but got {screen_type_when_task_enqueued}"
+
+
+@pytest.mark.asyncio
+async def test_create_entry_with_inference_disabled_integration(mock_database):
+    """Full workflow: create entry with inference disabled, verify task NOT called but entry persisted."""
+    mock_database['add'].return_value = "new-uuid"
+    mock_database['get_inference_enabled'].return_value = False
+
+    with patch('backend.services.tasks.extract_nodes_task') as mock_extract_task:
+        app = CharlieApp()
+        async with app_test_context(app) as pilot:
+            await pilot.pause()
+
+            await pilot.press("n")
+            await pilot.pause()
+
+            from textual.widgets import TextArea
+            editor = app.query_one("#editor", TextArea)
+            editor.text = "# Integration Test\nTest content with inference disabled"
+
+            await pilot.press("escape")
+            await pilot.pause()
+
+            # Verify task NOT called
+            mock_extract_task.assert_not_called()
+
+            # Verify entry was persisted
+            mock_database['add'].assert_called_once()
+            mock_database['update'].assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_edit_entry_title_only_no_extraction_integration(mock_database):
+    """Full workflow: edit title only (no content change), verify task NOT called but title updated."""
+    mock_episode = {
+        "uuid": "existing-uuid",
+        "content": "# Original\nOriginal content",
+        "name": "Original",
+        "valid_at": datetime(2025, 11, 19, 10, 0, 0)
+    }
+    mock_database['get_all'].return_value = [mock_episode]
+    mock_database['get'].return_value = mock_episode
+    mock_database['update'].return_value = False  # Content unchanged
+    mock_database['get_inference_enabled'].return_value = True
+
+    with patch('backend.services.tasks.extract_nodes_task') as mock_extract_task:
+        app = CharlieApp()
+        async with app_test_context(app) as pilot:
+            await pilot.pause()
+
+            await pilot.press("space")
+            await pilot.pause()
+            await pilot.pause()
+
+            await pilot.press("e")
+            await pilot.pause()
+
+            from textual.widgets import TextArea
+            editor = app.query_one("#editor", TextArea)
+            # Change title but keep content the same
+            editor.text = "# Updated Title\nOriginal content"
+
+            await pilot.press("escape")
+            await pilot.pause()
+
+            # Verify task NOT called
+            mock_extract_task.assert_not_called()
+
+            # Verify title was updated
+            mock_database['update'].assert_called()
+
+
+@pytest.mark.asyncio
+async def test_edit_screen_empty_content_no_task_enqueue(mock_database):
+    """Empty/whitespace content should pop screen without saving or enqueueing task."""
+    mock_database['add'].return_value = "new-uuid"
+    mock_database['get_inference_enabled'].return_value = True
+
+    with patch('backend.services.tasks.extract_nodes_task') as mock_extract_task:
+        app = CharlieApp()
+        async with app_test_context(app) as pilot:
+            await pilot.pause()
+
+            await pilot.press("n")
+            await pilot.pause()
+
+            from textual.widgets import TextArea
+            editor = app.query_one("#editor", TextArea)
+            # Set empty/whitespace content
+            editor.text = "   \n  \n  "
+
+            await pilot.press("escape")
+            await pilot.pause()
+
+            # Verify task NOT called
+            mock_extract_task.assert_not_called()
+
+            # Verify add NOT called (empty content should not save)
+            mock_database['add'].assert_not_called()

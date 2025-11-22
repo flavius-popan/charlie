@@ -250,8 +250,10 @@ class EntitySidebar(Container):
             if nodes_json:
                 nodes = json.loads(nodes_json.decode())
                 filtered_nodes = [n for n in nodes if n["name"] != "I"]
-                self.entities = filtered_nodes
-                self.loading = False
+                # Batch update to trigger only one render
+                with self.app.batch_update():
+                    self.entities = filtered_nodes
+                    self.loading = False
             # If no data found, keep loading=True (ViewScreen will handle polling)
         except Exception as e:
             logger.error(f"Failed to fetch entities from Redis: {e}", exc_info=True)
