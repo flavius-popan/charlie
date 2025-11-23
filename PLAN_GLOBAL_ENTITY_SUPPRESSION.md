@@ -12,17 +12,20 @@ Implement global journal-level entity suppression with proper cache state manage
 ### Task 1.1: Create suppression management functions
 **File**: `backend/database/redis_ops.py` (new functions)
 
-Add helper functions:
+Add helper functions using Redis Sets (not JSON arrays for better atomicity and performance):
 
 1. **`add_suppressed_entity(journal: str, entity_name: str)`**
    - Redis key: `journal:{journal}:suppressed_entities`
-   - Store as JSON array of lowercase entity names
+   - Use `SADD` to store lowercase entity names in a Redis Set
    - Normalize to lowercase for case-insensitive matching
+   - Atomic operation, no race conditions
 
 2. **`get_suppressed_entities(journal: str) -> set[str]`**
+   - Use `SMEMBERS` to get all suppressed entity names
    - Returns set of suppressed entity names (lowercase)
 
 3. **`remove_suppressed_entity(journal: str, entity_name: str)`** (future)
+   - Use `SREM` to remove from Redis Set
    - For un-suppression feature
 
 ---

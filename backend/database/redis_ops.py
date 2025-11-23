@@ -347,20 +347,12 @@ def add_suppressed_entity(journal: str, entity_name: str) -> None:
     Note:
         Entity name is normalized to lowercase for case-insensitive matching.
         Suppressed entities will be filtered out during extraction.
+        Uses Redis Set for atomic operations and better performance.
     """
     with redis_ops() as r:
         key = f"journal:{journal}:suppressed_entities"
-        suppressed_json = r.get(key)
-
-        if suppressed_json:
-            suppressed = json.loads(suppressed_json.decode())
-        else:
-            suppressed = []
-
         normalized_name = entity_name.lower()
-        if normalized_name not in suppressed:
-            suppressed.append(normalized_name)
-            r.set(key, json.dumps(suppressed))
+        r.sadd(key, normalized_name)
 
 
 def get_suppressed_entities(journal: str) -> set[str]:
@@ -374,13 +366,8 @@ def get_suppressed_entities(journal: str) -> set[str]:
     """
     with redis_ops() as r:
         key = f"journal:{journal}:suppressed_entities"
-        suppressed_json = r.get(key)
-
-        if suppressed_json:
-            suppressed = json.loads(suppressed_json.decode())
-            return set(suppressed)
-
-        return set()
+        members = r.smembers(key)
+        return {m.decode() for m in members} if members else set()
 
 
 def remove_suppressed_entity(journal: str, entity_name: str) -> bool:
@@ -398,17 +385,6 @@ def remove_suppressed_entity(journal: str, entity_name: str) -> bool:
     """
     with redis_ops() as r:
         key = f"journal:{journal}:suppressed_entities"
-        suppressed_json = r.get(key)
-
-        if not suppressed_json:
-            return False
-
-        suppressed = json.loads(suppressed_json.decode())
         normalized_name = entity_name.lower()
-
-        if normalized_name in suppressed:
-            suppressed.remove(normalized_name)
-            r.set(key, json.dumps(suppressed))
-            return True
-
-        return False
+        removed_count = r.srem(key, normalized_name)
+        return removed_count > 0

@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import json
+
 from graphiti_core.errors import NodeNotFoundError
 from graphiti_core.nodes import EpisodicNode
 
 from backend.database.driver import get_driver
+from backend.database.redis_ops import redis_ops, add_suppressed_entity
 from backend.settings import DEFAULT_JOURNAL
 
 
@@ -123,9 +126,6 @@ async def delete_entity_mention(
             edge_uuid = _decode_value(rows[0][1])
             was_deleted = bool(_decode_value(rows[0][2]))
 
-    from backend.database.redis_ops import redis_ops
-    import json
-
     with redis_ops() as r:
         cache_key = f"journal:{journal}:{episode_uuid}"
 
@@ -158,6 +158,10 @@ async def delete_entity_mention(
         # 4. TODO: Update 'entity_edges' when edge extraction implemented
         # When edge extraction is added, remove RELATES_TO edge UUIDs
         # that involve the deleted entity from the entity_edges list
+
+    # Suppress entity globally in journal
+    if entity_name:
+        add_suppressed_entity(journal, entity_name)
 
     return was_deleted
 
