@@ -332,3 +332,83 @@ async def cleanup_orphaned_journal_caches(journal: str) -> int:
                 count += 1
 
         return count
+
+
+# Entity Suppression Management
+
+
+def add_suppressed_entity(journal: str, entity_name: str) -> None:
+    """Add entity to global suppression list for journal.
+
+    Args:
+        journal: Journal name
+        entity_name: Entity name to suppress (will be normalized to lowercase)
+
+    Note:
+        Entity name is normalized to lowercase for case-insensitive matching.
+        Suppressed entities will be filtered out during extraction.
+    """
+    with redis_ops() as r:
+        key = f"journal:{journal}:suppressed_entities"
+        suppressed_json = r.get(key)
+
+        if suppressed_json:
+            suppressed = json.loads(suppressed_json.decode())
+        else:
+            suppressed = []
+
+        normalized_name = entity_name.lower()
+        if normalized_name not in suppressed:
+            suppressed.append(normalized_name)
+            r.set(key, json.dumps(suppressed))
+
+
+def get_suppressed_entities(journal: str) -> set[str]:
+    """Get set of suppressed entity names for journal.
+
+    Args:
+        journal: Journal name
+
+    Returns:
+        Set of suppressed entity names (lowercase)
+    """
+    with redis_ops() as r:
+        key = f"journal:{journal}:suppressed_entities"
+        suppressed_json = r.get(key)
+
+        if suppressed_json:
+            suppressed = json.loads(suppressed_json.decode())
+            return set(suppressed)
+
+        return set()
+
+
+def remove_suppressed_entity(journal: str, entity_name: str) -> bool:
+    """Remove entity from global suppression list for journal.
+
+    Args:
+        journal: Journal name
+        entity_name: Entity name to un-suppress (will be normalized to lowercase)
+
+    Returns:
+        True if entity was in suppression list and removed, False otherwise
+
+    Note:
+        For future un-suppression feature.
+    """
+    with redis_ops() as r:
+        key = f"journal:{journal}:suppressed_entities"
+        suppressed_json = r.get(key)
+
+        if not suppressed_json:
+            return False
+
+        suppressed = json.loads(suppressed_json.decode())
+        normalized_name = entity_name.lower()
+
+        if normalized_name in suppressed:
+            suppressed.remove(normalized_name)
+            r.set(key, json.dumps(suppressed))
+            return True
+
+        return False

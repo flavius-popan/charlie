@@ -96,13 +96,14 @@ async def delete_entity_mention(
     # Delete the MENTIONS edge, then delete entity if orphaned
     query = f"""
     MATCH (ep:Episodic {{uuid: {episode_literal}}})-[r:MENTIONS]->(ent:Entity {{uuid: {entity_literal}}})
+    WITH ent.name as entity_name, r.uuid as edge_uuid, r, ent
     DELETE r
-    WITH ent
+    WITH ent, entity_name, edge_uuid
     OPTIONAL MATCH (ent)<-[remaining:MENTIONS]-()
-    WITH ent, count(remaining) as remaining_refs
+    WITH ent, entity_name, edge_uuid, count(remaining) as remaining_refs
     WHERE remaining_refs = 0
     DETACH DELETE ent
-    RETURN remaining_refs = 0 as was_deleted
+    RETURN entity_name, edge_uuid, remaining_refs = 0 as was_deleted
     """
 
     def _locked_query():
@@ -112,22 +113,51 @@ async def delete_entity_mention(
     result = await asyncio.to_thread(_locked_query)
 
     was_deleted = False
+    entity_name = None
+    edge_uuid = None
     raw = getattr(result, "_raw_response", None)
     if raw and len(raw) >= 2:
         rows = raw[1]
         if rows and len(rows) > 0:
-            was_deleted = bool(_decode_value(rows[0][0]))
+            entity_name = _decode_value(rows[0][0])
+            edge_uuid = _decode_value(rows[0][1])
+            was_deleted = bool(_decode_value(rows[0][2]))
 
     from backend.database.redis_ops import redis_ops
     import json
 
     with redis_ops() as r:
         cache_key = f"journal:{journal}:{episode_uuid}"
+
+        # 1. Update 'nodes' cache (existing logic)
         nodes_json = r.hget(cache_key, "nodes")
         if nodes_json:
             nodes = json.loads(nodes_json.decode())
             updated_nodes = [n for n in nodes if n["uuid"] != entity_uuid]
             r.hset(cache_key, "nodes", json.dumps(updated_nodes))
+
+        # 2. Update 'mentions_edges' cache
+        mentions_json = r.hget(cache_key, "mentions_edges")
+        if mentions_json and edge_uuid:
+            edge_uuids = json.loads(mentions_json.decode())
+            updated_edges = [uuid for uuid in edge_uuids if uuid != edge_uuid]
+            r.hset(cache_key, "mentions_edges", json.dumps(updated_edges))
+
+        # 3. Update 'uuid_map' cache
+        uuid_map_json = r.hget(cache_key, "uuid_map")
+        if uuid_map_json:
+            uuid_map = json.loads(uuid_map_json.decode())
+            # Remove mappings where canonical UUID = deleted entity
+            updated_map = {
+                prov: canon for prov, canon in uuid_map.items()
+                if canon != entity_uuid
+            }
+            if updated_map != uuid_map:
+                r.hset(cache_key, "uuid_map", json.dumps(updated_map))
+
+        # 4. TODO: Update 'entity_edges' when edge extraction implemented
+        # When edge extraction is added, remove RELATES_TO edge UUIDs
+        # that involve the deleted entity from the entity_edges list
 
     return was_deleted
 
