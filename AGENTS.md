@@ -6,10 +6,6 @@ Unless I request a simple change, any discussion of architecture, design, featur
 
 Git add & commit are fine for feature branches but NEVER for `main`!
 
-## PYTHON ENVIRONMENT
-
-Always use the project's uv-managed virtual environment (e.g., `uv add ...`) instead of the system Python for installing dependencies.
-
 ## Testing Textual Applications
 
 **CRITICAL:** Never run the Textual app directly (e.g., `python charlie.py`) in a non-interactive shell or agent environment. It will hang or output raw terminal control codes.
@@ -39,6 +35,9 @@ async def test_with_llm_call(isolated_graph, require_llm):
     # Test code that makes LLM calls via DSPy
 ```
 
-## Testing Best Practices
+### Misc. Things to Remember
 
-*ALWAYS* use the respective conftest.py file for a given test suite for fixtures.
+- Use the respective conftest.py file for a given test suite for fixtures.
+- Add imports to the top of the module unless necessary for a given feature.
+- Opt for using hardcoded constants unless I explicitly ask to check for an env var.
+- Always use the project's uv-managed virtual environment (e.g., `uv add ...`) instead of the system Python for installing dependencies.
