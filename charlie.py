@@ -901,7 +901,8 @@ class LogScreen(Screen):
 
     BINDINGS = [
         Binding("r", "reload", "Reload", show=True),
-        Binding("escape", "close", "Close", show=True),
+        Binding("l", "close", "Close", show=True),
+        Binding("escape", "close", "Close", show=False),
         Binding("q", "close", "Close", show=False),
     ]
 
