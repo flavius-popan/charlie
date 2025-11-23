@@ -129,15 +129,35 @@ class DeleteEntityModal(ModalScreen):
     }
 
     #delete-dialog {
-        width: 60;
+        width: 80;
         height: auto;
+        max-height: 15;
         border: thick $background 80%;
         background: $surface;
-        padding: 1 2;
+        padding: 2 4;
+    }
+
+    #delete-dialog Vertical {
+        height: auto;
+    }
+
+    #delete-title {
+        text-style: bold;
+        color: $text;
+        margin-bottom: 1;
+    }
+
+    #delete-hint {
+        color: $text-muted;
+        margin-bottom: 2;
+    }
+
+    #delete-buttons {
+        align: center middle;
     }
 
     #delete-dialog Button {
-        margin: 1 2 0 0;
+        margin-right: 2;
     }
     """
 
@@ -147,17 +167,16 @@ class DeleteEntityModal(ModalScreen):
 
     def compose(self) -> ComposeResult:
         name = self.entity["name"]
-
-        message = f"Remove {name} from this entry?"
-        hint = "(This only removes the connection from this entry)"
+        title = f"Remove '{name}'?"
+        hint = "It won't appear again in any future entries."
 
         yield Vertical(
-            Label("Remove Connection?", id="delete-title"),
-            Label(message),
-            Label(hint),
+            Label(title, id="delete-title"),
+            Label(hint, id="delete-hint"),
             Horizontal(
                 Button("Cancel", id="cancel", variant="default"),
                 Button("Remove", id="remove", variant="error"),
+                id="delete-buttons",
             ),
             id="delete-dialog",
         )
@@ -167,6 +186,12 @@ class DeleteEntityModal(ModalScreen):
             self.dismiss(True)
         else:
             self.dismiss(False)
+
+    def on_key(self, event) -> None:
+        if event.key == "escape":
+            self.dismiss(False)
+            event.stop()
+            event.prevent_default()
 
 
 class EntitySidebar(Container):

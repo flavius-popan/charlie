@@ -1,9 +1,9 @@
 ## Technical
-- Check if you can use MLX batch()
+- Add toggle for switching between perma-ban/journal delete for entities
 - Implement [Contextual Retreival](https://www.anthropic.com/engineering/contextual-retrieval)
 - Use [SBERT](https://sbert.net/docs/quickstart.html) with embedding & reranking/cross-encoder models
   - https://huggingface.co/mlx-community/Qwen3-Embedding-4B-4bit-DWQ
-  - https://huggingface.co/tomaarsen/Qwen3-Reranker-0.6B-seq-cls (Requires mlx-lm conversion!)
+  - https://huggingface.co/tomaarsen/Qwen3-Reranker-0.6B-seq-cls
 - Handle new model downloads to avoid blocking TUI
 
 ## Non-Technical
