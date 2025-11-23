@@ -106,6 +106,12 @@ logger = logging.getLogger("charlie")
 class EntityListItem(ListItem):
     """A list item for displaying entity information."""
 
+    DEFAULT_CSS = """
+    EntityListItem {
+        padding-left: 1;
+    }
+    """
+
     def __init__(self, label_text: str, **kwargs):
         super().__init__(**kwargs)
         self.label_text = label_text
@@ -170,12 +176,25 @@ class EntitySidebar(Container):
     EntitySidebar {
         width: 1fr;
         border-left: solid $accent;
-        padding: 1;
+
+    }
+
+    EntitySidebar #entity-content {
+        padding-left: 0;
+    }
+
+    EntitySidebar .sidebar-header {
+        color: $text-muted;
+        text-align: center;
+        width: 100%;
+        height: 4%;
     }
 
     EntitySidebar .sidebar-footer {
         color: $text-muted;
-        margin-top: 1;
+        text-align: center;
+        width: 100%;
+        height: 2%;
     }
     """
 
@@ -194,8 +213,9 @@ class EntitySidebar(Container):
         self.journal = journal
 
     def compose(self) -> ComposeResult:
+        yield Label("Connections", classes="sidebar-header")
         yield Container(id="entity-content")
-        yield Label("d: delete | ↑↓: navigate | c: close", classes="sidebar-footer")
+        yield Label("d: delete | ↑↓: navigate", classes="sidebar-footer")
 
     def on_mount(self) -> None:
         """Render initial content and attempt immediate cache fetch."""
@@ -639,10 +659,14 @@ class ViewScreen(Screen):
     ViewScreen #journal-content {
         width: 3fr;
         padding: 1 2;
+        overflow-y: auto;
+        height: 100%;
     }
     """
 
-    def __init__(self, episode_uuid: str, journal: str = DEFAULT_JOURNAL, from_edit: bool = False):
+    def __init__(
+        self, episode_uuid: str, journal: str = DEFAULT_JOURNAL, from_edit: bool = False
+    ):
         super().__init__()
         self.episode_uuid = episode_uuid
         self.journal = journal
@@ -721,7 +745,7 @@ class ViewScreen(Screen):
                     if list_view.index is None:
                         list_view.index = 0
                     self.set_focus(list_view)
-                except:
+                except Exception:
                     pass
 
     def action_show_logs(self) -> None:
@@ -827,17 +851,25 @@ class EditScreen(Screen):
                 if title:
                     await update_episode(uuid, name=title)
                 # Navigate to ViewScreen (atomic screen replacement)
-                self.app.switch_screen(ViewScreen(uuid, DEFAULT_JOURNAL, from_edit=True))
+                self.app.switch_screen(
+                    ViewScreen(uuid, DEFAULT_JOURNAL, from_edit=True)
+                )
                 # THEN enqueue extraction task in background
                 self._enqueue_extraction_task(uuid, DEFAULT_JOURNAL)
             else:
                 # Update episode and check if content changed
                 if title:
-                    content_changed = await update_episode(self.episode_uuid, content=content, name=title)
+                    content_changed = await update_episode(
+                        self.episode_uuid, content=content, name=title
+                    )
                 else:
-                    content_changed = await update_episode(self.episode_uuid, content=content)
+                    content_changed = await update_episode(
+                        self.episode_uuid, content=content
+                    )
                 # Navigate to ViewScreen (atomic screen replacement)
-                self.app.switch_screen(ViewScreen(self.episode_uuid, DEFAULT_JOURNAL, from_edit=True))
+                self.app.switch_screen(
+                    ViewScreen(self.episode_uuid, DEFAULT_JOURNAL, from_edit=True)
+                )
                 # THEN enqueue extraction task in background if content changed
                 if content_changed:
                     self._enqueue_extraction_task(self.episode_uuid, DEFAULT_JOURNAL)
@@ -854,6 +886,7 @@ class EditScreen(Screen):
         if get_inference_enabled():
             try:
                 from backend.services.tasks import extract_nodes_task
+
                 extract_nodes_task(episode_uuid, journal, priority=1)
             except Exception as exc:
                 logger.warning(
