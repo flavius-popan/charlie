@@ -20,6 +20,8 @@ from graphiti_core.utils.maintenance.dedup_helpers import (
 )
 from graphiti_core.utils.maintenance.edge_operations import filter_existing_duplicate_of_edges
 
+from backend.database.redis_ops import get_suppressed_entities
+
 logger = logging.getLogger(__name__)
 
 
@@ -355,8 +357,24 @@ async def extract_nodes(
 
     logger.info("Extracted %d provisional entities", len(extracted.extracted_entities))
 
+    suppressed = get_suppressed_entities(journal)
+    filtered_entities = extracted.extracted_entities
+    if suppressed:
+        original_count = len(extracted.extracted_entities)
+        filtered_entities = [
+            e for e in extracted.extracted_entities
+            if e.name.lower() not in suppressed
+        ]
+        filtered_count = original_count - len(filtered_entities)
+        if filtered_count > 0:
+            logger.info(
+                "Filtered out %d suppressed entities from episode %s",
+                filtered_count,
+                episode_uuid,
+            )
+
     provisional_nodes = []
-    for entity in extracted.extracted_entities:
+    for entity in filtered_entities:
         type_name = get_type_name_from_id(entity.entity_type_id, entity_types)
         labels = ["Entity"]
         if type_name != "Entity":

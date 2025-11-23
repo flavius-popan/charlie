@@ -4,8 +4,22 @@ import pytest
 from backend.database.queries import delete_entity_mention
 from backend import add_journal_entry
 from backend.graph.extract_nodes import extract_nodes
-from backend.database.redis_ops import redis_ops
+from backend.database.redis_ops import redis_ops, get_suppressed_entities
 import json
+
+
+@pytest.fixture(autouse=True)
+def clear_test_journal_suppression():
+    """Clear suppression list for test_journal before each test."""
+    with redis_ops() as r:
+        suppression_key = "journal:test_journal:suppressed_entities"
+        r.delete(suppression_key)
+
+    yield
+
+    with redis_ops() as r:
+        suppression_key = "journal:test_journal:suppressed_entities"
+        r.delete(suppression_key)
 
 
 @pytest.mark.inference
@@ -26,9 +40,14 @@ async def test_delete_entity_mention_orphaned(isolated_graph, require_llm):
         assert len(entities) > 0
         entity_uuid = entities[0]["uuid"]
 
+    entity_name = entities[0]["name"]
+
     was_deleted = await delete_entity_mention(episode_uuid, entity_uuid, "test_journal")
 
     assert was_deleted is True
+
+    suppressed = get_suppressed_entities("test_journal")
+    assert entity_name.lower() in suppressed, "Deleted entity should be globally suppressed"
 
 
 @pytest.mark.inference
@@ -57,6 +76,9 @@ async def test_delete_entity_mention_shared(isolated_graph, require_llm):
     was_deleted = await delete_entity_mention(ep1_uuid, sarah["uuid"], "test_journal")
 
     assert was_deleted is False
+
+    suppressed = get_suppressed_entities("test_journal")
+    assert "sarah" in suppressed, "Deleted entity should be globally suppressed even if not orphaned"
 
 
 @pytest.mark.inference
@@ -90,3 +112,6 @@ async def test_delete_entity_mention_updates_redis_cache(isolated_graph, require
         assert len(updated_entities) == initial_count - 1
         assert entity_uuid not in [e["uuid"] for e in updated_entities]
         assert entity_name not in [e["name"] for e in updated_entities]
+
+    suppressed = get_suppressed_entities("test_journal")
+    assert entity_name.lower() in suppressed, "Deleted entity should be globally suppressed"

@@ -1,14 +1,14 @@
 # ASK ME QUESTIONS
 
-Unless I request a simple change, any discussion of architecture, design, feature building, debugging, etc. should include clarifying questions asked ONE AT A TIME so we may align our understanding of the task & high level goals. Prompt me back.
+Unless I request a simple change, any discussion of architecture, design, feature building, debugging, etc. should include clarifying questions asked ONE AT A TIME so we may align our understanding of the task & high level goals. Prompt me back!
 
-## NO GIT OPS
+## NO GIT PUSH, EVER
 
-You are only permitted to run read-only git operations to understand the project state. You ARE NOT permitted to run git add, commit, push, etc.
+Git add & commit are fine for feature branches but NEVER for `main`!
 
 ## PYTHON ENVIRONMENT
 
-Always use the project's uv-managed virtual environment (e.g., `uv run ...`) instead of the system Python when running commands or tests.
+Always use the project's uv-managed virtual environment (e.g., `uv add ...`) instead of the system Python for installing dependencies.
 
 ## Testing Textual Applications
 

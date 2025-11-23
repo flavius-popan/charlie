@@ -96,35 +96,52 @@ async def delete_entity_mention(
     episode_literal = to_cypher_literal(episode_uuid)
     entity_literal = to_cypher_literal(entity_uuid)
 
-    # Delete the MENTIONS edge, then delete entity if orphaned
-    query = f"""
+    # Query 1: Delete MENTIONS edge and get entity info
+    query1 = f"""
     MATCH (ep:Episodic {{uuid: {episode_literal}}})-[r:MENTIONS]->(ent:Entity {{uuid: {entity_literal}}})
-    WITH ent.name as entity_name, r.uuid as edge_uuid, r, ent
+    WITH ent.name as entity_name, r.uuid as edge_uuid, r
     DELETE r
-    WITH ent, entity_name, edge_uuid
-    OPTIONAL MATCH (ent)<-[remaining:MENTIONS]-()
-    WITH ent, entity_name, edge_uuid, count(remaining) as remaining_refs
-    WHERE remaining_refs = 0
-    DETACH DELETE ent
-    RETURN entity_name, edge_uuid, remaining_refs = 0 as was_deleted
+    RETURN entity_name, edge_uuid
     """
 
-    def _locked_query():
+    def _locked_query1():
         with lock:
-            return graph.query(query)
+            return graph.query(query1)
 
-    result = await asyncio.to_thread(_locked_query)
+    result1 = await asyncio.to_thread(_locked_query1)
 
-    was_deleted = False
+    # Query 2: Check if entity is orphaned and delete if so
+    query2 = f"""
+    MATCH (ent:Entity {{uuid: {entity_literal}}})
+    OPTIONAL MATCH (ent)<-[remaining:MENTIONS]-()
+    WITH ent, count(remaining) as remaining_refs
+    WHERE remaining_refs = 0
+    DETACH DELETE ent
+    RETURN true as was_deleted
+    """
+
+    def _locked_query2():
+        with lock:
+            return graph.query(query2)
+
+    result2 = await asyncio.to_thread(_locked_query2)
+
     entity_name = None
     edge_uuid = None
-    raw = getattr(result, "_raw_response", None)
-    if raw and len(raw) >= 2:
-        rows = raw[1]
+
+    # Parse result from query 1 (MENTIONS edge deletion)
+    raw1 = getattr(result1, "_raw_response", None)
+    if raw1 and len(raw1) >= 2:
+        rows = raw1[1]
         if rows and len(rows) > 0:
             entity_name = _decode_value(rows[0][0])
             edge_uuid = _decode_value(rows[0][1])
-            was_deleted = bool(_decode_value(rows[0][2]))
+
+    # Parse result from query 2 (entity deletion if orphaned)
+    raw2 = getattr(result2, "_raw_response", None)
+    was_deleted = False
+    if raw2 and len(raw2) >= 2 and raw2[1] and len(raw2[1]) > 0:
+        was_deleted = True
 
     with redis_ops() as r:
         cache_key = f"journal:{journal}:{episode_uuid}"
