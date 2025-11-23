@@ -174,11 +174,17 @@ def get_episode_data(episode_uuid: str, journal: str | None = None) -> dict[str,
     with redis_ops() as r:
         if journal is not None:
             cache_key = get_journal_cache_key(journal, episode_uuid)
+            if r.type(cache_key) != b"hash":
+                return {}
             data = r.hgetall(cache_key)
             return {k.decode(): v.decode() for k, v in data.items()}
 
         for key in r.scan_iter(match="journal:*"):
             key_str = key.decode()
+            if key_str.endswith(":suppressed_entities"):
+                continue
+            if r.type(key) != b"hash":
+                continue
             if key_str.endswith(f":{episode_uuid}"):
                 data = r.hgetall(key)
                 return {k.decode(): v.decode() for k, v in data.items()}
@@ -212,9 +218,14 @@ def get_episodes_by_status(status: str) -> list[str]:
     with redis_ops() as r:
         episodes = []
         for key in r.scan_iter(match="journal:*"):
+            key_str = key.decode()
+            if key_str.endswith(":suppressed_entities"):
+                continue
+            if r.type(key) != b"hash":
+                continue
             ep_status = r.hget(key, "status")
             if ep_status and ep_status.decode() == status:
-                episode_uuid = key.decode().split(":")[-1]
+                episode_uuid = key_str.split(":")[-1]
                 episodes.append(episode_uuid)
         return episodes
 
@@ -324,6 +335,8 @@ async def cleanup_orphaned_journal_caches(journal: str) -> int:
         pattern = f"journal:{journal}:*"
         for key in r.scan_iter(match=pattern):
             key_str = key.decode()
+            if key_str.endswith(":suppressed_entities"):
+                continue
             episode_uuid = key_str.split(":")[-1]
 
             episode = await get_episode(episode_uuid, journal)

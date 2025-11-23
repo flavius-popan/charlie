@@ -11,6 +11,7 @@ import backend.database as db_utils
 from backend import add_journal_entry
 from backend.settings import DEFAULT_JOURNAL
 from backend.database.redis_ops import (
+    add_suppressed_entity,
     get_episode_data,
     get_episode_status,
     get_episode_uuid_map,
@@ -465,6 +466,21 @@ def test_get_episodes_by_status_scan_consistency(falkordb_test_context):
 
     remove_episode_from_queue(episode1, DEFAULT_JOURNAL)
     remove_episode_from_queue(episode3, DEFAULT_JOURNAL)
+
+
+def test_get_episodes_by_status_ignores_suppressed_entities_set(falkordb_test_context):
+    """Suppression sets should not break or pollute status scanning."""
+    episode = str(uuid4())
+    set_episode_status(episode, "pending_nodes", DEFAULT_JOURNAL)
+
+    # Create suppression set under same journal:* prefix
+    add_suppressed_entity(DEFAULT_JOURNAL, "bob")
+
+    pending = get_episodes_by_status("pending_nodes")
+
+    assert pending == [episode]
+
+    remove_episode_from_queue(episode, DEFAULT_JOURNAL)
 
 
 def test_cleanup_if_no_work_checks_pending_nodes_only(falkordb_test_context):
