@@ -661,6 +661,8 @@ class ViewScreen(Screen):
         padding: 1 2;
         overflow-y: auto;
         height: 100%;
+        scrollbar-size-vertical: 0;
+        scrollbar-size-horizontal: 0;
     }
     """
 
@@ -903,6 +905,13 @@ class LogScreen(Screen):
         Binding("q", "close", "Close", show=False),
     ]
 
+    DEFAULT_CSS = """
+    LogScreen #log-view {
+        scrollbar-size-vertical: 0;
+        scrollbar-size-horizontal: 0;
+    }
+    """
+
     def __init__(self, log_path: Path | None = None):
         super().__init__()
         self.log_path = log_path or Path(
@@ -1038,6 +1047,8 @@ Screen {
 
 #editor {
     height: 100%;
+    scrollbar-size-vertical: 0;
+    scrollbar-size-horizontal: 0;
 }
 
 Footer {
