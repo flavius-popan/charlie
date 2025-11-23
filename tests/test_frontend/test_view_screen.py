@@ -60,35 +60,6 @@ async def test_view_screen_has_markdown_viewer():
 
 
 @pytest.mark.asyncio
-async def test_view_screen_polls_job_status():
-    """Should poll for job completion and refresh entities."""
-    with patch("charlie.get_episode", new_callable=AsyncMock) as mock_get:
-        mock_get.return_value = {
-            "uuid": "test-uuid",
-            "content": "# Test",
-        }
-
-        # Mock get_episode_status to control polling behavior
-        with patch("charlie.get_episode_status") as mock_status:
-            # Start with pending, then complete
-            mock_status.side_effect = ["pending_nodes", "pending_nodes", "pending_edges"]
-
-            app = ViewScreenTestApp(episode_uuid="test-uuid", journal="test")
-
-            async with app.run_test():
-                screen = app.screen
-
-                # Poll timer should be running (sidebar is loading, no cached data)
-                assert screen._poll_timer is not None
-
-                # Wait for poll to detect completion
-                await asyncio.sleep(0.6)  # Longer than poll interval
-
-                # Timer should be stopped after job completes
-                # (Note: Can't directly assert timer.stop() was called, but can check side effects)
-
-
-@pytest.mark.asyncio
 async def test_view_screen_log_viewer_toggle():
     """Test that 'l' key navigates to log viewer."""
     with patch("charlie.get_episode", new_callable=AsyncMock) as mock_get:
@@ -142,3 +113,78 @@ async def test_view_screen_toggle_connections_auto_selects_first_item():
             from textual.widgets import ListView
             list_view = sidebar.query_one(ListView)
             assert list_view.index == 0, f"Expected index 0 but got {list_view.index}"
+
+
+@pytest.mark.asyncio
+async def test_toggle_connections_starts_polling_and_refreshes_when_pending():
+    """Toggling connections from Home flow should start polling and refresh after status completes."""
+    with patch("charlie.get_episode", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = {
+            "uuid": "test-uuid",
+            "content": "# Test",
+        }
+
+        # Simulate pending -> pending_edges transition
+        with patch("charlie.get_episode_status") as mock_status:
+            mock_status.side_effect = ["pending_nodes", "pending_edges"]
+
+            refresh_called = False
+
+            async def fake_refresh_entities(self):
+                nonlocal refresh_called
+                refresh_called = True
+
+            # Capture set_interval to verify polling started
+            poll_callbacks = []
+
+            def fake_set_interval(self, interval, callback, *args, **kwargs):
+                poll_callbacks.append(callback)
+
+                class FakeTimer:
+                    def __init__(self):
+                        self.stopped = False
+
+                    def pause(self):
+                        self.stopped = True
+
+                    def resume(self):
+                        self.stopped = False
+
+                    def stop(self):
+                        self.stopped = True
+
+                return FakeTimer()
+
+            with patch.object(ViewScreen, "set_interval", new=fake_set_interval):
+                with patch.object(EntitySidebar, "refresh_entities", new=fake_refresh_entities):
+                    # Spy on run_worker to execute coroutine immediately
+                    async def fake_run_worker(self, coro, *, exclusive=False):
+                        if asyncio.iscoroutine(coro):
+                            await coro
+                        else:
+                            return coro
+
+                    with patch.object(ViewScreen, "run_worker", new=fake_run_worker):
+                        app = ViewScreenTestApp(
+                            episode_uuid="test-uuid", journal="test", from_edit=False
+                        )
+
+                        async with app.run_test() as pilot:
+                            screen: ViewScreen = app.screen
+                            sidebar = screen.query_one(EntitySidebar)
+
+                            # Sidebar should start hidden for from_edit=False
+                            assert sidebar.display is False
+                            assert sidebar.loading is True
+
+                            # Toggle connections on (starts polling)
+                            await pilot.press("c")
+                            await pilot.pause()
+
+                            assert poll_callbacks, "set_interval should be called to start polling"
+
+                            # Simulate poll tick -> pending_edges
+                            poll_callbacks[0]()
+                            await pilot.pause()
+
+                            assert refresh_called is True, "refresh_entities should run after status completes"

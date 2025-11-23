@@ -754,6 +754,13 @@ class ViewScreen(Screen):
         self.app.push_screen(EditScreen(self.episode_uuid))
 
     def action_back(self):
+        # Stop any pending poll timer before leaving
+        if self._poll_timer:
+            try:
+                self._poll_timer.stop()
+            except Exception:
+                pass
+            self._poll_timer = None
         self.app.pop_screen()
 
     def action_toggle_connections(self) -> None:
@@ -764,6 +771,9 @@ class ViewScreen(Screen):
         if sidebar.display:
             if sidebar.loading:
                 sidebar.run_worker(sidebar.refresh_entities(), exclusive=True)
+                # If still loading, start polling for job completion
+                if self._poll_timer is None:
+                    self._poll_timer = self.set_interval(0.5, self._check_job_status)
             sidebar._update_content()
 
             if sidebar.entities:
@@ -774,6 +784,13 @@ class ViewScreen(Screen):
                     self.set_focus(list_view)
                 except Exception:
                     pass
+        else:
+            if self._poll_timer:
+                try:
+                    self._poll_timer.stop()
+                except Exception:
+                    pass
+                self._poll_timer = None
 
     def action_show_logs(self) -> None:
         """Navigate to log viewer."""
@@ -1066,7 +1083,7 @@ Screen {
     color: $text-muted;
 }
 
-#content {
+#journal-content {
     padding: 1 2;
     height: 100%;
 }

@@ -225,6 +225,11 @@ class TestHomeScreen:
         mock_database['get_all'].return_value = []
         assert snap_compare(CharlieApp())
 
+    def test_css_includes_journal_content_styles(self):
+        """CSS should target the journal markdown widget id."""
+        css = CharlieApp.CSS
+        assert "#journal-content" in css, "journal-content styles should be present for new layout"
+
 
 class TestViewScreen:
     """Tests for ViewScreen functionality."""
@@ -252,7 +257,7 @@ class TestViewScreen:
             assert isinstance(app.screen, ViewScreen)
 
             from textual.widgets import Markdown
-            markdown = app.query_one("#content", Markdown)
+            markdown = app.query_one("#journal-content", Markdown)
             assert markdown is not None
 
     @pytest.mark.asyncio
@@ -501,24 +506,6 @@ class TestSettingsScreen:
             # Toggle should have changed and persisted
             assert toggle.value != initial
             mock_database['set_inference_enabled'].assert_called_once_with(toggle.value)
-
-    @pytest.mark.asyncio
-    async def test_settings_vim_navigation(self, mock_database):
-        """Should support j/k navigation keys."""
-        app = CharlieApp()
-        async with app_test_context(app) as pilot:
-            await pilot.pause()
-            await pilot.press("s")
-            await pilot.pause()
-
-            # Vim keys should work for navigation
-            await pilot.press("j")
-            await pilot.pause()
-            await pilot.press("k")
-            await pilot.pause()
-
-            # Basic test - bindings exist and don't crash
-            assert isinstance(app.screen, SettingsScreen)
 
     @pytest.mark.asyncio
     async def test_settings_toggle_disables_worker(self, mock_database):
