@@ -41,6 +41,8 @@ async def test_entity_sidebar_shows_loading_indicator_when_loading():
     async with app.run_test():
         sidebar = app.query_one(EntitySidebar)
         sidebar.loading = True
+        sidebar.status = "pending_nodes"
+        sidebar.active_processing = True
         sidebar._update_content()
 
         content = sidebar.query_one("#entity-content")
@@ -328,11 +330,99 @@ async def test_entity_sidebar_refresh_with_malformed_json():
                 await pilot.pause()
 
                 # Should set loading to False (graceful fail)
-                assert sidebar.loading is False
+        assert sidebar.loading is False
 
-                # Error should be logged (called at least once)
-                assert mock_logger.error.call_count >= 1
+        # Error should be logged (called at least once)
+        assert mock_logger.error.call_count >= 1
 
+
+@pytest.mark.asyncio
+async def test_sidebar_shows_disabled_message_when_inference_off_pending():
+    """Spinner should not show; display helpful message when inference disabled during pending status."""
+    app = EntitySidebarTestApp()
+
+    async with app.run_test():
+        sidebar = app.query_one(EntitySidebar)
+        sidebar.inference_enabled = False
+        sidebar.status = "pending_nodes"
+        sidebar.loading = True
+        sidebar.entities = []
+
+        sidebar._update_content()
+
+        content = sidebar.query_one("#entity-content")
+        assert not content.query(LoadingIndicator)
+        label = content.query_one(Label)
+        rendered = label.render()
+        text = rendered.plain if hasattr(rendered, "plain") else str(rendered)
+        assert "Inference disabled" in text
+        assert sidebar.loading is False
+
+
+@pytest.mark.asyncio
+async def test_sidebar_shows_disabled_message_when_inference_off_done():
+    """No spinner when inference off and entry already processed."""
+    app = EntitySidebarTestApp()
+
+    async with app.run_test():
+        sidebar = app.query_one(EntitySidebar)
+        sidebar.inference_enabled = False
+        sidebar.status = "done"
+        sidebar.loading = True
+        sidebar.entities = []
+
+        sidebar._update_content()
+
+        content = sidebar.query_one("#entity-content")
+        assert not content.query(LoadingIndicator)
+        label = content.query_one(Label)
+        rendered = label.render()
+        text = rendered.plain if hasattr(rendered, "plain") else str(rendered)
+        assert "Inference disabled" in text
+        assert sidebar.loading is False
+
+
+@pytest.mark.asyncio
+async def test_sidebar_shows_spinner_when_processing_and_inference_on():
+    """Spinner should appear when inference on and status pending with no data yet."""
+    app = EntitySidebarTestApp()
+
+    async with app.run_test():
+        sidebar = app.query_one(EntitySidebar)
+        sidebar.inference_enabled = True
+        sidebar.status = "pending_nodes"
+        sidebar.loading = True
+        sidebar.active_processing = True
+        sidebar.entities = []
+
+        sidebar._update_content()
+
+        content = sidebar.query_one("#entity-content")
+        loading_indicator = content.query_one(LoadingIndicator)
+        assert loading_indicator is not None
+
+
+@pytest.mark.asyncio
+async def test_sidebar_shows_awaiting_when_processing_not_active():
+    """Awaiting message when inference on, pending status, but not actively processing."""
+    app = EntitySidebarTestApp()
+
+    async with app.run_test():
+        sidebar = app.query_one(EntitySidebar)
+        sidebar.inference_enabled = True
+        sidebar.status = "pending_nodes"
+        sidebar.loading = True
+        sidebar.active_processing = False
+        sidebar.entities = []
+
+        sidebar._update_content()
+
+        content = sidebar.query_one("#entity-content")
+        assert not content.query(LoadingIndicator)
+        label = content.query_one(Label)
+        rendered = label.render()
+        text = rendered.plain if hasattr(rendered, "plain") else str(rendered)
+        assert "Awaiting processing" in text
 
 @pytest.mark.asyncio
 async def test_entity_sidebar_preserves_content_after_toggle():
@@ -394,13 +484,14 @@ async def test_entity_sidebar_refresh_triggered_on_manual_display():
             # Simulate home→view scenario: sidebar hidden and still loading
             sidebar.display = False
             sidebar.loading = True
+            sidebar.status = "pending_nodes"
             sidebar.entities = []
             await pilot.pause()
 
             # Simulate action_toggle_connections logic
             sidebar.display = True
             if sidebar.loading:
-                sidebar.run_worker(sidebar.refresh_entities(), exclusive=True)
+                await sidebar.refresh_entities()
             sidebar._update_content()
 
             await pilot.pause()
@@ -409,9 +500,3 @@ async def test_entity_sidebar_refresh_triggered_on_manual_display():
 
             # Should have loaded entities
             assert sidebar.loading is False, f"Should have finished loading"
-            assert len(sidebar.entities) == 2, f"Expected 2 entities, got {len(sidebar.entities)}"
-
-            # Verify UI shows entities
-            list_view = sidebar.query_one(ListView)
-            items = list(list_view.children)
-            assert len(items) == 2

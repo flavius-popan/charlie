@@ -231,11 +231,26 @@ class EntitySidebar(Container):
     journal: reactive[str] = reactive("")
     loading: reactive[bool] = reactive(True)
     entities: reactive[list[dict]] = reactive([])
+    inference_enabled: reactive[bool] = reactive(True)
+    status: reactive[str | None] = reactive(None)
+    active_processing: reactive[bool] = reactive(False)
 
-    def __init__(self, episode_uuid: str, journal: str, **kwargs):
+    def __init__(
+        self,
+        episode_uuid: str,
+        journal: str,
+        *,
+        inference_enabled: bool = True,
+        status: str | None = None,
+        active_processing: bool = False,
+        **kwargs,
+    ):
         super().__init__(**kwargs)
         self.episode_uuid = episode_uuid
         self.journal = journal
+        self.inference_enabled = inference_enabled
+        self.status = status
+        self.active_processing = active_processing
 
     def compose(self) -> ComposeResult:
         yield Label("Connections", classes="sidebar-header")
@@ -265,10 +280,28 @@ class EntitySidebar(Container):
         content_container = self.query_one("#entity-content", Container)
         content_container.remove_children()
 
-        if self.loading:
+        should_show_spinner = (
+            self.loading
+            and self.inference_enabled
+            and self.status in ("pending_nodes", "pending_edges")
+            and self.active_processing
+        )
+
+        if should_show_spinner:
             content_container.mount(LoadingIndicator())
-        elif not self.entities:
-            content_container.mount(Label("No connections found"))
+            return
+
+        if not self.entities:
+            message = "No connections found"
+            if not self.inference_enabled:
+                if self.status in ("pending_nodes", "pending_edges"):
+                    message = "Inference disabled; extraction is paused."
+                else:
+                    message = "Inference disabled; enable inference to extract connections."
+            elif self.status in ("pending_nodes", "pending_edges"):
+                message = "Awaiting processing..."
+            content_container.mount(Label(message))
+            self.loading = False
         else:
             list_view = ListView()
             content_container.mount(list_view)
@@ -692,7 +725,13 @@ class ViewScreen(Screen):
     """
 
     def __init__(
-        self, episode_uuid: str, journal: str = DEFAULT_JOURNAL, from_edit: bool = False
+        self,
+        episode_uuid: str,
+        journal: str = DEFAULT_JOURNAL,
+        from_edit: bool = False,
+        inference_enabled: bool | None = None,
+        status: str | None = None,
+        active_processing: bool = False,
     ):
         super().__init__()
         self.episode_uuid = episode_uuid
@@ -700,6 +739,11 @@ class ViewScreen(Screen):
         self.episode = None
         self._poll_timer = None
         self.from_edit = from_edit  # Track if opened from EditScreen
+        self.inference_enabled = (
+            inference_enabled if inference_enabled is not None else get_inference_enabled()
+        )
+        self.status = status
+        self.active_processing = active_processing
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False, icon="")
@@ -708,6 +752,9 @@ class ViewScreen(Screen):
             EntitySidebar(
                 episode_uuid=self.episode_uuid,
                 journal=self.journal,
+                inference_enabled=self.inference_enabled,
+                status=self.status,
+                active_processing=self.active_processing,
                 id="entity-sidebar",
             ),
         )
@@ -715,6 +762,9 @@ class ViewScreen(Screen):
 
     async def on_mount(self):
         await self.load_episode()
+
+        # Sync inference/status context to sidebar
+        self._refresh_sidebar_context()
 
         # Show sidebar only if coming from EditScreen
         sidebar = self.query_one("#entity-sidebar", EntitySidebar)
@@ -729,9 +779,11 @@ class ViewScreen(Screen):
         if sidebar.loading:
             # Cache doesn't have data - start polling for extraction job
             self._poll_timer = self.set_interval(0.5, self._check_job_status)
+            sidebar.active_processing = True
 
     async def on_screen_resume(self):
         """Called when returning to this screen."""
+        self._refresh_sidebar_context()
         await self.load_episode()
 
     async def load_episode(self):
@@ -739,6 +791,8 @@ class ViewScreen(Screen):
             self.episode = await get_episode(self.episode_uuid)
 
             if self.episode:
+                # Refresh sidebar context in case status changed externally
+                self._refresh_sidebar_context()
                 markdown = self.query_one("#journal-content", Markdown)
                 await markdown.update(self.episode["content"])
             else:
@@ -769,11 +823,19 @@ class ViewScreen(Screen):
         sidebar.display = not sidebar.display
 
         if sidebar.display:
+            # Refresh context before showing
+            self._refresh_sidebar_context()
+            if (
+                sidebar.status in ("pending_nodes", "pending_edges")
+                and not sidebar.entities
+            ):
+                sidebar.loading = True
             if sidebar.loading:
                 sidebar.run_worker(sidebar.refresh_entities(), exclusive=True)
                 # If still loading, start polling for job completion
                 if self._poll_timer is None:
                     self._poll_timer = self.set_interval(0.5, self._check_job_status)
+                    sidebar.active_processing = True
             sidebar._update_content()
 
             if sidebar.entities:
@@ -791,6 +853,7 @@ class ViewScreen(Screen):
                 except Exception:
                     pass
                 self._poll_timer = None
+            sidebar.active_processing = False
 
     def action_show_logs(self) -> None:
         """Navigate to log viewer."""
@@ -799,6 +862,7 @@ class ViewScreen(Screen):
     def _check_job_status(self) -> None:
         """Poll Huey for job completion, then refresh entities."""
         status = get_episode_status(self.episode_uuid, self.journal)
+        self.status = status
 
         # Job is complete when node extraction finishes (pending_edges/done) or None (old episodes)
         if status in ("pending_edges", "done", None):
@@ -807,7 +871,23 @@ class ViewScreen(Screen):
                 self._poll_timer = None
 
             sidebar = self.query_one("#entity-sidebar", EntitySidebar)
+            sidebar.status = status
+            sidebar.active_processing = False
             self.run_worker(sidebar.refresh_entities(), exclusive=True)
+
+    def _refresh_sidebar_context(self):
+        """Update sidebar with latest inference toggle and processing status."""
+        sidebar = self.query_one("#entity-sidebar", EntitySidebar)
+        try:
+            self.inference_enabled = get_inference_enabled()
+            self.status = get_episode_status(self.episode_uuid, self.journal)
+        except Exception as exc:
+            logger.debug("Failed to refresh sidebar context: %s", exc)
+            # fall back to previous values
+        sidebar.inference_enabled = self.inference_enabled
+        sidebar.status = self.status
+        sidebar.active_processing = self._poll_timer is not None
+        sidebar._update_content()
 
 
 class EditScreen(Screen):
@@ -894,12 +974,28 @@ class EditScreen(Screen):
                 uuid = await add_journal_entry(content=content)
                 if title:
                     await update_episode(uuid, name=title)
+                inference_enabled = get_inference_enabled()
+
+                # Determine if connections pane should be shown
+                status = get_episode_status(uuid, DEFAULT_JOURNAL)
+                show_connections = (
+                    inference_enabled and status in ("pending_nodes", "pending_edges")
+                )
+
                 # Navigate to ViewScreen (atomic screen replacement)
                 self.app.switch_screen(
-                    ViewScreen(uuid, DEFAULT_JOURNAL, from_edit=True)
+                    ViewScreen(
+                        uuid,
+                        DEFAULT_JOURNAL,
+                        from_edit=show_connections,
+                        inference_enabled=inference_enabled,
+                        status=status,
+                        active_processing=False,
+                    )
                 )
                 # THEN enqueue extraction task in background
-                self._enqueue_extraction_task(uuid, DEFAULT_JOURNAL)
+                if inference_enabled:
+                    self._enqueue_extraction_task(uuid, DEFAULT_JOURNAL)
             else:
                 # Update episode and check if content changed
                 if title:
@@ -910,12 +1006,27 @@ class EditScreen(Screen):
                     content_changed = await update_episode(
                         self.episode_uuid, content=content
                     )
+                inference_enabled = get_inference_enabled()
+
+                status = get_episode_status(self.episode_uuid, DEFAULT_JOURNAL)
+                show_connections = (
+                    inference_enabled
+                    and content_changed
+                    and status in ("pending_nodes", "pending_edges")
+                )
                 # Navigate to ViewScreen (atomic screen replacement)
                 self.app.switch_screen(
-                    ViewScreen(self.episode_uuid, DEFAULT_JOURNAL, from_edit=True)
+                    ViewScreen(
+                        self.episode_uuid,
+                        DEFAULT_JOURNAL,
+                        from_edit=show_connections,
+                        inference_enabled=inference_enabled,
+                        status=status,
+                        active_processing=False,
+                    )
                 )
                 # THEN enqueue extraction task in background if content changed
-                if content_changed:
+                if content_changed and inference_enabled:
                     self._enqueue_extraction_task(self.episode_uuid, DEFAULT_JOURNAL)
 
         except Exception as e:
@@ -932,6 +1043,12 @@ class EditScreen(Screen):
                 from backend.services.tasks import extract_nodes_task
 
                 extract_nodes_task(episode_uuid, journal, priority=1)
+                self.status = "pending_nodes"
+                try:
+                    sidebar = self.app.query_one("#entity-sidebar", EntitySidebar)
+                    sidebar.status = "pending_nodes"
+                except Exception:
+                    pass
             except Exception as exc:
                 logger.warning(
                     "Failed to enqueue extract_nodes_task for %s: %s", episode_uuid, exc

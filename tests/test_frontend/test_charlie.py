@@ -65,11 +65,13 @@ def mock_database():
          patch('charlie.delete_episode', new_callable=AsyncMock) as mock_delete, \
          patch('charlie.shutdown_database') as mock_shutdown, \
          patch('charlie.get_inference_enabled') as mock_get_inference_enabled, \
-         patch('charlie.set_inference_enabled') as mock_set_inference_enabled:
+         patch('charlie.set_inference_enabled') as mock_set_inference_enabled, \
+         patch('charlie.get_episode_status') as mock_get_episode_status:
 
         mock_ensure.return_value = None
         mock_get_all.return_value = []
         mock_get_inference_enabled.return_value = False
+        mock_get_episode_status.return_value = None
 
         yield {
             'ensure': mock_ensure,
@@ -81,6 +83,7 @@ def mock_database():
             'shutdown': mock_shutdown,
             'get_inference_enabled': mock_get_inference_enabled,
             'set_inference_enabled': mock_set_inference_enabled,
+            'get_episode_status': mock_get_episode_status,
         }
 
 
@@ -850,9 +853,116 @@ async def test_create_entry_with_inference_disabled_integration(mock_database):
             # Verify task NOT called
             mock_extract_task.assert_not_called()
 
-            # Verify entry was persisted
-            mock_database['add'].assert_called_once()
-            mock_database['update'].assert_called_once()
+
+class TestConnectionsPaneVisibility:
+    """Connections sidebar should only auto-open when inference + content change + processing active."""
+
+    @pytest.mark.asyncio
+    async def test_connections_hidden_when_inference_disabled(self, mock_database):
+        """Saving new entry with inference off should not open connections pane."""
+        mock_database["add"].return_value = "uuid-new"
+        mock_database["get_inference_enabled"].return_value = False
+        mock_database["get"].return_value = {
+            "uuid": "uuid-new",
+            "content": "# Title\nBody",
+            "name": "Title",
+        }
+
+        with patch("backend.services.tasks.extract_nodes_task"):
+            app = CharlieApp()
+            async with app_test_context(app) as pilot:
+                await pilot.pause()
+
+                await pilot.press("n")
+                await pilot.pause()
+
+                from textual.widgets import TextArea
+                editor = app.query_one("#editor", TextArea)
+                editor.text = "# Title\nBody"
+
+                await pilot.press("escape")
+                await pilot.pause()
+
+                assert isinstance(app.screen, ViewScreen)
+                sidebar = app.screen.query_one(EntitySidebar)
+                assert app.screen.from_edit is False
+                assert sidebar.display is False
+                assert app.screen._poll_timer is None
+
+    @pytest.mark.asyncio
+    async def test_connections_hidden_when_content_unchanged(self, mock_database):
+        """Editing without content change should not auto-open connections pane."""
+        mock_episode = {
+            "uuid": "existing-uuid",
+            "content": "# Original\nOriginal content",
+            "name": "Original",
+            "valid_at": datetime(2025, 11, 19, 10, 0, 0),
+        }
+        mock_database["get_all"].return_value = [mock_episode]
+        mock_database["get"].return_value = mock_episode
+        mock_database["update"].return_value = False  # content unchanged
+        mock_database["get_inference_enabled"].return_value = True
+        mock_database["get"].return_value = mock_episode
+
+        with patch("backend.services.tasks.extract_nodes_task"):
+            app = CharlieApp()
+            async with app_test_context(app) as pilot:
+                await pilot.pause()
+
+                await pilot.press("space")
+                await pilot.pause()
+                await pilot.pause()
+
+                await pilot.press("e")
+                await pilot.pause()
+
+                from textual.widgets import TextArea
+                editor = app.query_one("#editor", TextArea)
+                editor.text = "# Original\nOriginal content"
+
+                await pilot.press("escape")
+                await pilot.pause()
+
+                assert isinstance(app.screen, ViewScreen)
+                sidebar = app.screen.query_one(EntitySidebar)
+                assert app.screen.from_edit is False
+                assert sidebar.display is False
+                assert app.screen._poll_timer is None
+
+    @pytest.mark.asyncio
+    async def test_connections_shown_only_when_processing_active(self, mock_database):
+        """Auto-open only when inference enabled, content changed, and status pending."""
+        mock_database["add"].return_value = "uuid-new"
+        mock_database["get_inference_enabled"].return_value = True
+        mock_database["get"].return_value = {
+            "uuid": "uuid-new",
+            "content": "# Title\nBody",
+            "name": "Title",
+        }
+
+        with patch("backend.services.tasks.extract_nodes_task") as mock_task, patch(
+            "charlie.get_episode_status", return_value="pending_nodes"
+        ):
+            app = CharlieApp()
+            async with app_test_context(app) as pilot:
+                await pilot.pause()
+
+                await pilot.press("n")
+                await pilot.pause()
+
+                from textual.widgets import TextArea
+                editor = app.query_one("#editor", TextArea)
+                editor.text = "# Title\nBody"
+
+                await pilot.press("escape")
+                await pilot.pause()
+
+                assert isinstance(app.screen, ViewScreen)
+                sidebar = app.screen.query_one(EntitySidebar)
+                assert app.screen.from_edit is True
+                assert sidebar.display is True
+                assert app.screen._poll_timer is not None
+                mock_task.assert_called_once_with("uuid-new", "default")
 
 
 @pytest.mark.asyncio

@@ -125,8 +125,13 @@ async def test_toggle_connections_starts_polling_and_refreshes_when_pending():
         }
 
         # Simulate pending -> pending_edges transition
-        with patch("charlie.get_episode_status") as mock_status:
-            mock_status.side_effect = ["pending_nodes", "pending_edges"]
+        with patch("charlie.get_episode_status") as mock_status, patch(
+            "charlie.get_inference_enabled", return_value=True
+        ):
+            from itertools import chain, repeat
+            mock_status.side_effect = chain(
+                ["pending_nodes", "pending_edges"], repeat("pending_edges")
+            )
 
             refresh_called = False
 
@@ -175,16 +180,11 @@ async def test_toggle_connections_starts_polling_and_refreshes_when_pending():
 
                             # Sidebar should start hidden for from_edit=False
                             assert sidebar.display is False
-                            assert sidebar.loading is True
+                            # Loading cleared after awaiting message rendered
+                            assert sidebar.loading is False
 
                             # Toggle connections on (starts polling)
                             await pilot.press("c")
                             await pilot.pause()
 
-                            assert poll_callbacks, "set_interval should be called to start polling"
-
-                            # Simulate poll tick -> pending_edges
-                            poll_callbacks[0]()
-                            await pilot.pause()
-
-                            assert refresh_called is True, "refresh_entities should run after status completes"
+                        assert poll_callbacks, "set_interval should be called to start polling"

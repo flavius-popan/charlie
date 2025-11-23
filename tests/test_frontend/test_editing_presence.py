@@ -41,11 +41,13 @@ def mock_database():
          patch('charlie.delete_episode', new_callable=AsyncMock) as mock_delete, \
          patch('charlie.shutdown_database') as mock_shutdown, \
          patch('charlie.get_inference_enabled') as mock_get_inference_enabled, \
-         patch('charlie.set_inference_enabled') as mock_set_inference_enabled:
+         patch('charlie.set_inference_enabled') as mock_set_inference_enabled, \
+         patch('charlie.get_episode_status') as mock_get_episode_status:
 
         mock_ensure.return_value = None
         mock_get_all.return_value = []
         mock_get_inference_enabled.return_value = False
+        mock_get_episode_status.return_value = None
 
         yield {
             'ensure': mock_ensure,
@@ -57,6 +59,7 @@ def mock_database():
             'shutdown': mock_shutdown,
             'get_inference_enabled': mock_get_inference_enabled,
             'set_inference_enabled': mock_set_inference_enabled,
+            'get_episode_status': mock_get_episode_status,
         }
 
 
