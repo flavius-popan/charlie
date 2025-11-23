@@ -267,6 +267,10 @@ class EntitySidebar(Container):
         """Reactive: swap between loading indicator and entity list."""
         self._update_content()
 
+    def watch_active_processing(self, active_processing: bool) -> None:
+        """Reactive: re-render when processing state changes."""
+        self._update_content()
+
     def watch_entities(self, entities: list[dict]) -> None:
         """Reactive: re-render when entities change."""
         if not self.loading:
@@ -293,6 +297,8 @@ class EntitySidebar(Container):
 
         if not self.entities:
             message = "No connections found"
+            clear_loading = True
+
             if not self.inference_enabled:
                 if self.status in ("pending_nodes", "pending_edges"):
                     message = "Inference disabled; extraction is paused."
@@ -300,8 +306,11 @@ class EntitySidebar(Container):
                     message = "Inference disabled; enable inference to extract connections."
             elif self.status in ("pending_nodes", "pending_edges"):
                 message = "Awaiting processing..."
+                clear_loading = False  # keep loading True so polling/spinner can proceed
+
             content_container.mount(Label(message))
-            self.loading = False
+            if clear_loading:
+                self.loading = False
         else:
             list_view = ListView()
             content_container.mount(list_view)

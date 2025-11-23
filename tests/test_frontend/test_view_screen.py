@@ -5,7 +5,7 @@ import pytest
 from unittest.mock import patch, AsyncMock
 from textual.app import App, ComposeResult
 from textual.screen import Screen
-from textual.widgets import Markdown
+from textual.widgets import Markdown, LoadingIndicator
 from charlie import ViewScreen, EntitySidebar, LogScreen
 
 
@@ -180,11 +180,65 @@ async def test_toggle_connections_starts_polling_and_refreshes_when_pending():
 
                             # Sidebar should start hidden for from_edit=False
                             assert sidebar.display is False
-                            # Loading cleared after awaiting message rendered
-                            assert sidebar.loading is False
+                            # Loading remains True while entry is pending
+                            assert sidebar.loading is True
 
                             # Toggle connections on (starts polling)
                             await pilot.press("c")
                             await pilot.pause()
 
-                        assert poll_callbacks, "set_interval should be called to start polling"
+        assert poll_callbacks, "set_interval should be called to start polling"
+
+
+@pytest.mark.asyncio
+async def test_view_screen_from_edit_starts_polling_and_spinner_when_pending():
+    """Opening ViewScreen from Edit flow should keep loading, start polling, and show spinner."""
+
+    with patch("charlie.get_episode", new_callable=AsyncMock) as mock_get, patch(
+        "charlie.get_episode_status", return_value="pending_nodes"
+    ), patch("charlie.get_inference_enabled", return_value=True):
+        mock_get.return_value = {
+            "uuid": "test-uuid",
+            "content": "# Test\nContent",
+        }
+
+        poll_started = False
+
+        def fake_set_interval(self, interval, callback, *args, **kwargs):
+            nonlocal poll_started
+            poll_started = True
+
+            class FakeTimer:
+                def __init__(self):
+                    self.stopped = False
+
+                def pause(self):
+                    self.stopped = True
+
+                def resume(self):
+                    self.stopped = False
+
+                def stop(self):
+                    self.stopped = True
+
+            return FakeTimer()
+
+        with patch.object(ViewScreen, "set_interval", new=fake_set_interval):
+            app = ViewScreenTestApp(
+                episode_uuid="test-uuid", journal="test", from_edit=True
+            )
+
+            async with app.run_test() as pilot:
+                # Allow mount hooks to run
+                await pilot.pause()
+
+                screen: ViewScreen = app.screen
+                sidebar = screen.query_one(EntitySidebar)
+
+                assert poll_started is True, "Polling should start when pending from edit flow"
+                assert screen._poll_timer is not None, "Poll timer should be set"
+                assert sidebar.loading is True, "Sidebar should remain in loading state while pending"
+                assert sidebar.active_processing is True, "Sidebar should mark processing as active"
+
+                content = sidebar.query_one("#entity-content")
+                assert content.query(LoadingIndicator), "Spinner should be visible while processing"
