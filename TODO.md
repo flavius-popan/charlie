@@ -5,6 +5,7 @@
   - https://huggingface.co/mlx-community/Qwen3-Embedding-4B-4bit-DWQ
   - https://huggingface.co/tomaarsen/Qwen3-Reranker-0.6B-seq-cls
 - Handle new model downloads to avoid blocking TUI
+- BACKUPS! Need to think of ways to always have backups.
 
 ## Non-Technical
 
