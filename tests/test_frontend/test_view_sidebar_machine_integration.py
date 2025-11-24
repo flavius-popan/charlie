@@ -369,3 +369,163 @@ async def test_action_back_with_hidden_sidebar():
                     # Should have successfully popped the screen
                     # (we're back at the home screen now)
                     await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_sidebar_display_property_syncs_with_visibility():
+    """Sidebar visibility should respond correctly to toggle actions.
+
+    The sidebar display state should stay synchronized when toggling
+    visibility on and off. Each toggle should change the visible state.
+    """
+    with patch("frontend.screens.view_screen.get_episode", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = {
+            "uuid": "test-uuid",
+            "content": "# Test",
+        }
+
+        with patch("frontend.screens.view_screen.get_inference_enabled", return_value=True):
+            with patch("frontend.screens.view_screen.get_episode_status", return_value="pending_nodes"):
+                app = ViewScreenMachineTestApp(
+                    from_edit=True,
+                    initial_status="pending_nodes",
+                )
+
+                async with app.run_test() as pilot:
+                    await pilot.pause()
+                    screen = app.screen
+
+                    # Import here to avoid circular imports
+                    from frontend.widgets.entity_sidebar import EntitySidebar
+
+                    sidebar = screen.query_one("#entity-sidebar", EntitySidebar)
+
+                    # Initially visible (from_edit=True)
+                    assert screen.sidebar_machine.output.visible is True
+                    assert sidebar.display is True, "Sidebar should be displayed initially"
+
+                    # Toggle off (press 'c' equivalent)
+                    screen.action_toggle_connections()
+                    await pilot.pause()
+
+                    # Machine state should be hidden
+                    assert screen.sidebar_machine.output.visible is False
+                    # UI state should also be hidden
+                    assert sidebar.display is False, "Sidebar.display should be False after toggling off"
+
+                    # Toggle on again
+                    screen.action_toggle_connections()
+                    await pilot.pause()
+
+                    # Machine state should be visible again
+                    assert screen.sidebar_machine.output.visible is True
+                    # UI state should also be visible
+                    assert sidebar.display is True, "Sidebar.display should be True after toggling on"
+
+
+@pytest.mark.asyncio
+async def test_sidebar_hidden_when_viewing_from_home():
+    """Sidebar should be hidden when viewing an entry from the home screen.
+
+    When viewing from home (not from edit), sidebar should remain hidden
+    until the user explicitly shows it. Toggle should work with single key press.
+    """
+    with patch("frontend.screens.view_screen.get_episode", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = {
+            "uuid": "test-uuid",
+            "content": "# Test",
+        }
+
+        with patch("frontend.screens.view_screen.get_inference_enabled", return_value=True):
+            with patch("frontend.screens.view_screen.get_episode_status", return_value=None):
+                app = ViewScreenMachineTestApp(
+                    from_edit=False,  # Viewing from home, not from edit
+                    initial_status=None,
+                )
+
+                async with app.run_test() as pilot:
+                    await pilot.pause()
+                    screen = app.screen
+
+                    from frontend.widgets.entity_sidebar import EntitySidebar
+
+                    sidebar = screen.query_one("#entity-sidebar", EntitySidebar)
+
+                    # Machine state should be hidden (correct)
+                    assert screen.sidebar_machine.output.visible is False
+
+                    # BUG: This assertion will fail before the fix
+                    assert sidebar.display is False, "Sidebar should not be displayed when viewing from home"
+
+                    # Single 'c' press should show it
+                    screen.action_toggle_connections()
+                    await pilot.pause()
+                    assert sidebar.display is True, "Sidebar should show after pressing 'c'"
+
+                    # Single 'c' press should hide it again (not two presses)
+                    screen.action_toggle_connections()
+                    await pilot.pause()
+                    assert (
+                        sidebar.display is False
+                    ), "Sidebar should hide with single 'c' press (not require two presses)"
+
+
+@pytest.mark.asyncio
+async def test_delete_last_entity_shows_correct_message():
+    """Deleting the last entity should show 'No connections found' when processing is complete.
+
+    After deletion, the sidebar should display the empty state message,
+    not a processing message, even if the status was previously pending.
+    """
+    with patch("frontend.screens.view_screen.get_episode", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = {
+            "uuid": "test-uuid",
+            "content": "# Test",
+        }
+
+        with patch("frontend.screens.view_screen.get_inference_enabled", return_value=True):
+            with patch("frontend.screens.view_screen.get_episode_status", return_value="done"):
+                app = ViewScreenMachineTestApp(
+                    from_edit=True,
+                    initial_status="done",
+                )
+
+                async with app.run_test() as pilot:
+                    await pilot.pause()
+                    screen = app.screen
+
+                    from frontend.widgets.entity_sidebar import EntitySidebar
+
+                    sidebar = screen.query_one("#entity-sidebar", EntitySidebar)
+
+                    # Setup: set entity and status (simulating after processing)
+                    sidebar.entities = [{"uuid": "e1", "name": "TestEntity", "type": "entity"}]
+                    sidebar.status = "done"  # Explicitly set to done status
+                    sidebar.active_processing = False  # Not actively processing
+                    sidebar.inference_enabled = True
+                    await pilot.pause()
+
+                    # Simulate deletion of last entity
+                    sidebar.entities = []
+                    screen._on_entity_deleted(entities_present=False)
+                    await pilot.pause()
+
+                    # After deletion, machine updates active_processing to False
+                    assert sidebar.active_processing is False
+                    assert len(sidebar.entities) == 0
+
+                    # Simulate stale status still being pending (from before deletion)
+                    sidebar.status = "pending_nodes"
+                    sidebar.active_processing = False
+                    sidebar._update_content()
+                    await pilot.pause()
+
+                    # Verify the sidebar displays the correct message
+                    from textual.containers import Container
+                    content_container = sidebar.query_one("#entity-content", Container)
+                    children = list(content_container.children)
+                    assert len(children) > 0, "Content should have a message"
+
+                    # With active_processing=False and no entities, loading should be cleared
+                    assert sidebar.loading is False, \
+                        f"With no entities and no active processing, loading should be False, got {sidebar.loading}"

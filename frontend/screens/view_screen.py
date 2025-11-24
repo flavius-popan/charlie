@@ -112,7 +112,8 @@ class ViewScreen(Screen):
         # Show sidebar only if coming from EditScreen
         sidebar = self.query_one("#entity-sidebar", EntitySidebar)
         if not self.from_edit:
-            # Only hide if not already hidden
+            # Ensure UI matches machine state (hidden when viewing from home)
+            sidebar.display = False
             if self.sidebar_machine.output.visible:
                 self.sidebar_machine.send("hide")
             self._sync_machine_output()
@@ -181,9 +182,11 @@ class ViewScreen(Screen):
             # Hide sidebar
             self.sidebar_machine.send("hide")
             self._sync_machine_output()
+            sidebar.display = False
             self.workers.cancel_group(self, "status-poll")
         else:
             # Show sidebar - refresh context and route event
+            sidebar.display = True
             self._refresh_sidebar_context()
             self.sidebar_machine.send("show", status=self.sidebar_machine.output.status)
             self._sync_machine_output()
