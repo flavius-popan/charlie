@@ -18,6 +18,11 @@ dependencies = [
     "python-statemachine>=2.5.0",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "python-statemachine[diagrams]>=2.5.0",
+]
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["app*", "pipeline*", "inference_runtime*"]

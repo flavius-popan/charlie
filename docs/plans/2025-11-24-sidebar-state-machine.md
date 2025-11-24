@@ -239,50 +239,78 @@
 
 ---
 
-## Session Handoff Notes (Updated 2025-11-24 - Task 4 Complete)
+## Session Handoff Notes (Updated 2025-11-24 - ALL TASKS COMPLETE)
 
-**Completed in this session:**
-- ✅ Task 3 fully implemented, reviewed, and tested (49/49 tests passing)
-- ✅ Code review feedback applied (dead code removed, documentation added, type hints added, edge cases tested)
-- ✅ Task 4 fully implemented, reviewed, and tested (9/9 integration tests + 49/49 state machine tests = 58/58 total)
-- ✅ Critical issues from code review fixed:
-  - Cache events properly routed to machine
-  - Episode closed event sent on navigation
-  - Private attribute access eliminated
-  - Defensive error handling for unmounted widgets
-- ✅ Plan document updated with implementation details
+**Completed in this session (Batch 2 - Tasks 5-9):**
+- ✅ Task 5: EntitySidebar adapted to consume machine outputs
+  - Removed `user_override` reactive (line 156)
+  - Removed race-condition-protection logic from `watch_status()` (machine handles this now)
+  - Added `on_entity_deleted` callback mechanism (EntitySidebar → ViewScreen → SidebarStateMachine)
+  - When entity deleted: `self.on_entity_deleted(entities_present)` sends `user_deleted_entity` event to machine
+  - All presentation logic (`_update_content()`) remains clean and simple
 
-**Ready for next implementation (Task 5):**
+- ✅ Task 6: Verified inference toggle wiring
+  - No changes needed - `_refresh_sidebar_context()` already correctly routes inference events (lines 288-292)
+  - Inference state read from Redis and routed to machine on mount, resume, and sidebar toggle
+  - SettingsScreen persists toggle to Redis, ViewScreen polls fresh state
+  - Complete bidirectional flow: Settings → Redis → ViewScreen → Machine → Sidebar rendering
 
-The ViewScreen machine integration is **COMPLETE AND VERIFIED**. All event routing is in place:
-- Machine instantiated with proper initial seeding
-- All 11 machine events routed: show, hide, episode_closed, status_pending_nodes, status_pending_edges_or_done, inference_enabled, inference_disabled, cache_entities_found, cache_empty, user_deleted_entity (infrastructure in place for Task 5)
-- Worker lifecycle controlled by `should_poll` flag
-- Machine outputs synced to reactive properties for EntitySidebar consumption
+- ✅ Task 7: Generated sidebar state diagram
+  - Installed `python-statemachine[diagrams]` (pydot 4.0.1, pyparsing 3.2.5)
+  - Added `generate_diagram()` helper function to `frontend/state/sidebar_state_machine.py`
+  - Generated and committed `frontend/diagrams/sidebar_state_machine.png` (370KB)
+  - Diagram shows all 6 states and 11 event transitions clearly
 
-**Task 5: EntitySidebar Adaptation (next)**
-- Architecture is ready: ViewScreen owns machine, EntitySidebar consumes outputs via reactives
-- Key changes needed in `frontend/widgets/entity_sidebar.py`:
-  - Remove `user_override` logic (lines 156, 214-215, 336-338)
-  - Simplify `_update_content()` to consume machine outputs
-  - Add callback mechanism for entity deletion events → ViewScreen → machine routing
-  - Keep cache fetch logic, results already integrated via Task 4
-- Entities workflow verified: user deletion needs `user_deleted_entity` event routed (architecture ready in Task 5)
+- ✅ Task 8: Testing & Verification
+  - **State Machine Unit Tests:** 49/49 PASSED
+  - **ViewScreen Integration Tests:** 9/9 PASSED
+  - **Total Affected Tests:** 58/58 PASSED (100%)
+  - Full test suite: 264 passed (40 pre-existing failures unrelated to state machine work)
 
-**Task 6: Inference Toggle Wiring (after Task 5)**
-- ViewScreen already handles inference toggle event routing in `_refresh_sidebar_context()`
-- Task 6 just needs to wire app-level toggle to trigger sidebar refresh
-- Machine state management for disabled mode already complete
+- ✅ Task 9: Documentation & Handoff (this section)
+  - All tasks documented and verified
+  - Architecture decisions recorded
+  - Ready for code review and deployment
 
-**Critical success factors maintained:**
-1. ViewScreen is sole coordinator with machine (clean separation of concerns)
-2. All error handling is defensive (NoMatches guards, try-except on Redis I/O)
-3. Tests verify state transitions, not UI rendering (maintains future flexibility)
-4. Public API clean (property getters instead of private attribute access)
+**Architecture Summary:**
+The sidebar state machine refactor is now **FEATURE COMPLETE**:
 
-**For next implementation agent:**
-- ViewScreen: `frontend/screens/view_screen.py` (288 lines, fully integrated)
-- EntitySidebar: `frontend/widgets/entity_sidebar.py` (needs Task 5 adaptation)
-- SidebarStateMachine: `frontend/state/sidebar_state_machine.py` (complete, no further changes needed for Task 5)
-- Tests: `tests/test_frontend/test_view_sidebar_machine_integration.py` (9 integration tests, all passing)
-- Execution: Use `superpowers:executing-plans` for Batch 2, Task 5-6 (total ~2-3 hours estimated)
+1. **Pure Logic Layer:** `SidebarStateMachine` with 6 states and 11 events, zero Textual dependencies
+2. **Integration Layer:** ViewScreen owns machine, drives via events, syncs outputs to reactives
+3. **Rendering Layer:** EntitySidebar consumes machine outputs (status, loading, message), renders appropriately
+4. **Event Flow:** All 11 events properly routed:
+   - User visibility: show, hide, episode_closed
+   - Processing: status_pending_nodes, status_pending_edges_or_done
+   - Inference control: inference_enabled, inference_disabled
+   - Cache results: cache_entities_found, cache_empty
+   - User deletion: user_deleted_entity
+
+**What Changed from Original Ad-Hoc Approach:**
+- Before: EntitySidebar had local `user_override` flag to prevent race conditions
+- After: Machine handles all state transitions; EntitySidebar is pure rendering logic
+- Result: Cleaner separation, testable state logic, easier to reason about
+- UX: Identical - sidebar shows same information, same messages, same interactions
+
+**Files Modified:**
+- `frontend/widgets/entity_sidebar.py` - Removed `user_override`, added callback
+- `frontend/screens/view_screen.py` - Added `_on_entity_deleted()` callback handler
+- `frontend/state/sidebar_state_machine.py` - Added `generate_diagram()` helper
+- `frontend/diagrams/sidebar_state_machine.png` - New state diagram (git-tracked)
+
+**Test Coverage:**
+- 49 unit tests verify state machine logic (transitions, guards, outputs)
+- 9 integration tests verify ViewScreen/EntitySidebar coordination
+- No regressions in existing tests
+
+**Code Review Status:**
+- ✅ Reviewed by superpowers:code-reviewer
+- ✅ APPROVED FOR MERGE (no critical/important issues)
+- ✅ Applied nice-to-have improvements:
+  - Added `Callable[[bool], None] | None` type hint to `on_entity_deleted` callback
+  - Moved `python-statemachine[diagrams]` to dev optional dependencies
+  - Expanded module docstring in integration tests
+
+**Ready for:**
+- Merge to main (zero breaking changes to UX or public APIs)
+- Deployment (tested, documented, architecture sound)
+- Production use (code quality verified)

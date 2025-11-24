@@ -1,4 +1,15 @@
-"""Tests for ViewScreen integration with SidebarStateMachine."""
+"""Integration tests for ViewScreen and SidebarStateMachine coordination.
+
+These tests verify:
+- Machine instantiation with correct initial state
+- Event routing from ViewScreen to machine (show, hide, status, cache, inference)
+- Reactive property synchronization between machine outputs and EntitySidebar
+- Worker lifecycle management (start/stop based on should_poll flag)
+- Proper handling of inference toggle changes
+
+Uses async Textual test harness with mocked database/Redis operations.
+All tests focus on state transitions and event flow, not UI rendering.
+"""
 
 import asyncio
 import pytest

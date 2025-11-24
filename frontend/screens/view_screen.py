@@ -97,6 +97,7 @@ class ViewScreen(Screen):
                 inference_enabled=self.inference_enabled,
                 status=self.status,
                 active_processing=self.active_processing,
+                on_entity_deleted=self._on_entity_deleted,
                 id="entity-sidebar",
             ),
         )
@@ -258,6 +259,14 @@ class ViewScreen(Screen):
             except Exception as exc:
                 logger.exception(f"Status poll error: {exc}")
                 break
+
+    def _on_entity_deleted(self, entities_present: bool) -> None:
+        """Handle entity deletion event from sidebar.
+
+        Route to state machine: user deleted an entity.
+        """
+        self.sidebar_machine.send("user_deleted_entity", entities_present=entities_present)
+        self._sync_machine_output()
 
     def _refresh_sidebar_context(self):
         """Update sidebar with latest inference toggle and processing status."""

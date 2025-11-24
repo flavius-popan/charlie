@@ -417,3 +417,30 @@ class SidebarStateMachine(StateMachine):
         except Exception as e:
             logger.error(f"Error applying event {event_name}: {e}", exc_info=True)
         return self.output
+
+
+def generate_diagram(output_path: str = "frontend/diagrams/sidebar_state_machine.png") -> bool:
+    """Generate state machine diagram as PNG file.
+
+    Requires python-statemachine[diagrams] extra to be installed.
+
+    Args:
+        output_path: Path where PNG diagram will be written.
+
+    Returns:
+        True if diagram generated successfully, False if dependencies missing or error occurred.
+    """
+    try:
+        machine = SidebarStateMachine()
+        machine._graph().write_png(output_path)
+        logger.info(f"Generated sidebar state machine diagram: {output_path}")
+        return True
+    except ImportError:
+        logger.warning(
+            "python-statemachine[diagrams] not installed. "
+            "Install with: uv add 'python-statemachine[diagrams]'"
+        )
+        return False
+    except Exception as e:
+        logger.error(f"Failed to generate state machine diagram: {e}", exc_info=True)
+        return False

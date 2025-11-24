@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+from typing import Callable
 
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -153,7 +154,6 @@ class EntitySidebar(Container):
     inference_enabled: reactive[bool] = reactive(True)
     status: reactive[str | None] = reactive(None)
     active_processing: reactive[bool] = reactive(False)
-    user_override: reactive[bool] = reactive(False)
 
     def __init__(
         self,
@@ -163,11 +163,13 @@ class EntitySidebar(Container):
         inference_enabled: bool = True,
         status: str | None = None,
         active_processing: bool = False,
+        on_entity_deleted: Callable[[bool], None] | None = None,
         **kwargs,
     ):
         super().__init__(**kwargs)
         self.episode_uuid = episode_uuid
         self.journal = journal
+        self.on_entity_deleted = on_entity_deleted
         self.set_reactive(EntitySidebar.inference_enabled, inference_enabled)
         self.set_reactive(EntitySidebar.status, status)
         self.set_reactive(EntitySidebar.active_processing, active_processing)
@@ -203,15 +205,8 @@ class EntitySidebar(Container):
             self._update_content()
 
     def watch_status(self, status: str | None) -> None:
-        """Reactive: re-render when status changes.
-
-        Note: If user_override is True, don't update.
-        This prevents background polling from overwriting
-        user-initiated changes like entity deletion.
-        """
+        """Reactive: re-render when status changes."""
         if not self.is_mounted:
-            return
-        if self.user_override:
             return
         if not self.loading:
             self._update_content()
@@ -330,12 +325,9 @@ class EntitySidebar(Container):
             # Remove from local state
             new_entities = [e for e in self.entities if e["uuid"] != entity["uuid"]]
 
-            # If we deleted all entities, ensure UI shows "No connections found"
-            # Set status/loading BEFORE updating entities to avoid race in watchers
-            if len(new_entities) == 0:
-                self.user_override = True
-                self.status = "done"
-                self.loading = False
+            # Notify ViewScreen/machine about the deletion
+            if self.on_entity_deleted:
+                self.on_entity_deleted(len(new_entities) > 0)
 
             self.entities = new_entities
 
