@@ -387,6 +387,13 @@ class EntitySidebar(Container):
 
             # Remove from local state
             new_entities = [e for e in self.entities if e["uuid"] != entity["uuid"]]
+
+            # If we deleted all entities, ensure UI shows "No connections found"
+            # Set status/loading BEFORE updating entities to avoid race in watchers
+            if len(new_entities) == 0:
+                self.status = "done"
+                self.loading = False
+
             self.entities = new_entities
 
         except Exception as e:

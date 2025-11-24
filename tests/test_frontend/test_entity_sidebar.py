@@ -56,13 +56,15 @@ async def test_entity_sidebar_displays_entities():
     """Should display entities in ListView when loaded."""
     app = EntitySidebarTestApp()
 
-    async with app.run_test():
+    async with app.run_test() as pilot:
         sidebar = app.query_one(EntitySidebar)
         sidebar.entities = [
             {"uuid": "uuid-1", "name": "Sarah", "type": "Person"},
             {"uuid": "uuid-2", "name": "Central Park", "type": "Place"},
         ]
         sidebar.loading = False
+
+        await pilot.pause()
 
         list_view = sidebar.query_one(ListView)
         assert list_view is not None
@@ -178,6 +180,51 @@ async def test_entity_sidebar_deletes_entity():
 
             assert len(sidebar.entities) == 1
             assert sidebar.entities[0]["name"] == "Park"
+
+
+@pytest.mark.asyncio
+async def test_entity_sidebar_delete_last_entity_shows_no_connections():
+    """Deleting the last entity should show 'No connections found', not 'Awaiting processing...'."""
+    app = EntitySidebarTestApp(episode_uuid="test-uuid", journal="test")
+
+    with patch("charlie.delete_entity_mention", new_callable=AsyncMock) as mock_delete:
+        mock_delete.return_value = True
+
+        async with app.run_test() as pilot:
+            sidebar = app.query_one(EntitySidebar)
+
+            sidebar.entities = [
+                {"uuid": "uuid-1", "name": "Sarah", "type": "Person"},
+            ]
+            sidebar.loading = False
+            sidebar.status = "pending_nodes"
+            sidebar.inference_enabled = True
+            sidebar.active_processing = False
+
+            await pilot.pause()
+
+            list_view = sidebar.query_one(ListView)
+            list_view.focus()
+            list_view.index = 0
+
+            await pilot.press("d")
+            modal = app.screen
+            remove_button = modal.query_one("#remove", Button)
+            remove_button.press()
+
+            await asyncio.sleep(0.1)
+            await pilot.pause()
+
+            mock_delete.assert_called_once_with("test-uuid", "uuid-1", "test")
+            assert len(sidebar.entities) == 0
+
+            content = sidebar.query_one("#entity-content")
+            label = content.query_one(Label)
+            rendered = label.render()
+            text = rendered.plain if hasattr(rendered, "plain") else str(rendered)
+
+            assert "No connections found" in text, f"Expected 'No connections found' but got: {text}"
+            assert "Awaiting processing" not in text, f"Should not show 'Awaiting processing' but got: {text}"
 
 
 @pytest.mark.asyncio
