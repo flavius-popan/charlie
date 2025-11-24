@@ -10,37 +10,56 @@
 
 ---
 
-### Task 1: Add dependency
+## PHASE 1: FOUNDATION (COMPLETE)
+
+### Task 1: Add dependency ✓ COMPLETE
 
 **Files:**
-- Modify: `pyproject.toml`
+- Modified: `pyproject.toml`
 
-**Steps:**
-1. Add `python-statemachine` via uv:  
-   `uv add python-statemachine`
-2. Diagrams will be generated locally upon completion for documentation and validation, note optional `python-statemachine[diagrams]`.
-3. Record dependency change (no code yet).
+**Status:** python-statemachine==2.5.0 added successfully.
 
 ---
 
-### Task 2: Create frontend package structure
+### Task 2: Create frontend package structure ✓ COMPLETE
 
 **Files:**
-- Create dirs: `frontend/`, `frontend/screens/`, `frontend/widgets/`, `frontend/state/`, `frontend/diagrams/`
-- Add: `frontend/__init__.py`, `frontend/screens/__init__.py`, `frontend/widgets/__init__.py`, `frontend/state/__init__.py`
+- Created: `frontend/`, `frontend/screens/`, `frontend/widgets/`, `frontend/state/`, `frontend/diagrams/`
+- Created: `frontend/__init__.py`, `frontend/screens/__init__.py`, `frontend/widgets/__init__.py`, `frontend/state/__init__.py`, `frontend/utils.py`
 
-**Steps:**
-1. Move Textual widgets/screens from `charlie.py` into submodules:  
-   - `frontend/widgets/entity_sidebar.py` for `EntitySidebar`, `EntityListItem`, `DeleteEntityModal`.  
-   - `frontend/screens/view_screen.py` for `ViewScreen`.  
-   - `frontend/screens/edit_screen.py` for `EditScreen`.  
-   - `frontend/screens/home_screen.py` for `HomeScreen`.  
-   - `frontend/screens/log_screen.py` for `LogScreen`.  
-   Keep imports consistent; `charlie.py` imports from these modules.
-2. Keep `CharlieApp` and logging/bootstrap in `charlie.py`; update imports accordingly.
-3. Ensure relative imports use the `frontend.` package path.
+**Status:**
+- All Textual widgets/screens extracted from charlie.py (1398 → 245 lines)
+- Widgets: `EntitySidebar`, `EntityListItem`, `DeleteEntityModal` in `frontend/widgets/entity_sidebar.py`
+- Screens: `ViewScreen`, `EditScreen`, `HomeScreen`, `SettingsScreen`, `LogScreen` in separate modules
+- Helper functions: `extract_title()`, `get_display_title()` extracted to `frontend/utils.py`
+- All imports updated to use frontend.* paths
+- Convenience exports added to frontend/__init__.py
+
+**Code Review:** ✓ PASSED - All critical and important issues resolved
 
 ---
+
+### Task 3-4: Code Review Fixes ✓ COMPLETE
+
+**Critical Issues Fixed:**
+1. Test imports updated: All test files now import from frontend.* instead of charlie
+2. SettingsScreen CSS moved to DEFAULT_CSS attribute (removed from charlie.py)
+3. Helper functions properly isolated in frontend/utils.py (no duplication)
+
+**Important Issues Fixed:**
+1. Convenience exports added to frontend/__init__.py
+2. Module docstrings added to all subpackages
+
+**Verification:**
+- All 15 tests in test_charlie_utils.py pass
+- No circular imports detected
+- No code duplication
+- charlie.py works as entry point
+- All imports functional
+
+---
+
+## PHASE 2: STATE MACHINE IMPLEMENTATION (PENDING)
 
 ### Task 3: Implement SidebarStateMachine module
 

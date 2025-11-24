@@ -7,7 +7,7 @@ from unittest.mock import patch, AsyncMock, MagicMock
 from textual.app import App, ComposeResult
 from textual.screen import ModalScreen
 from textual.widgets import Button, Label, ListView, LoadingIndicator
-from charlie import EntitySidebar
+from frontend.widgets.entity_sidebar import EntitySidebar
 
 
 class EntitySidebarTestApp(App):

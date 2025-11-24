@@ -34,15 +34,12 @@ from unittest.mock import AsyncMock, Mock, patch, mock_open
 
 import pytest
 
-from charlie import (
-    CharlieApp,
-    HomeScreen,
-    ViewScreen,
-    EditScreen,
-    SettingsScreen,
-    EntitySidebar,
-    DeleteEntityModal,
-)
+from charlie import CharlieApp
+from frontend.screens.home_screen import HomeScreen
+from frontend.screens.view_screen import ViewScreen
+from frontend.screens.edit_screen import EditScreen
+from frontend.screens.settings_screen import SettingsScreen
+from frontend.widgets.entity_sidebar import EntitySidebar, DeleteEntityModal
 
 
 @asynccontextmanager

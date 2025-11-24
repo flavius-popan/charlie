@@ -10,7 +10,9 @@ from unittest.mock import AsyncMock, patch, Mock
 
 import pytest
 
-from charlie import CharlieApp, EditScreen, ViewScreen
+from charlie import CharlieApp
+from frontend.screens.edit_screen import EditScreen
+from frontend.screens.view_screen import ViewScreen
 from textual.widgets import TextArea
 
 

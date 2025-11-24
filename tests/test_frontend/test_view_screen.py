@@ -6,7 +6,9 @@ from unittest.mock import patch, AsyncMock
 from textual.app import App, ComposeResult
 from textual.screen import Screen
 from textual.widgets import Markdown, LoadingIndicator
-from charlie import ViewScreen, EntitySidebar, LogScreen
+from frontend.screens.view_screen import ViewScreen
+from frontend.screens.log_screen import LogScreen
+from frontend.widgets.entity_sidebar import EntitySidebar
 
 
 class ViewScreenTestApp(App):
