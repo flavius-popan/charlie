@@ -578,6 +578,46 @@ async def test_parent_reactives_propagate_via_binding():
 
 
 @pytest.mark.asyncio
+async def test_data_bind_wiring_exists():
+    """Verify data_bind() creates actual reactive bindings on mount."""
+
+    with patch("frontend.screens.view_screen.get_episode", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = {
+            "uuid": "test-uuid",
+            "content": "# Test",
+        }
+
+        with patch("frontend.screens.view_screen.get_inference_enabled", return_value=True):
+            with patch("frontend.screens.view_screen.get_episode_status", return_value=None):
+                app = ViewScreenMachineTestApp(
+                    from_edit=False,
+                    initial_status=None,
+                    inference_enabled=True,
+                )
+
+                async with app.run_test() as pilot:
+                    await pilot.pause()
+                    screen = app.screen
+
+                    from frontend.widgets.entity_sidebar import EntitySidebar
+                    sidebar = screen.query_one("#entity-sidebar", EntitySidebar)
+
+                    # Verify bindings exist (Textual stores these in _bindings)
+                    assert hasattr(sidebar, "_bindings"), "Sidebar should have _bindings attribute"
+
+                    # Functional verification: change parent, verify child updates
+                    original_status = sidebar.status
+                    screen.status = "test_binding_value"
+                    await pilot.pause()
+
+                    assert sidebar.status == "test_binding_value", \
+                        f"Binding failed: sidebar.status={sidebar.status}, expected 'test_binding_value'"
+
+                    # Restore
+                    screen.status = original_status
+
+
+@pytest.mark.asyncio
 async def test_sidebar_renders_once_per_cycle():
     """Rapid reactive changes should coalesce into one render via _pending_render."""
 

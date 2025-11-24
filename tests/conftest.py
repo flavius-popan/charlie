@@ -22,7 +22,7 @@ if str(ROOT) not in sys.path:
 # This MUST occur before any other backend imports.
 # ---------------------------------------------------------------------------
 import backend.settings as backend_settings
-backend_settings.DB_PATH = Path("tests/data/charlie-test.db")
+backend_settings.DB_PATH = Path(__file__).parent / "data" / "charlie-test.db"
 
 import pytest
 

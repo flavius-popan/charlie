@@ -1,6 +1,6 @@
 """Frontend test fixtures - mocking for UI tests."""
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 
@@ -10,8 +10,14 @@ def patch_backend_for_frontend_tests():
 
     This ensures frontend tests don't accidentally trigger real database ops.
     Frontend tests should use the explicit mock_database fixture for control.
+
+    Also mocks huey consumer to prevent background Redis access from the task queue.
     """
-    with patch("backend.add_journal_entry", new_callable=AsyncMock) as mock_add, \
+    with patch("backend.services.queue.start_huey_consumer"), \
+         patch("backend.services.queue.stop_huey_consumer"), \
+         patch("charlie.start_huey_consumer"), \
+         patch("charlie.stop_huey_consumer"), \
+         patch("backend.add_journal_entry", new_callable=AsyncMock) as mock_add, \
          patch("frontend.screens.edit_screen.add_journal_entry", new_callable=AsyncMock) as screen_add, \
          patch("backend.database.update_episode", new_callable=AsyncMock) as backend_update, \
          patch("frontend.screens.edit_screen.update_episode", new_callable=AsyncMock) as screen_update, \

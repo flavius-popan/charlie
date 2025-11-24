@@ -49,3 +49,48 @@ def test_production_database_not_used():
         "This is a critical test isolation failure. "
         "Check tests/conftest.py configuration."
     )
+
+
+def test_redis_directory_cleaned_up_on_shutdown(falkordb_test_context):
+    """Verify redis temp directory is removed when database shuts down.
+
+    This ensures proper cleanup matching redislite's behavior, preventing
+    stale socket files from causing connection errors in subsequent tests.
+
+    Note: This test uses falkordb_test_context directly instead of isolated_graph
+    because we intentionally destroy the database and need to reinitialize it.
+    """
+    from backend.database import lifecycle
+    from backend.settings import DEFAULT_JOURNAL
+
+    # First shutdown any existing database to start fresh
+    lifecycle._close_db()
+    lifecycle.reset_lifecycle_state()
+
+    # Initialize a fresh database
+    lifecycle._ensure_graph(DEFAULT_JOURNAL)
+
+    # Verify redis_dir is tracked (only set during _init_db)
+    redis_dir = lifecycle._redis_dir
+    assert redis_dir is not None, "Redis directory should be tracked after fresh initialization"
+    assert redis_dir.exists(), f"Redis directory should exist at {redis_dir}"
+
+    # Verify the directory contains expected files (socket, pid, etc.)
+    files_in_dir = list(redis_dir.iterdir())
+    assert len(files_in_dir) > 0, "Redis directory should contain files (socket, pid, etc.)"
+
+    # Capture path before shutdown
+    captured_dir = redis_dir
+
+    # Shutdown the database - this cleans up the directory
+    lifecycle._close_db()
+    lifecycle.reset_lifecycle_state()
+
+    # Verify entire directory is cleaned up (including socket file)
+    assert not captured_dir.exists(), (
+        f"Redis temp directory should be cleaned up after shutdown: {captured_dir}"
+    )
+
+    # Reinitialize the database for subsequent tests
+    # (falkordb_test_context fixture will handle final cleanup)
+    lifecycle._ensure_graph(DEFAULT_JOURNAL)
