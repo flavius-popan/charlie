@@ -58,6 +58,11 @@ class SidebarStateMachine(StateMachine):
     machine state. Guards check `data.get("key", self._key)` to prefer event data
     over stale internal state when deciding transitions.
 
+    Maintenance:
+    After modifying states, events, or transitions, regenerate the state diagram
+    using generate_diagram() to keep frontend/diagrams/sidebar_state_machine.png
+    in sync with the code.
+
     Example:
         >>> machine = SidebarStateMachine(inference_enabled=True, initial_status="pending_nodes")
         >>> # Route show event to processing_nodes based on data and guards
@@ -423,6 +428,10 @@ def generate_diagram(output_path: str = "frontend/diagrams/sidebar_state_machine
     """Generate state machine diagram as PNG file.
 
     Requires python-statemachine[diagrams] extra to be installed.
+
+    IMPORTANT: When modifying SidebarStateMachine (states, events, transitions),
+    this function MUST be re-run to regenerate the diagram and prevent diagram drift.
+    Run: python -c "from frontend.state.sidebar_state_machine import generate_diagram; generate_diagram()"
 
     Args:
         output_path: Path where PNG diagram will be written.

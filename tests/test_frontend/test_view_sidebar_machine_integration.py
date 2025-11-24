@@ -333,3 +333,39 @@ async def test_sync_machine_output_updates_reactives():
 
                     # Now in ready_entities state, so active_processing should be False
                     assert screen.active_processing is False
+
+
+@pytest.mark.asyncio
+async def test_action_back_with_hidden_sidebar():
+    """Test that pressing back with hidden sidebar doesn't raise TransitionNotAllowed.
+
+    Regression test for bug where episode_closed event was sent even when
+    sidebar already hidden, causing TransitionNotAllowed exception.
+    """
+    with patch("frontend.screens.view_screen.get_episode", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = {
+            "uuid": "test-uuid",
+            "content": "# Test content",
+        }
+
+        with patch("frontend.screens.view_screen.get_inference_enabled", return_value=True):
+            with patch("frontend.screens.view_screen.get_episode_status", return_value=None):
+                # Create app with from_edit=False so sidebar starts hidden
+                app = ViewScreenMachineTestApp(from_edit=False)
+
+                async with app.run_test() as pilot:
+                    await pilot.pause()
+                    screen = app.screen
+                    assert isinstance(screen, ViewScreen)
+
+                    # Sidebar should be hidden when from_edit=False
+                    assert not screen.sidebar_machine.output.visible
+                    assert screen.sidebar_machine.current_state == screen.sidebar_machine.hidden
+
+                    # Pressing back should NOT raise TransitionNotAllowed
+                    # (this would fail before the fix)
+                    screen.action_back()
+
+                    # Should have successfully popped the screen
+                    # (we're back at the home screen now)
+                    await pilot.pause()

@@ -163,9 +163,10 @@ class ViewScreen(Screen):
         self.app.push_screen(EditScreen(self.episode_uuid))
 
     def action_back(self):
-        # Notify machine that episode is closed
-        self.sidebar_machine.send("episode_closed")
-        self._sync_machine_output()
+        # Notify machine that episode is closed (only if sidebar visible)
+        if self.sidebar_machine.output.visible:
+            self.sidebar_machine.send("episode_closed")
+            self._sync_machine_output()
 
         # Cancel any pending status polling worker before leaving
         self.workers.cancel_group(self, "status-poll")
