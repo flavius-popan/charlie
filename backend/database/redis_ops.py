@@ -100,10 +100,23 @@ def redis_ops() -> Iterator[RedisOpsProxy]:
 # Episode Status Management
 
 
+def get_journal_cache_key(journal: str, episode_uuid: str) -> str:
+    """Get unified cache key for journal episode.
+
+    Args:
+        journal: Journal name
+        episode_uuid: Episode UUID
+
+    Returns:
+        Cache key in format journal:<journal>:<uuid>
+    """
+    return f"journal:{journal}:{episode_uuid}"
+
+
 def set_episode_status(
     episode_uuid: str,
     status: str,
-    journal: str | None = None,
+    journal: str,
     uuid_map: dict[str, str] | None = None,
 ) -> None:
     """Set episode processing status.
@@ -111,52 +124,72 @@ def set_episode_status(
     Args:
         episode_uuid: Episode UUID
         status: Processing status (e.g., "pending_nodes")
-        journal: Journal name (required for initial status set)
+        journal: Journal name (required)
         uuid_map: Optional UUID mapping (provisional -> canonical)
 
     Note:
-        Episode hashes are retained for both active and terminal states.
-        Deletion is explicit (e.g., when an episode is removed from the graph),
-        not implicit on completion. This keeps Redis/graph state in sync and
-        preserves terminal metadata like uuid_map.
+        Episode metadata is stored in unified journal cache key.
+        Deletion is explicit (when episode is removed from graph).
+        This keeps Redis/graph state in sync.
     """
     with redis_ops() as r:
-        episode_key = f"episode:{episode_uuid}"
-        r.hset(episode_key, "status", status)
-
-        if journal is not None:
-            r.hset(episode_key, "journal", journal)
+        cache_key = get_journal_cache_key(journal, episode_uuid)
+        r.hset(cache_key, "status", status)
+        r.hset(cache_key, "journal", journal)
 
         if uuid_map is not None:
-            r.hset(episode_key, "uuid_map", json.dumps(uuid_map))
+            r.hset(cache_key, "uuid_map", json.dumps(uuid_map))
 
 
-def get_episode_status(episode_uuid: str) -> str | None:
+def get_episode_status(episode_uuid: str, journal: str | None = None) -> str | None:
     """Get episode processing status.
 
     Args:
         episode_uuid: Episode UUID
+        journal: Journal name (optional, scans all journals if not provided)
 
     Returns:
         Status string or None if episode not found
     """
-    with redis_ops() as r:
-        status = r.hget(f"episode:{episode_uuid}", "status")
-        return status.decode() if status else None
+    if journal is not None:
+        with redis_ops() as r:
+            cache_key = get_journal_cache_key(journal, episode_uuid)
+            status = r.hget(cache_key, "status")
+            return status.decode() if status else None
+
+    data = get_episode_data(episode_uuid)
+    return data.get("status")
 
 
-def get_episode_data(episode_uuid: str) -> dict[str, str]:
+def get_episode_data(episode_uuid: str, journal: str | None = None) -> dict[str, str]:
     """Get all episode metadata.
 
     Args:
         episode_uuid: Episode UUID
+        journal: Journal name (optional, scans all journals if not provided)
 
     Returns:
         Dictionary of episode metadata fields (empty dict if episode not found)
     """
     with redis_ops() as r:
-        data = r.hgetall(f"episode:{episode_uuid}")
-        return {k.decode(): v.decode() for k, v in data.items()}
+        if journal is not None:
+            cache_key = get_journal_cache_key(journal, episode_uuid)
+            if r.type(cache_key) != b"hash":
+                return {}
+            data = r.hgetall(cache_key)
+            return {k.decode(): v.decode() for k, v in data.items()}
+
+        for key in r.scan_iter(match="journal:*"):
+            key_str = key.decode()
+            if key_str.endswith(":suppressed_entities"):
+                continue
+            if r.type(key) != b"hash":
+                continue
+            if key_str.endswith(f":{episode_uuid}"):
+                data = r.hgetall(key)
+                return {k.decode(): v.decode() for k, v in data.items()}
+
+        return {}
 
 
 def get_episode_uuid_map(episode_uuid: str) -> dict[str, str] | None:
@@ -184,22 +217,29 @@ def get_episodes_by_status(status: str) -> list[str]:
     """
     with redis_ops() as r:
         episodes = []
-        for key in r.scan_iter(match="episode:*"):
+        for key in r.scan_iter(match="journal:*"):
+            key_str = key.decode()
+            if key_str.endswith(":suppressed_entities"):
+                continue
+            if r.type(key) != b"hash":
+                continue
             ep_status = r.hget(key, "status")
             if ep_status and ep_status.decode() == status:
-                episode_uuid = key.decode().split(":", 1)[1]
+                episode_uuid = key_str.split(":")[-1]
                 episodes.append(episode_uuid)
         return episodes
 
 
-def remove_episode_from_queue(episode_uuid: str) -> None:
+def remove_episode_from_queue(episode_uuid: str, journal: str) -> None:
     """Remove episode from processing queue.
 
     Args:
         episode_uuid: Episode UUID
+        journal: Journal name
     """
     with redis_ops() as r:
-        r.delete(f"episode:{episode_uuid}")
+        cache_key = get_journal_cache_key(journal, episode_uuid)
+        r.delete(cache_key)
 
 
 def get_inference_enabled() -> bool:
@@ -240,6 +280,7 @@ def enqueue_pending_episodes() -> int:
     Note:
         Only enqueues if inference is enabled.
         Safe to call multiple times - tasks check status for idempotency.
+        Background tasks are enqueued with priority=0 (low priority).
     """
     if not get_inference_enabled():
         return 0
@@ -251,6 +292,118 @@ def enqueue_pending_episodes() -> int:
     for episode_uuid in pending:
         data = get_episode_data(episode_uuid)
         journal = data.get("journal", "")
-        extract_nodes_task(episode_uuid, journal)
+        extract_nodes_task(episode_uuid, journal, priority=0)
 
     return len(pending)
+
+
+def cleanup_orphaned_episode_keys() -> int:
+    """Clean up old episode:* keys from previous architecture.
+
+    Returns:
+        Number of keys deleted
+
+    Note:
+        This is a migration cleanup for keys from the old dual-key architecture.
+        Safe to run multiple times.
+    """
+    with redis_ops() as r:
+        count = 0
+        for key in r.scan_iter(match="episode:*"):
+            r.delete(key)
+            count += 1
+        return count
+
+
+async def cleanup_orphaned_journal_caches(journal: str) -> int:
+    """Remove journal cache keys for episodes that don't exist in graph.
+
+    Args:
+        journal: Journal name to clean up
+
+    Returns:
+        Number of orphaned caches removed
+
+    Note:
+        This removes cache entries for deleted episodes.
+        Requires graph query, so use sparingly (e.g., on startup or manual trigger).
+    """
+    from backend.database.queries import get_episode
+
+    with redis_ops() as r:
+        count = 0
+        pattern = f"journal:{journal}:*"
+        for key in r.scan_iter(match=pattern):
+            key_str = key.decode()
+            if key_str.endswith(":suppressed_entities"):
+                continue
+            episode_uuid = key_str.split(":")[-1]
+
+            episode = await get_episode(episode_uuid, journal)
+            if episode is None:
+                r.delete(key)
+                count += 1
+
+        return count
+
+
+# Entity Suppression Management
+
+
+async def add_suppressed_entity(journal: str, entity_name: str) -> None:
+    """Add entity to global suppression list for journal.
+
+    Args:
+        journal: Journal name
+        entity_name: Entity name to suppress (will be normalized to lowercase)
+
+    Note:
+        Entity name is normalized to lowercase for case-insensitive matching.
+        Suppressed entities will be filtered out during extraction.
+        Uses Redis Set for atomic operations and better performance.
+        This function runs synchronous Redis I/O on a background thread.
+    """
+    import asyncio
+
+    def _sync_add():
+        with redis_ops() as r:
+            key = f"journal:{journal}:suppressed_entities"
+            normalized_name = entity_name.lower()
+            r.sadd(key, normalized_name)
+
+    await asyncio.to_thread(_sync_add)
+
+
+def get_suppressed_entities(journal: str) -> set[str]:
+    """Get set of suppressed entity names for journal.
+
+    Args:
+        journal: Journal name
+
+    Returns:
+        Set of suppressed entity names (lowercase)
+    """
+    with redis_ops() as r:
+        key = f"journal:{journal}:suppressed_entities"
+        members = r.smembers(key)
+        return {m.decode() for m in members} if members else set()
+
+
+def remove_suppressed_entity(journal: str, entity_name: str) -> bool:
+    """Remove entity from global suppression list for journal.
+
+    Args:
+        journal: Journal name
+        entity_name: Entity name to un-suppress (will be normalized to lowercase)
+
+    Returns:
+        True if entity was in suppression list and removed, False otherwise
+
+    Note:
+        For future un-suppression feature.
+    """
+    with redis_ops() as r:
+        key = f"journal:{journal}:suppressed_entities"
+        normalized_name = entity_name.lower()
+        removed_count = r.srem(key, normalized_name)
+        return removed_count > 0

@@ -78,7 +78,7 @@ def test_extract_nodes_task_with_entities_extracted(episode_uuid):
                             mock_extract.assert_called_once_with(episode_uuid, DEFAULT_JOURNAL)
                             # With entities extracted, should transition to pending_edges
                             mock_set_status.assert_called_once_with(
-                                episode_uuid, "pending_edges", uuid_map=mock_result.uuid_map
+                                episode_uuid, "pending_edges", DEFAULT_JOURNAL, uuid_map=mock_result.uuid_map
                             )
                             mock_cleanup.assert_called_once()
 
@@ -113,7 +113,7 @@ def test_extract_nodes_task_no_entities_marks_done(episode_uuid):
                             result = extract_nodes_task.call_local(episode_uuid, DEFAULT_JOURNAL)
 
                             assert result["extracted_count"] == 0
-                            mock_set_status.assert_called_once_with(episode_uuid, "done")
+                            mock_set_status.assert_called_once_with(episode_uuid, "done", DEFAULT_JOURNAL)
                             mock_cleanup.assert_called_once()
 
 
@@ -170,7 +170,7 @@ def test_extract_nodes_task_integration(
     content = "I met Alice at the park. She works at Google."
     episode_uuid = asyncio.run(add_journal_entry(content))
 
-    set_episode_status(episode_uuid, "pending_nodes", journal=DEFAULT_JOURNAL)
+    set_episode_status(episode_uuid, "pending_nodes", DEFAULT_JOURNAL)
 
     with patch("backend.database.redis_ops.get_inference_enabled", create=True) as mock_enabled:
         mock_enabled.return_value = True
@@ -181,7 +181,7 @@ def test_extract_nodes_task_integration(
         assert isinstance(result["extracted_count"], int)
         assert isinstance(result["new_entities"], int)
 
-        status = get_episode_status(episode_uuid)
+        status = get_episode_status(episode_uuid, DEFAULT_JOURNAL)
         assert status == "pending_edges"
 
 
@@ -202,16 +202,16 @@ def test_extract_nodes_task_integration_no_entities_marks_done(
     content = "It was a quiet, rainy afternoon with nothing notable to report."
     episode_uuid = asyncio.run(add_journal_entry(content))
 
-    set_episode_status(episode_uuid, "pending_nodes", journal=DEFAULT_JOURNAL)
+    set_episode_status(episode_uuid, "pending_nodes", DEFAULT_JOURNAL)
 
     result = extract_nodes_task.call_local(episode_uuid, DEFAULT_JOURNAL)
 
-    status = get_episode_status(episode_uuid)
+    status = get_episode_status(episode_uuid, DEFAULT_JOURNAL)
     if result["extracted_count"] > 0:
         pytest.skip("LLM extracted entities unexpectedly; cannot verify done transition.")
 
     assert status == "done"
-    remove_episode_from_queue(episode_uuid)
+    remove_episode_from_queue(episode_uuid, DEFAULT_JOURNAL)
 
 
 def test_extract_nodes_task_cleanup_always_called(episode_uuid):
@@ -246,7 +246,7 @@ def test_extract_nodes_task_cleanup_called_on_exception(episode_uuid):
                             with pytest.raises(RuntimeError, match="Extraction failed"):
                                 extract_nodes_task.call_local(episode_uuid, DEFAULT_JOURNAL)
 
-                            mock_set_status.assert_called_with(episode_uuid, "dead")
+                            mock_set_status.assert_called_with(episode_uuid, "dead", DEFAULT_JOURNAL)
                             mock_cleanup.assert_called_once()
 
 
@@ -280,7 +280,7 @@ def test_extract_nodes_task_removes_from_queue_on_success(episode_uuid):
 
                             # With entities extracted, should transition to pending_edges
                             mock_set_status.assert_called_once_with(
-                                episode_uuid, "pending_edges", uuid_map={"prov": "canon"}
+                                episode_uuid, "pending_edges", DEFAULT_JOURNAL, uuid_map={"prov": "canon"}
                             )
 
 
@@ -310,13 +310,13 @@ def test_extract_nodes_task_sets_dead_on_missing_episode(isolated_graph, cleanup
     )
 
     missing_uuid = "missing-episode-dead"
-    set_episode_status(missing_uuid, "pending_nodes", journal=DEFAULT_JOURNAL)
+    set_episode_status(missing_uuid, "pending_nodes", DEFAULT_JOURNAL)
 
     with pytest.raises(Exception):
         extract_nodes_task.call_local(missing_uuid, DEFAULT_JOURNAL)
 
-    assert get_episode_status(missing_uuid) == "dead"
-    remove_episode_from_queue(missing_uuid)
+    assert get_episode_status(missing_uuid, DEFAULT_JOURNAL) == "dead"
+    remove_episode_from_queue(missing_uuid, DEFAULT_JOURNAL)
 
 
 def test_orchestrate_inference_work_reschedules_and_runs_once():

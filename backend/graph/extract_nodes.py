@@ -1,6 +1,7 @@
 """Entity extraction DSPy module and orchestrator."""
 
 import asyncio
+import json
 import logging
 from dataclasses import dataclass
 from datetime import datetime
@@ -18,6 +19,8 @@ from graphiti_core.utils.maintenance.dedup_helpers import (
     _resolve_with_similarity,
 )
 from graphiti_core.utils.maintenance.edge_operations import filter_existing_duplicate_of_edges
+
+from backend.database.redis_ops import get_suppressed_entities
 
 logger = logging.getLogger(__name__)
 
@@ -151,6 +154,84 @@ async def _fetch_existing_entities(driver, group_id: str) -> dict[str, EntityNod
     return await asyncio.to_thread(_fetch_sync)
 
 
+async def _collect_candidate_nodes_by_text_search(
+    driver, provisional_nodes: list[EntityNode], group_id: str
+) -> dict[str, EntityNode]:
+    """Collect candidate entities using text search instead of fetching all entities.
+
+    For each provisional entity, queries the database for entities with similar names
+    using case-insensitive text matching. This is more efficient than fetching all entities
+    when the journal contains many entities.
+
+    Args:
+        driver: FalkorDB driver instance
+        provisional_nodes: List of newly extracted entities to search for
+        group_id: Journal/group ID to search within
+
+    Returns:
+        dict[str, EntityNode]: Candidate entities keyed by UUID
+    """
+    from backend.database.utils import _decode_value, _decode_json, to_cypher_literal
+    from backend.database.lifecycle import _ensure_graph
+
+    def _search_sync():
+        graph, lock = _ensure_graph(group_id)
+        all_candidates = {}
+
+        for node in provisional_nodes:
+            search_term = node.name.strip()
+            if not search_term:
+                continue
+
+            query = f"""
+            MATCH (n:Entity)
+            WHERE n.group_id = {to_cypher_literal(group_id)}
+              AND toLower(n.name) CONTAINS toLower({to_cypher_literal(search_term)})
+            RETURN n.uuid, n.name, n.summary, n.labels, n.attributes, n.created_at, n.group_id
+            """
+
+            with lock:
+                result = graph.query(query)
+
+            rows = getattr(result, "_raw_response", None)
+            if not rows or len(rows) < 2:
+                continue
+
+            for row in rows[1]:
+                uuid = _decode_value(row[0][1]) if len(row) > 0 else None
+                name = _decode_value(row[1][1]) if len(row) > 1 else ""
+                summary = _decode_value(row[2][1]) if len(row) > 2 else ""
+                labels = _decode_json(row[3][1] if len(row) > 3 else None, ["Entity"])
+                attributes = _decode_json(row[4][1] if len(row) > 4 else None, {})
+                created_at_raw = _decode_value(row[5][1]) if len(row) > 5 else None
+                group_id_val = _decode_value(row[6][1]) if len(row) > 6 else group_id
+
+                if isinstance(created_at_raw, str):
+                    try:
+                        created_at = datetime.fromisoformat(created_at_raw)
+                    except Exception:
+                        created_at = utc_now()
+                else:
+                    created_at = created_at_raw or utc_now()
+
+                if uuid and uuid not in all_candidates:
+                    entity = EntityNode(
+                        uuid=str(uuid),
+                        name=str(name),
+                        summary=str(summary),
+                        labels=labels if isinstance(labels, list) else ["Entity"],
+                        attributes=attributes if isinstance(attributes, dict) else {},
+                        created_at=created_at,
+                        group_id=str(group_id_val),
+                        name_embedding=[],
+                    )
+                    all_candidates[entity.uuid] = entity
+
+        return all_candidates
+
+    return await asyncio.to_thread(_search_sync)
+
+
 def _resolve_exact_names(
     provisional_nodes: list[EntityNode],
     indexes: DedupCandidateIndexes,
@@ -276,8 +357,24 @@ async def extract_nodes(
 
     logger.info("Extracted %d provisional entities", len(extracted.extracted_entities))
 
+    suppressed = get_suppressed_entities(journal)
+    filtered_entities = extracted.extracted_entities
+    if suppressed:
+        original_count = len(extracted.extracted_entities)
+        filtered_entities = [
+            e for e in extracted.extracted_entities
+            if e.name.lower() not in suppressed
+        ]
+        filtered_count = original_count - len(filtered_entities)
+        if filtered_count > 0:
+            logger.info(
+                "Filtered out %d suppressed entities from episode %s",
+                filtered_count,
+                episode_uuid,
+            )
+
     provisional_nodes = []
-    for entity in extracted.extracted_entities:
+    for entity in filtered_entities:
         type_name = get_type_name_from_id(entity.entity_type_id, entity_types)
         labels = ["Entity"]
         if type_name != "Entity":
@@ -293,7 +390,7 @@ async def extract_nodes(
         )
         provisional_nodes.append(node)
 
-    existing_nodes = await _fetch_existing_entities(driver, journal)
+    existing_nodes = await _collect_candidate_nodes_by_text_search(driver, provisional_nodes, journal)
     existing_uuid_set = set(existing_nodes.keys())
 
     logger.info("Resolving against %d existing entities", len(existing_nodes))
@@ -306,6 +403,32 @@ async def extract_nodes(
         driver,
         dedupe_enabled,
     )
+
+    from backend.database.redis_ops import redis_ops
+
+    with redis_ops() as r:
+        cache_key = f"journal:{journal}:{episode_uuid}"
+        old_edge_uuids_json = r.hget(cache_key, "mentions_edges")
+        if old_edge_uuids_json:
+            old_edge_uuids = json.loads(old_edge_uuids_json)
+            if old_edge_uuids:
+                from backend.database.lifecycle import _ensure_graph
+                from backend.database.utils import to_cypher_literal
+
+                def _delete_edges_sync():
+                    graph, lock = _ensure_graph(journal)
+                    query = f"""
+                    MATCH ()-[r:MENTIONS]->()
+                    WHERE r.uuid IN {to_cypher_literal(old_edge_uuids)}
+                    DELETE r
+                    RETURN count(r) as deleted_count
+                    """
+                    with lock:
+                        result = graph.query(query)
+                    return result
+
+                await asyncio.to_thread(_delete_edges_sync)
+                logger.info("Deleted %d old MENTIONS edges for episode %s", len(old_edge_uuids), episode_uuid)
 
     episodic_edges = []
     for node in nodes:
@@ -324,6 +447,21 @@ async def extract_nodes(
         episodic_edges=episodic_edges,
         journal=journal,
     )
+
+    with redis_ops() as r:
+        cache_key = f"journal:{journal}:{episode_uuid}"
+        nodes_data = []
+        for node in nodes:
+            most_specific_label = node.labels[-1] if len(node.labels) > 1 else "Entity"
+            nodes_data.append({
+                "uuid": node.uuid,
+                "name": node.name,
+                "type": most_specific_label,
+            })
+        r.hset(cache_key, "nodes", json.dumps(nodes_data))
+
+        mentions_edge_uuids = [edge.uuid for edge in episodic_edges]
+        r.hset(cache_key, "mentions_edges", json.dumps(mentions_edge_uuids))
 
     new_entities = sum(1 for node in nodes if node.uuid not in existing_uuid_set)
     exact_matches = len([p for p in duplicate_pairs if p[0].name.lower() == p[1].name.lower()])

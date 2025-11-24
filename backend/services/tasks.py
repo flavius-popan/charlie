@@ -27,6 +27,11 @@ def extract_nodes_task(episode_uuid: str, journal: str):
     Note:
         This task is idempotent - checks Redis state before processing.
         Safe to enqueue multiple times for the same episode.
+
+        Priority can be passed via kwargs when enqueueing:
+        - extract_nodes_task(uuid, journal, priority=1) for user-triggered
+        - extract_nodes_task(uuid, journal) or priority=0 for background tasks
+        Higher priority numbers are processed first.
     """
     from backend.database.redis_ops import (
         get_episode_status,
@@ -39,7 +44,7 @@ def extract_nodes_task(episode_uuid: str, journal: str):
     logger.info("extract_nodes_task started for episode %s", episode_uuid)
 
     try:
-        current_status = get_episode_status(episode_uuid)
+        current_status = get_episode_status(episode_uuid, journal)
         if current_status != "pending_nodes":
             logger.info(
                 "Episode %s already processed (status: %s), skipping",
@@ -71,7 +76,7 @@ def extract_nodes_task(episode_uuid: str, journal: str):
         # Only transition to pending_edges if entities were extracted
         # Self entity "I" doesn't count - edges need at least one other node
         if result.extracted_count > 0:
-            set_episode_status(episode_uuid, "pending_edges", uuid_map=result.uuid_map)
+            set_episode_status(episode_uuid, "pending_edges", journal, uuid_map=result.uuid_map)
             logger.info(
                 "Transitioned episode %s to pending_edges with %d uuid mappings",
                 episode_uuid,
@@ -83,7 +88,7 @@ def extract_nodes_task(episode_uuid: str, journal: str):
             # extract_edges_task(episode_uuid, journal)
         else:
             # No entities extracted (only self or nothing) - no edges possible
-            set_episode_status(episode_uuid, "done")
+            set_episode_status(episode_uuid, "done", journal)
             logger.info(
                 "No entities extracted for episode %s, marked done",
                 episode_uuid,
@@ -97,7 +102,7 @@ def extract_nodes_task(episode_uuid: str, journal: str):
         }
     except Exception:
         try:
-            set_episode_status(episode_uuid, "dead")
+            set_episode_status(episode_uuid, "dead", journal)
         except Exception:
             logger.warning(
                 "Failed to mark episode %s as dead after exception", episode_uuid, exc_info=True
@@ -115,10 +120,26 @@ def extract_nodes_task(episode_uuid: str, journal: str):
 def orchestrate_inference_work(reschedule: bool = True):
     """Maintenance loop: enqueue pending nodes and unload when idle/disabled."""
     try:
-        from backend.database.redis_ops import enqueue_pending_episodes
-        from backend.inference.manager import cleanup_if_no_work
+        from backend.database.redis_ops import enqueue_pending_episodes, redis_ops, get_inference_enabled
+        from backend.inference.manager import cleanup_if_no_work, get_model
 
         enqueue_pending_episodes()
+
+        # Pre-load models when user is actively editing (only if inference is enabled).
+        if get_inference_enabled():
+            try:
+                with redis_ops() as r:
+                    user_is_editing = r.exists("editing:active")
+            except Exception as e:
+                logger.debug("Failed to check editing presence: %s", e)
+                user_is_editing = False
+
+            if user_is_editing:
+                try:
+                    get_model("llm")
+                except Exception as e:
+                    logger.warning("Failed to pre-load model during editing: %s", e, exc_info=True)
+
         cleanup_if_no_work()
     except Exception:
         logger.exception("orchestrate_inference_work failed")

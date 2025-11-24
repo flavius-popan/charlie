@@ -1,14 +1,10 @@
 # ASK ME QUESTIONS
 
-Unless I request a simple change, any discussion of architecture, design, feature building, debugging, etc. should include clarifying questions asked ONE AT A TIME so we may align our understanding of the task & high level goals. Prompt me back.
+Unless I request a simple change, any discussion of architecture, design, feature building, debugging, etc. should include clarifying questions asked ONE AT A TIME so we may align our understanding of the task & high level goals. Prompt me back!
 
-## NO GIT OPS
+## NO GIT PUSH, EVER
 
-You are only permitted to run read-only git operations to understand the project state. You ARE NOT permitted to run git add, commit, push, etc.
-
-## PYTHON ENVIRONMENT
-
-Always use the project's uv-managed virtual environment (e.g., `uv run ...`) instead of the system Python when running commands or tests.
+Git add & commit are fine for feature branches but NEVER for `main`!
 
 ## Testing Textual Applications
 
@@ -39,6 +35,9 @@ async def test_with_llm_call(isolated_graph, require_llm):
     # Test code that makes LLM calls via DSPy
 ```
 
-## Testing Best Practices
+### Misc. Things to Remember
 
-*ALWAYS* use the respective conftest.py file for a given test suite for fixtures.
+- Use the respective conftest.py file for a given test suite for fixtures.
+- Add imports to the top of the module unless necessary for a given feature.
+- Opt for using hardcoded constants unless I explicitly ask to check for an env var.
+- Always use the project's uv-managed virtual environment (e.g., `uv add ...`) instead of the system Python for installing dependencies and running tests.

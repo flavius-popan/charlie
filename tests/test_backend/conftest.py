@@ -21,9 +21,13 @@ def falkordb_test_context(tmp_path_factory: pytest.TempPathFactory) -> Iterator[
     db_dir = tmp_path_factory.mktemp("falkordb-lite")
     db_path = db_dir / "backend-tests.db"
 
+    # Disable TCP listener in tests to avoid clashing with a running app instance.
+    backend_settings.REDIS_TCP_ENABLED = False
+    import backend.database.lifecycle as lifecycle
+    lifecycle.REDIS_TCP_ENABLED = False  # type: ignore[misc]
+
     backend_settings.DB_PATH = db_path
     # Update DB_PATH in lifecycle module
-    import backend.database.lifecycle as lifecycle
     lifecycle.DB_PATH = db_path  # type: ignore[misc]
 
     # Reset cached connections before opening a new graph
@@ -124,9 +128,10 @@ def episode_uuid():
 def cleanup_test_episodes(episode_uuid):
     """Clean up test episode data from Redis after each test."""
     from backend.database.redis_ops import remove_episode_from_queue
+    from backend.settings import DEFAULT_JOURNAL
 
     yield
-    remove_episode_from_queue(episode_uuid)
+    remove_episode_from_queue(episode_uuid, DEFAULT_JOURNAL)
 
 
 @pytest.fixture

@@ -1,0 +1,117 @@
+"""Tests for database query functions."""
+
+import pytest
+from backend.database.queries import delete_entity_mention
+from backend import add_journal_entry
+from backend.graph.extract_nodes import extract_nodes
+from backend.database.redis_ops import redis_ops, get_suppressed_entities
+import json
+
+
+@pytest.fixture(autouse=True)
+def clear_test_journal_suppression():
+    """Clear suppression list for test_journal before each test."""
+    with redis_ops() as r:
+        suppression_key = "journal:test_journal:suppressed_entities"
+        r.delete(suppression_key)
+
+    yield
+
+    with redis_ops() as r:
+        suppression_key = "journal:test_journal:suppressed_entities"
+        r.delete(suppression_key)
+
+
+@pytest.mark.inference
+@pytest.mark.asyncio
+async def test_delete_entity_mention_orphaned(isolated_graph, require_llm):
+    """Should delete entity when it's only mentioned in this episode."""
+    episode_uuid = await add_journal_entry(
+        content="I met Sarah at the park.",
+        journal="test_journal"
+    )
+    await extract_nodes(episode_uuid=episode_uuid, journal="test_journal")
+
+    with redis_ops() as r:
+        cache_key = f"journal:test_journal:{episode_uuid}"
+        nodes_json = r.hget(cache_key, "nodes")
+        assert nodes_json is not None
+        entities = json.loads(nodes_json.decode())
+        assert len(entities) > 0
+        entity_uuid = entities[0]["uuid"]
+
+    entity_name = entities[0]["name"]
+
+    was_deleted = await delete_entity_mention(episode_uuid, entity_uuid, "test_journal")
+
+    assert was_deleted is True
+
+    suppressed = get_suppressed_entities("test_journal")
+    assert entity_name.lower() in suppressed, "Deleted entity should be globally suppressed"
+
+
+@pytest.mark.inference
+@pytest.mark.asyncio
+async def test_delete_entity_mention_shared(isolated_graph, require_llm):
+    """Should only remove MENTIONS edge when entity referenced elsewhere."""
+    ep1_uuid = await add_journal_entry(
+        content="I met Sarah today.",
+        journal="test_journal"
+    )
+    await extract_nodes(episode_uuid=ep1_uuid, journal="test_journal")
+
+    ep2_uuid = await add_journal_entry(
+        content="Sarah came over again.",
+        journal="test_journal"
+    )
+    await extract_nodes(episode_uuid=ep2_uuid, journal="test_journal")
+
+    with redis_ops() as r:
+        cache_key = f"journal:test_journal:{ep1_uuid}"
+        nodes_json = r.hget(cache_key, "nodes")
+        entities = json.loads(nodes_json.decode())
+        sarah = next((e for e in entities if "Sarah" in e["name"]), None)
+        assert sarah is not None
+
+    was_deleted = await delete_entity_mention(ep1_uuid, sarah["uuid"], "test_journal")
+
+    assert was_deleted is False
+
+    suppressed = get_suppressed_entities("test_journal")
+    assert "sarah" in suppressed, "Deleted entity should be globally suppressed even if not orphaned"
+
+
+@pytest.mark.inference
+@pytest.mark.asyncio
+async def test_delete_entity_mention_updates_redis_cache(isolated_graph, require_llm):
+    """Test that deletion removes entity from Redis cache."""
+    episode_uuid = await add_journal_entry(
+        content="I met Sarah and John at the park.",
+        journal="test_journal"
+    )
+    await extract_nodes(episode_uuid=episode_uuid, journal="test_journal")
+
+    with redis_ops() as r:
+        cache_key = f"journal:test_journal:{episode_uuid}"
+        nodes_json = r.hget(cache_key, "nodes")
+        entities = json.loads(nodes_json.decode())
+        initial_count = len(entities)
+        assert initial_count >= 2
+
+        entity_to_delete = entities[0]
+        entity_uuid = entity_to_delete["uuid"]
+        entity_name = entity_to_delete["name"]
+
+    await delete_entity_mention(episode_uuid, entity_uuid, "test_journal")
+
+    with redis_ops() as r:
+        cache_key = f"journal:test_journal:{episode_uuid}"
+        nodes_json = r.hget(cache_key, "nodes")
+        updated_entities = json.loads(nodes_json.decode())
+
+        assert len(updated_entities) == initial_count - 1
+        assert entity_uuid not in [e["uuid"] for e in updated_entities]
+        assert entity_name not in [e["name"] for e in updated_entities]
+
+    suppressed = get_suppressed_entities("test_journal")
+    assert entity_name.lower() in suppressed, "Deleted entity should be globally suppressed"

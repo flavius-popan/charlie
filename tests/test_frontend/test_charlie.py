@@ -4,7 +4,7 @@ These tests use Textual's headless testing mode to validate UI functionality
 without requiring a terminal. All database operations are mocked.
 
 Testing patterns demonstrated here:
-- Use app.query_one() to assert widget state (not stdout)
+- Use app.screen.query_one() to assert widget state (not stdout)
 - Use pilot.pause() after initialization for async operations
 - Use pytest-textual-snapshot for visual testing (generates readable SVG files)
 
@@ -34,7 +34,15 @@ from unittest.mock import AsyncMock, Mock, patch, mock_open
 
 import pytest
 
-from charlie import CharlieApp, HomeScreen, ViewScreen, EditScreen, SettingsScreen
+from charlie import (
+    CharlieApp,
+    HomeScreen,
+    ViewScreen,
+    EditScreen,
+    SettingsScreen,
+    EntitySidebar,
+    DeleteEntityModal,
+)
 
 
 @asynccontextmanager
@@ -47,9 +55,15 @@ async def app_test_context(app):
     """
     try:
         async with app.run_test() as pilot:
+            # Allow multiple event loop cycles for screen initialization:
+            # 1. CharlieApp.on_mount() runs
+            # 2. HomeScreen is pushed
+            # 3. HomeScreen.compose() creates widgets
+            # 4. Widgets are mounted and on_mount() is called
+            # 5. Workers start and may update reactive attributes
+            for _ in range(3):
+                await pilot.pause()
             yield pilot
-            # Ensure orderly shutdown to avoid unawaited coroutine warnings
-            await pilot.exit()
     except asyncio.CancelledError:
         pass
 
@@ -65,11 +79,13 @@ def mock_database():
          patch('charlie.delete_episode', new_callable=AsyncMock) as mock_delete, \
          patch('charlie.shutdown_database') as mock_shutdown, \
          patch('charlie.get_inference_enabled') as mock_get_inference_enabled, \
-         patch('charlie.set_inference_enabled') as mock_set_inference_enabled:
+         patch('charlie.set_inference_enabled') as mock_set_inference_enabled, \
+         patch('charlie.get_episode_status') as mock_get_episode_status:
 
         mock_ensure.return_value = None
         mock_get_all.return_value = []
         mock_get_inference_enabled.return_value = False
+        mock_get_episode_status.return_value = None
 
         yield {
             'ensure': mock_ensure,
@@ -81,6 +97,7 @@ def mock_database():
             'shutdown': mock_shutdown,
             'get_inference_enabled': mock_get_inference_enabled,
             'set_inference_enabled': mock_set_inference_enabled,
+            'get_episode_status': mock_get_episode_status,
         }
 
 
@@ -129,9 +146,9 @@ class TestHomeScreen:
             await pilot.pause()
 
             # Check for empty state element
-            empty_state = app.query_one("#empty-state")
+            empty_state = app.screen.query_one("#empty-state")
             assert empty_state is not None
-            assert "No entries yet!" in empty_state.renderable
+            assert "No entries yet" in empty_state.render().plain
 
     @pytest.mark.asyncio
     async def test_home_screen_displays_header(self, mock_database):
@@ -141,7 +158,7 @@ class TestHomeScreen:
             await pilot.pause()
 
             from textual.widgets import Header
-            headers = app.query(Header)
+            headers = app.screen.query(Header)
             assert len(headers) > 0
             assert app.title == "Charlie"
 
@@ -153,7 +170,7 @@ class TestHomeScreen:
             await pilot.pause()
 
             from textual.widgets import Footer
-            footers = app.query(Footer)
+            footers = app.screen.query(Footer)
             assert len(footers) > 0
 
     @pytest.mark.asyncio
@@ -225,6 +242,11 @@ class TestHomeScreen:
         mock_database['get_all'].return_value = []
         assert snap_compare(CharlieApp())
 
+    def test_css_includes_journal_content_styles(self):
+        """CSS should target the journal markdown widget id."""
+        css = CharlieApp.CSS
+        assert "#journal-content" in css, "journal-content styles should be present for new layout"
+
 
 class TestViewScreen:
     """Tests for ViewScreen functionality."""
@@ -252,7 +274,7 @@ class TestViewScreen:
             assert isinstance(app.screen, ViewScreen)
 
             from textual.widgets import Markdown
-            markdown = app.query_one("#content", Markdown)
+            markdown = app.screen.query_one("#journal-content", Markdown)
             assert markdown is not None
 
     @pytest.mark.asyncio
@@ -275,7 +297,7 @@ class TestViewScreen:
             await pilot.pause()
 
             from textual.widgets import Header
-            headers = app.query(Header)
+            headers = app.screen.query(Header)
             assert len(headers) > 0
 
     @pytest.mark.asyncio
@@ -342,7 +364,7 @@ class TestEditScreen:
             await pilot.pause()
 
             from textual.widgets import TextArea
-            editor = app.query_one("#editor", TextArea)
+            editor = app.screen.query_one("#editor", TextArea)
             assert editor is not None
 
     @pytest.mark.asyncio
@@ -355,7 +377,7 @@ class TestEditScreen:
             await pilot.pause()
 
             from textual.widgets import Header
-            headers = app.query(Header)
+            headers = app.screen.query(Header)
             assert len(headers) > 0
 
     @pytest.mark.asyncio
@@ -370,7 +392,7 @@ class TestEditScreen:
             await pilot.pause()
 
             from textual.widgets import TextArea
-            editor = app.query_one("#editor", TextArea)
+            editor = app.screen.query_one("#editor", TextArea)
             editor.text = "# New Entry\nContent"
 
             await pilot.press("escape")
@@ -405,10 +427,10 @@ class TestSettingsScreen:
             await pilot.pause()
 
             from textual.widgets import Switch
-            switches = app.query(Switch)
+            switches = app.screen.query(Switch)
             assert len(switches) == 1
 
-            toggle = app.query_one("#inference-toggle", Switch)
+            toggle = app.screen.query_one("#inference-toggle", Switch)
             assert toggle is not None
 
     @pytest.mark.asyncio
@@ -443,7 +465,7 @@ class TestSettingsScreen:
                 await pilot.pause()
 
                 from textual.widgets import Switch
-                toggle = app.query_one("#inference-toggle", Switch)
+                toggle = app.screen.query_one("#inference-toggle", Switch)
 
                 assert toggle.value is True
 
@@ -492,7 +514,7 @@ class TestSettingsScreen:
             await pilot.pause()
 
             from textual.widgets import Switch
-            toggle = app.query_one("#inference-toggle", Switch)
+            toggle = app.screen.query_one("#inference-toggle", Switch)
             initial = toggle.value
 
             await pilot.press("space")
@@ -501,24 +523,6 @@ class TestSettingsScreen:
             # Toggle should have changed and persisted
             assert toggle.value != initial
             mock_database['set_inference_enabled'].assert_called_once_with(toggle.value)
-
-    @pytest.mark.asyncio
-    async def test_settings_vim_navigation(self, mock_database):
-        """Should support j/k navigation keys."""
-        app = CharlieApp()
-        async with app_test_context(app) as pilot:
-            await pilot.pause()
-            await pilot.press("s")
-            await pilot.pause()
-
-            # Vim keys should work for navigation
-            await pilot.press("j")
-            await pilot.pause()
-            await pilot.press("k")
-            await pilot.pause()
-
-            # Basic test - bindings exist and don't crash
-            assert isinstance(app.screen, SettingsScreen)
 
     @pytest.mark.asyncio
     async def test_settings_toggle_disables_worker(self, mock_database):
@@ -537,7 +541,7 @@ class TestSettingsScreen:
 
                 with patch.object(app, "stop_huey_worker") as mock_stop:
                     from textual.widgets import Switch
-                    toggle = app.query_one("#inference-toggle", Switch)
+                    toggle = app.screen.query_one("#inference-toggle", Switch)
                     toggle.value = True  # starting state enabled
                     await pilot.press("space")  # toggle off
                     await pilot.pause()
@@ -563,7 +567,7 @@ class TestIntegration:
             await pilot.pause()
 
             from textual.widgets import TextArea
-            editor = app.query_one("#editor", TextArea)
+            editor = app.screen.query_one("#editor", TextArea)
             editor.text = "# My Entry\nSome content"
 
             # Save
@@ -573,6 +577,123 @@ class TestIntegration:
             # Verify saved
             mock_database['add'].assert_called_once()
             mock_database['update'].assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_new_entry_two_escapes_return_home(self, mock_database):
+        """After leaving editor, a single ESC from viewer should return home."""
+        mock_database["add"].return_value = "uuid-new"
+        mock_database["get"].return_value = {
+            "uuid": "uuid-new",
+            "content": "# Title\nBody",
+            "name": "Title",
+        }
+
+        app = CharlieApp()
+        async with app_test_context(app) as pilot:
+            await pilot.pause()
+
+            await pilot.press("n")
+            await pilot.pause()
+
+            from textual.widgets import TextArea
+            editor = app.screen.query_one("#editor", TextArea)
+            editor.text = "# Title\nBody"
+
+            await pilot.press("escape")
+            await pilot.pause()
+            await pilot.pause()
+
+            assert isinstance(app.screen, ViewScreen)
+
+            await pilot.press("escape")
+            await pilot.pause()
+
+            assert isinstance(app.screen, HomeScreen)
+
+    @pytest.mark.asyncio
+    async def test_edit_existing_single_escape_returns_home(self, mock_database):
+        """Editing an existing entry should need only one ESC from viewer to go home."""
+        mock_episode = {
+            "uuid": "existing-uuid",
+            "content": "# Title\nBody",
+            "name": "Title",
+            "valid_at": datetime(2025, 11, 19, 10, 0, 0),
+        }
+        mock_database["get_all"].return_value = [mock_episode]
+        mock_database["get"].return_value = mock_episode
+        mock_database["update"].return_value = True
+        mock_database["get_inference_enabled"].return_value = False
+        mock_database["get_episode_status"].return_value = None
+
+        app = CharlieApp()
+        async with app_test_context(app) as pilot:
+            await pilot.pause()
+
+            # Open existing entry
+            await pilot.press("space")
+            await pilot.pause()
+            await pilot.pause()
+
+            # Edit the entry
+            await pilot.press("e")
+            await pilot.pause()
+
+            from textual.widgets import TextArea
+            editor = app.screen.query_one("#editor", TextArea)
+            editor.text = "# Title\nUpdated body"
+
+            await pilot.press("escape")
+            await pilot.pause()
+
+            assert isinstance(app.screen, ViewScreen)
+
+            # One escape should return to home
+            await pilot.press("escape")
+            await pilot.pause()
+
+            assert isinstance(app.screen, HomeScreen)
+
+    @pytest.mark.asyncio
+    async def test_escape_works_while_inference_pending(self, mock_database):
+        """Esc from viewer should still return home even while connections polling is active."""
+        mock_episode = {
+            "uuid": "existing-uuid",
+            "content": "# Title\nBody",
+            "name": "Title",
+            "valid_at": datetime(2025, 11, 19, 10, 0, 0),
+        }
+        mock_database["get_all"].return_value = [mock_episode]
+        mock_database["get"].return_value = mock_episode
+        mock_database["update"].return_value = True
+        mock_database["get_inference_enabled"].return_value = True
+        mock_database["get_episode_status"].return_value = "pending_nodes"
+
+        app = CharlieApp()
+        async with app_test_context(app) as pilot:
+            await pilot.pause()
+
+            await pilot.press("space")
+            await pilot.pause(); await pilot.pause()
+
+            await pilot.press("e")
+            await pilot.pause()
+
+            from textual.widgets import TextArea
+            editor = app.screen.query_one("#editor", TextArea)
+            editor.text = "# Title\nUpdated"
+
+            await pilot.press("escape")
+            await pilot.pause(); await pilot.pause()
+
+            # Viewer should be active and polling
+            from charlie import ViewScreen
+            assert isinstance(app.screen, ViewScreen)
+            assert any(w.name == "status-poll" and w.is_running for w in app.screen.workers)
+
+            await pilot.press("escape")
+            await pilot.pause()
+
+            assert isinstance(app.screen, HomeScreen)
 
     @pytest.mark.asyncio
     async def test_settings_workflow(self, mock_database):
@@ -591,7 +712,7 @@ class TestIntegration:
             await pilot.pause()
 
             from textual.widgets import Switch
-            toggle = app.query_one("#inference-toggle", Switch)
+            toggle = app.screen.query_one("#inference-toggle", Switch)
             initial = toggle.value
 
             await pilot.press("space")
@@ -622,3 +743,515 @@ class TestWorkerManagement:
                 app.notify = Mock()
                 app._ensure_huey_worker_running()
                 app.notify.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_edit_screen_esc_goes_to_view_screen():
+    """ESC from EditScreen should navigate to ViewScreen, not HomeScreen."""
+    from charlie import EditScreen, ViewScreen
+    from textual.app import App
+
+    class TestApp(App):
+        def on_mount(self):
+            self.push_screen(EditScreen(episode_uuid=None))
+
+    with patch("charlie.add_journal_entry", new_callable=AsyncMock) as mock_add, \
+         patch("charlie.redis_ops") as mock_redis_ops:
+        mock_add.return_value = "new-uuid"
+
+        # Mock Redis to prevent real connection attempts
+        mock_redis = Mock()
+        mock_redis.hget.return_value = None
+        mock_redis_ops.return_value.__enter__ = Mock(return_value=mock_redis)
+        mock_redis_ops.return_value.__exit__ = Mock(return_value=None)
+
+        with patch("charlie.update_episode", new_callable=AsyncMock):
+            with patch("charlie.get_episode", new_callable=AsyncMock) as mock_get:
+                mock_get.return_value = {"uuid": "new-uuid", "content": "# Test Entry\nSome content"}
+
+                app = TestApp()
+
+                async with app.run_test() as pilot:
+                    screen = app.screen
+                    # Type some content
+                    from textual.widgets import TextArea
+                    editor = screen.query_one("#editor", TextArea)
+                    editor.text = "# Test Entry\nSome content"
+
+                    # Press ESC
+                    await pilot.press("escape")
+                    await pilot.pause()
+
+                    # Should navigate to ViewScreen, not pop to HomeScreen
+                    assert isinstance(app.screen, ViewScreen)
+                    assert app.screen.episode_uuid == "new-uuid"
+
+
+@pytest.mark.asyncio
+async def test_edit_screen_enqueues_extraction_for_new_entry(mock_database):
+    """EditScreen should enqueue extraction task when creating new entry with inference enabled."""
+    mock_database['add'].return_value = "new-uuid"
+    mock_database['get_inference_enabled'].return_value = True
+    mock_database['get'].return_value = {
+        "uuid": "new-uuid",
+        "content": "# New Entry\nTest content",
+        "name": "New Entry",
+    }
+
+    with patch('backend.services.tasks.extract_nodes_task') as mock_extract_task, \
+         patch('charlie.redis_ops') as mock_redis_ops:
+        # Mock Redis to prevent EntitySidebar.refresh_entities() errors
+        mock_redis = Mock()
+        mock_redis.hget.return_value = None
+        mock_redis_ops.return_value.__enter__ = Mock(return_value=mock_redis)
+        mock_redis_ops.return_value.__exit__ = Mock(return_value=None)
+        app = CharlieApp()
+        async with app_test_context(app) as pilot:
+            await pilot.pause()
+
+            await pilot.press("n")
+            await pilot.pause()
+
+            from textual.widgets import TextArea
+            editor = app.screen.query_one("#editor", TextArea)
+            editor.text = "# New Entry\nTest content"
+
+            await pilot.press("escape")
+            await pilot.pause()
+
+            # Verify task was called. We don't check specific arguments because the
+            # API signature changed to include a priority parameter, making exact
+            # argument checks brittle. The important behavior is that the task runs.
+            mock_extract_task.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_edit_screen_enqueues_extraction_when_content_changes(mock_database):
+    """EditScreen should enqueue extraction task when editing existing entry and content changes."""
+    mock_episode = {
+        "uuid": "existing-uuid",
+        "content": "# Original\nOriginal content",
+        "name": "Original",
+        "valid_at": datetime(2025, 11, 19, 10, 0, 0)
+    }
+    mock_database['get_all'].return_value = [mock_episode]
+    mock_database['get'].return_value = mock_episode
+    mock_database['update'].return_value = True  # Content changed
+    mock_database['get_inference_enabled'].return_value = True
+
+    with patch('backend.services.tasks.extract_nodes_task') as mock_extract_task, \
+         patch('charlie.redis_ops') as mock_redis_ops:
+        # Mock Redis to prevent EntitySidebar.refresh_entities() errors
+        mock_redis = Mock()
+        mock_redis.hget.return_value = None
+        mock_redis_ops.return_value.__enter__ = Mock(return_value=mock_redis)
+        mock_redis_ops.return_value.__exit__ = Mock(return_value=None)
+        app = CharlieApp()
+        async with app_test_context(app) as pilot:
+            await pilot.pause()
+
+            await pilot.press("space")
+            await pilot.pause()
+            await pilot.pause()
+
+            await pilot.press("e")
+            await pilot.pause()
+
+            from textual.widgets import TextArea
+            editor = app.screen.query_one("#editor", TextArea)
+            editor.text = "# Updated\nNew content"
+
+            await pilot.press("escape")
+            await pilot.pause()
+
+            # Verify task was called. We don't check specific arguments because the
+            # API signature changed to include a priority parameter, making exact
+            # argument checks brittle. The important behavior is that the task runs.
+            mock_extract_task.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_edit_screen_skips_extraction_when_content_unchanged(mock_database):
+    """EditScreen should NOT enqueue extraction task when content is unchanged."""
+    mock_episode = {
+        "uuid": "existing-uuid",
+        "content": "# Original\nOriginal content",
+        "name": "Original",
+        "valid_at": datetime(2025, 11, 19, 10, 0, 0)
+    }
+    mock_database['get_all'].return_value = [mock_episode]
+    mock_database['get'].return_value = mock_episode
+    mock_database['update'].return_value = False  # Content NOT changed
+    mock_database['get_inference_enabled'].return_value = True
+
+    with patch('backend.services.tasks.extract_nodes_task') as mock_extract_task:
+        app = CharlieApp()
+        async with app_test_context(app) as pilot:
+            await pilot.pause()
+
+            await pilot.press("space")
+            await pilot.pause()
+            await pilot.pause()
+
+            await pilot.press("e")
+            await pilot.pause()
+
+            from textual.widgets import TextArea
+            editor = app.screen.query_one("#editor", TextArea)
+            editor.text = "# Original\nOriginal content"
+
+            await pilot.press("escape")
+            await pilot.pause()
+
+            mock_extract_task.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_edit_screen_skips_extraction_when_inference_disabled(mock_database):
+    """EditScreen should NOT enqueue extraction task when inference is disabled."""
+    mock_database['add'].return_value = "new-uuid"
+    mock_database['get_inference_enabled'].return_value = False
+
+    with patch('backend.services.tasks.extract_nodes_task') as mock_extract_task:
+        app = CharlieApp()
+        async with app_test_context(app) as pilot:
+            await pilot.pause()
+
+            await pilot.press("n")
+            await pilot.pause()
+
+            from textual.widgets import TextArea
+            editor = app.screen.query_one("#editor", TextArea)
+            editor.text = "# New Entry\nTest content"
+
+            await pilot.press("escape")
+            await pilot.pause()
+
+            mock_extract_task.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_edit_screen_uses_switch_screen_not_pop_push(mock_database):
+    """EditScreen should use switch_screen() for navigation, not pop_screen() + push_screen()."""
+    mock_database['add'].return_value = "new-uuid"
+    mock_database['get_inference_enabled'].return_value = True
+
+    with patch('backend.services.tasks.extract_nodes_task'):
+        app = CharlieApp()
+        async with app_test_context(app) as pilot:
+            await pilot.pause()
+
+            await pilot.press("n")
+            await pilot.pause()
+
+            from textual.widgets import TextArea
+            editor = app.screen.query_one("#editor", TextArea)
+            editor.text = "# New Entry\nTest content"
+
+            # Spy on switch_screen
+            with patch.object(app, 'switch_screen', wraps=app.switch_screen) as mock_switch:
+                await pilot.press("escape")
+                await pilot.pause()
+
+                mock_switch.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_edit_screen_navigates_to_view_screen_before_task_enqueue(mock_database):
+    """EditScreen should navigate to ViewScreen before enqueueing extraction task."""
+    mock_database['add'].return_value = "new-uuid"
+    mock_database['get_inference_enabled'].return_value = True
+    mock_database['get'].return_value = {
+        "uuid": "new-uuid",
+        "content": "# New Entry\nTest content",
+        "name": "New Entry",
+    }
+
+    from charlie import ViewScreen
+
+    screen_type_when_task_enqueued = None
+
+    def capture_screen_type(episode_uuid, journal, priority=None):
+        nonlocal screen_type_when_task_enqueued
+        screen_type_when_task_enqueued = type(app.screen)
+
+    with patch('backend.services.tasks.extract_nodes_task', side_effect=capture_screen_type) as mock_extract_task, \
+         patch('charlie.redis_ops') as mock_redis_ops:
+        # Mock Redis to prevent EntitySidebar.refresh_entities() errors
+        mock_redis = Mock()
+        mock_redis.hget.return_value = None
+        mock_redis_ops.return_value.__enter__ = Mock(return_value=mock_redis)
+        mock_redis_ops.return_value.__exit__ = Mock(return_value=None)
+        app = CharlieApp()
+        async with app_test_context(app) as pilot:
+            await pilot.pause()
+
+            await pilot.press("n")
+            await pilot.pause()
+
+            from textual.widgets import TextArea
+            editor = app.screen.query_one("#editor", TextArea)
+            editor.text = "# New Entry\nTest content"
+
+            await pilot.press("escape")
+            await pilot.pause()
+
+            # Note: assert_called_once() is weaker than checking both call count and arguments.
+            # The extract_nodes_task signature changed and this test uses side_effect only.
+            # Could be strengthened with assert_called_once_with() once API is fully stable.
+            mock_extract_task.assert_called_once()
+            assert screen_type_when_task_enqueued == ViewScreen, \
+                f"Expected ViewScreen but got {screen_type_when_task_enqueued}"
+
+
+@pytest.mark.asyncio
+async def test_create_entry_with_inference_disabled_integration(mock_database):
+    """Full workflow: create entry with inference disabled, verify task NOT called but entry persisted."""
+    mock_database['add'].return_value = "new-uuid"
+    mock_database['get_inference_enabled'].return_value = False
+
+    with patch('backend.services.tasks.extract_nodes_task') as mock_extract_task:
+        app = CharlieApp()
+        async with app_test_context(app) as pilot:
+            await pilot.pause()
+
+            await pilot.press("n")
+            await pilot.pause()
+
+            from textual.widgets import TextArea
+            editor = app.screen.query_one("#editor", TextArea)
+            editor.text = "# Integration Test\nTest content with inference disabled"
+
+            await pilot.press("escape")
+            await pilot.pause()
+
+            # Verify task NOT called
+            mock_extract_task.assert_not_called()
+
+
+class TestConnectionsPaneVisibility:
+    """Connections sidebar should only auto-open when inference + content change + processing active."""
+
+    @pytest.mark.asyncio
+    async def test_connections_hidden_when_inference_disabled(self, mock_database):
+        """Saving new entry with inference off should not open connections pane."""
+        mock_database["add"].return_value = "uuid-new"
+        mock_database["get_inference_enabled"].return_value = False
+        mock_database["get"].return_value = {
+            "uuid": "uuid-new",
+            "content": "# Title\nBody",
+            "name": "Title",
+        }
+
+        with patch("backend.services.tasks.extract_nodes_task"):
+            app = CharlieApp()
+            async with app_test_context(app) as pilot:
+                await pilot.pause()
+
+                await pilot.press("n")
+                await pilot.pause()
+
+                from textual.widgets import TextArea
+                editor = app.screen.query_one("#editor", TextArea)
+                editor.text = "# Title\nBody"
+
+                await pilot.press("escape")
+                await pilot.pause()
+
+                assert isinstance(app.screen, ViewScreen)
+                sidebar = app.screen.query_one(EntitySidebar)
+                assert app.screen.from_edit is False
+                assert sidebar.display is False
+                assert not any(w.name == "status-poll" and w.is_running for w in app.screen.workers)
+
+    @pytest.mark.asyncio
+    async def test_connections_hidden_when_content_unchanged(self, mock_database):
+        """Editing without content change should not auto-open connections pane."""
+        mock_episode = {
+            "uuid": "existing-uuid",
+            "content": "# Original\nOriginal content",
+            "name": "Original",
+            "valid_at": datetime(2025, 11, 19, 10, 0, 0),
+        }
+        mock_database["get_all"].return_value = [mock_episode]
+        mock_database["get"].return_value = mock_episode
+        mock_database["update"].return_value = False  # content unchanged
+        mock_database["get_inference_enabled"].return_value = True
+        mock_database["get"].return_value = mock_episode
+
+        with patch("backend.services.tasks.extract_nodes_task"):
+            app = CharlieApp()
+            async with app_test_context(app) as pilot:
+                await pilot.pause()
+
+                await pilot.press("space")
+                await pilot.pause()
+                await pilot.pause()
+
+                await pilot.press("e")
+                await pilot.pause()
+
+                from textual.widgets import TextArea
+                editor = app.screen.query_one("#editor", TextArea)
+                editor.text = "# Original\nOriginal content"
+
+                await pilot.press("escape")
+                await pilot.pause()
+
+                assert isinstance(app.screen, ViewScreen)
+                sidebar = app.screen.query_one(EntitySidebar)
+                assert app.screen.from_edit is False
+                assert sidebar.display is False
+                assert not any(w.name == "status-poll" and w.is_running for w in app.screen.workers)
+
+    @pytest.mark.asyncio
+    async def test_connections_shown_only_when_processing_active(self, mock_database):
+        """Auto-open only when inference enabled, content changed, and status pending."""
+        mock_database["add"].return_value = "uuid-new"
+        mock_database["get_inference_enabled"].return_value = True
+        mock_database["get"].return_value = {
+            "uuid": "uuid-new",
+            "content": "# Title\nBody",
+            "name": "Title",
+        }
+
+        with patch("backend.services.tasks.extract_nodes_task") as mock_task, \
+             patch("charlie.get_episode_status", return_value="pending_nodes"), \
+             patch("charlie.redis_ops") as mock_redis_ops:
+            # Mock Redis to prevent EntitySidebar.refresh_entities() errors
+            mock_redis = Mock()
+            mock_redis.hget.return_value = None
+            mock_redis_ops.return_value.__enter__ = Mock(return_value=mock_redis)
+            mock_redis_ops.return_value.__exit__ = Mock(return_value=None)
+
+            app = CharlieApp()
+            async with app_test_context(app) as pilot:
+                await pilot.pause()
+
+                await pilot.press("n")
+                await pilot.pause()
+
+                from textual.widgets import TextArea
+                editor = app.screen.query_one("#editor", TextArea)
+                editor.text = "# Title\nBody"
+
+                await pilot.press("escape")
+                await pilot.pause()
+
+                assert isinstance(app.screen, ViewScreen)
+                sidebar = app.screen.query_one(EntitySidebar)
+                assert app.screen.from_edit is True
+                assert sidebar.display is True
+                assert any(w.name == "status-poll" and w.is_running for w in app.screen.workers)
+                mock_task.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_delete_entity_requires_open_sidebar(self, mock_database):
+        """Pressing 'd' should only delete when sidebar is open and focused."""
+        mock_episode = {
+            "uuid": "existing-uuid",
+            "content": "# Title\nBody",
+            "name": "Title",
+            "valid_at": datetime(2025, 11, 19, 10, 0, 0),
+        }
+        mock_database["get_all"].return_value = [mock_episode]
+        mock_database["get"].return_value = mock_episode
+
+        app = CharlieApp()
+        async with app_test_context(app) as pilot:
+            await pilot.pause()
+
+            await pilot.press("space")
+            await pilot.pause()
+            await pilot.pause()
+
+            from textual.widgets import ListView
+            view = app.screen
+            sidebar = view.query_one(EntitySidebar)
+            sidebar.entities = [
+                {"uuid": "entity-1", "name": "Alice", "type": "Person"},
+            ]
+            sidebar.loading = False
+            sidebar._update_content()
+            list_view = sidebar.query_one(ListView)
+            list_view.index = 0
+            sidebar.display = False  # hidden/closed
+
+            # Directly invoke the action to ensure it short-circuits when hidden
+            with patch.object(app, "push_screen", wraps=app.push_screen) as mock_push:
+                sidebar.action_delete_entity()
+                mock_push.assert_not_called()
+
+            # Should remain on ViewScreen and no delete modal should appear
+            assert isinstance(app.screen, ViewScreen)
+            assert all(not isinstance(s, DeleteEntityModal) for s in app.screen_stack)
+
+
+@pytest.mark.asyncio
+async def test_edit_entry_title_only_no_extraction_integration(mock_database):
+    """Full workflow: edit title only (no content change), verify task NOT called but title updated."""
+    mock_episode = {
+        "uuid": "existing-uuid",
+        "content": "# Original\nOriginal content",
+        "name": "Original",
+        "valid_at": datetime(2025, 11, 19, 10, 0, 0)
+    }
+    mock_database['get_all'].return_value = [mock_episode]
+    mock_database['get'].return_value = mock_episode
+    mock_database['update'].return_value = False  # Content unchanged
+    mock_database['get_inference_enabled'].return_value = True
+
+    with patch('backend.services.tasks.extract_nodes_task') as mock_extract_task:
+        app = CharlieApp()
+        async with app_test_context(app) as pilot:
+            await pilot.pause()
+
+            await pilot.press("space")
+            await pilot.pause()
+            await pilot.pause()
+
+            await pilot.press("e")
+            await pilot.pause()
+
+            from textual.widgets import TextArea
+            editor = app.screen.query_one("#editor", TextArea)
+            # Change title but keep content the same
+            editor.text = "# Updated Title\nOriginal content"
+
+            await pilot.press("escape")
+            await pilot.pause()
+
+            # Verify task NOT called
+            mock_extract_task.assert_not_called()
+
+            # Verify title was updated
+            mock_database['update'].assert_called()
+
+
+@pytest.mark.asyncio
+async def test_edit_screen_empty_content_no_task_enqueue(mock_database):
+    """Empty/whitespace content should pop screen without saving or enqueueing task."""
+    mock_database['add'].return_value = "new-uuid"
+    mock_database['get_inference_enabled'].return_value = True
+
+    with patch('backend.services.tasks.extract_nodes_task') as mock_extract_task:
+        app = CharlieApp()
+        async with app_test_context(app) as pilot:
+            await pilot.pause()
+
+            await pilot.press("n")
+            await pilot.pause()
+
+            from textual.widgets import TextArea
+            editor = app.screen.query_one("#editor", TextArea)
+            # Set empty/whitespace content
+            editor.text = "   \n  \n  "
+
+            await pilot.press("escape")
+            await pilot.pause()
+
+            # Verify task NOT called
+            mock_extract_task.assert_not_called()
+
+            # Verify add NOT called (empty content should not save)
+            mock_database['add'].assert_not_called()

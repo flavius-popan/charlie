@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
@@ -173,23 +174,8 @@ async def add_journal_entry(
     # Persist to database (also ensures author entity "I" exists)
     await persist_episode(episode, journal=journal)
 
-    # Mark episode as pending node extraction
-    set_episode_status(episode_uuid, "pending_nodes", journal=journal)
-
-    # Enqueue background extraction if inference is enabled
-    if get_inference_enabled():
-        try:
-            from backend.services.tasks import extract_nodes_task
-
-            extract_nodes_task(episode_uuid, journal)
-        except Exception as exc:
-            # Do not block journal writes if the worker is unavailable
-            # Status remains in Redis so tasks can be recovered later.
-            import logging
-
-            logging.getLogger(__name__).warning(
-                "Failed to enqueue extract_nodes_task for %s: %s", episode_uuid, exc
-            )
+    # Mark episode as pending node extraction (task will be enqueued by caller)
+    await asyncio.to_thread(set_episode_status, episode_uuid, "pending_nodes", journal)
 
     return episode_uuid
 
