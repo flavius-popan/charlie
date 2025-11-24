@@ -245,6 +245,11 @@ class SidebarStateMachine(StateMachine):
             return "Inference disabled; enable inference to extract connections."
         return None
 
+    @property
+    def inference_enabled_flag(self) -> bool:
+        """Whether inference is currently enabled."""
+        return self._inference_enabled
+
     # Guard conditions for routing
 
     def _should_go_disabled(self, **data) -> bool:
