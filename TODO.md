@@ -6,6 +6,7 @@
 
 ## Minor but important
 
+- The UI hang switching from editing to viewing still happens.
 - Hide "d/up/down" labels in connections pane if no connections found
 - Improve readability/UI when no connections found/other valid statuses.
 - Add wc/token/journal metrics at bottom of md viewer
