@@ -207,7 +207,7 @@ The connections pane population was slow after editing because:
 - `EditScreen` sets Redis key `editing:active` once on mount (no TTL)
 - Key is explicitly deleted when EditScreen saves or unmounts
 - UI thread rule: all Redis calls in this flow MUST stay off the UI thread
-- Preload behavior removed: orchestrator no longer loads models solely because editing is active
+- Preload: orchestrator now warm-loads models when `editing:active` exists AND inference is enabled (Huey thread, cached thereafter)
 
 **Key Details:**
 - Global flag (not per-episode) - simpler, matches single-focus TUI model

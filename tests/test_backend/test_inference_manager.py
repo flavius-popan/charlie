@@ -84,18 +84,41 @@ def test_cleanup_keeps_models_when_user_is_editing():
                     mock_unload.assert_not_called()
 
 
-def test_orchestrator_does_not_preload_models():
-    """Orchestrator should not pre-load models; only enqueue and cleanup."""
+def test_orchestrator_loads_models_when_user_is_editing_and_enabled():
+    """Orchestrator should pre-load models when editing flag is set and inference enabled."""
     from backend.services.tasks import orchestrate_inference_work
 
     with patch("backend.database.redis_ops.enqueue_pending_episodes") as mock_enqueue:
-        with patch("backend.inference.manager.get_model") as mock_get_model:
-            with patch("backend.inference.manager.cleanup_if_no_work") as mock_cleanup:
-                orchestrate_inference_work.call_local(reschedule=False)
+        with patch("backend.database.redis_ops.redis_ops") as mock_redis_ops:
+            mock_redis = mock_redis_ops.return_value.__enter__.return_value
+            mock_redis.exists.return_value = True
 
-                mock_enqueue.assert_called_once()
-                mock_get_model.assert_not_called()
-                mock_cleanup.assert_called_once()
+            with patch("backend.database.redis_ops.get_inference_enabled", return_value=True):
+                with patch("backend.inference.manager.get_model") as mock_get_model:
+                    with patch("backend.inference.manager.cleanup_if_no_work") as mock_cleanup:
+                        orchestrate_inference_work.call_local(reschedule=False)
+
+                        mock_enqueue.assert_called_once()
+                        mock_redis.exists.assert_called_with("editing:active")
+                        mock_get_model.assert_called_once_with("llm")
+                        mock_cleanup.assert_called_once()
+
+
+def test_orchestrator_skips_preload_when_inference_disabled():
+    """Orchestrator should skip preloading when inference disabled."""
+    from backend.services.tasks import orchestrate_inference_work
+
+    with patch("backend.database.redis_ops.enqueue_pending_episodes"):
+        with patch("backend.database.redis_ops.redis_ops") as mock_redis_ops:
+            mock_redis = mock_redis_ops.return_value.__enter__.return_value
+            mock_redis.exists.return_value = True
+
+            with patch("backend.database.redis_ops.get_inference_enabled", return_value=False):
+                with patch("backend.inference.manager.get_model") as mock_get_model:
+                    with patch("backend.inference.manager.cleanup_if_no_work"):
+                        orchestrate_inference_work.call_local(reschedule=False)
+
+                        mock_get_model.assert_not_called()
 
 
 def test_orchestrator_handles_redis_errors_gracefully():

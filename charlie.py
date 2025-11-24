@@ -1040,7 +1040,7 @@ class EditScreen(Screen):
                 )
                 # THEN enqueue extraction task in background
                 if inference_enabled:
-                    await asyncio.to_thread(self._enqueue_extraction_task, uuid, DEFAULT_JOURNAL)
+                    self._enqueue_extraction_task(uuid, DEFAULT_JOURNAL)
             else:
                 # Update episode and check if content changed
                 if title:
@@ -1074,9 +1074,7 @@ class EditScreen(Screen):
                 )
                 # THEN enqueue extraction task in background if content changed
                 if content_changed and inference_enabled:
-                    await asyncio.to_thread(
-                        self._enqueue_extraction_task, self.episode_uuid, DEFAULT_JOURNAL
-                    )
+                    self._enqueue_extraction_task(self.episode_uuid, DEFAULT_JOURNAL)
 
         except Exception as e:
             logger.error(f"Failed to save entry: {e}", exc_info=True)

@@ -120,10 +120,25 @@ def extract_nodes_task(episode_uuid: str, journal: str):
 def orchestrate_inference_work(reschedule: bool = True):
     """Maintenance loop: enqueue pending nodes and unload when idle/disabled."""
     try:
-        from backend.database.redis_ops import enqueue_pending_episodes
-        from backend.inference.manager import cleanup_if_no_work
+        from backend.database.redis_ops import enqueue_pending_episodes, redis_ops, get_inference_enabled
+        from backend.inference.manager import cleanup_if_no_work, get_model
 
         enqueue_pending_episodes()
+
+        # Pre-load models when user is actively editing (only if inference is enabled).
+        if get_inference_enabled():
+            try:
+                with redis_ops() as r:
+                    user_is_editing = r.exists("editing:active")
+            except Exception as e:
+                logger.debug("Failed to check editing presence: %s", e)
+                user_is_editing = False
+
+            if user_is_editing:
+                try:
+                    get_model("llm")
+                except Exception as e:
+                    logger.warning("Failed to pre-load model during editing: %s", e, exc_info=True)
 
         cleanup_if_no_work()
     except Exception:
