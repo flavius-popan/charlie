@@ -189,7 +189,7 @@ All features implemented and tested. Redis cache architecture delivers instant l
 
 ## Performance Enhancement: Editing Presence Detection & Priority Queueing
 
-**Status:** ✅ Complete (2025-11-22)
+**Status:** ✅ Complete (2025-11-22) — updated: presence flag now set once per edit session (no TTL)
 **Commits:** `7d6a705`, `33ef30c`
 
 ### Problem Statement
@@ -204,16 +204,15 @@ The connections pane population was slow after editing because:
 #### 1. Editing Presence Detection
 
 **Mechanism:**
-- `EditScreen.on_text_area_changed()` fires on every keystroke
-- Sets Redis key `editing:active` with 120-second TTL
-- Key auto-expires if user stops typing or walks away
-- Explicitly deleted when EditScreen unmounts
+- `EditScreen` sets Redis key `editing:active` once on mount (no TTL)
+- Key is explicitly deleted when EditScreen saves or unmounts
+- UI thread rule: all Redis calls in this flow MUST stay off the UI thread
+- Preload behavior removed: orchestrator no longer loads models solely because editing is active
 
 **Key Details:**
 - Global flag (not per-episode) - simpler, matches single-focus TUI model
 - Works for BOTH new entries and editing existing entries
-- TTL refreshes on each keystroke (active typing keeps key alive)
-- Constant: `EDITING_PRESENCE_TTL = 120` seconds
+- Flag remains until explicit delete on exit (no periodic refresh needed)
 
 **Files:**
 - `charlie.py:759-765` - Event handler sets key

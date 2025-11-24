@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
@@ -174,7 +175,7 @@ async def add_journal_entry(
     await persist_episode(episode, journal=journal)
 
     # Mark episode as pending node extraction (task will be enqueued by caller)
-    set_episode_status(episode_uuid, "pending_nodes", journal)
+    await asyncio.to_thread(set_episode_status, episode_uuid, "pending_nodes", journal)
 
     return episode_uuid
 

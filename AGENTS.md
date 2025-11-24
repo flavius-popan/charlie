@@ -40,4 +40,4 @@ async def test_with_llm_call(isolated_graph, require_llm):
 - Use the respective conftest.py file for a given test suite for fixtures.
 - Add imports to the top of the module unless necessary for a given feature.
 - Opt for using hardcoded constants unless I explicitly ask to check for an env var.
-- Always use the project's uv-managed virtual environment (e.g., `uv add ...`) instead of the system Python for installing dependencies.
+- Always use the project's uv-managed virtual environment (e.g., `uv add ...`) instead of the system Python for installing dependencies and running tests.

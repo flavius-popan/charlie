@@ -361,10 +361,14 @@ async def update_episode(
 
     # Mark episode for node extraction if content changed and invalidate cache
     if content_changed:
-        set_episode_status(episode_uuid, "pending_nodes", journal)
-        with redis_ops() as r:
-            cache_key = get_journal_cache_key(journal, episode_uuid)
-            r.hdel(cache_key, "nodes")
+        await asyncio.to_thread(set_episode_status, episode_uuid, "pending_nodes", journal)
+
+        def _invalidate_cache():
+            with redis_ops() as r:
+                cache_key = get_journal_cache_key(journal, episode_uuid)
+                r.hdel(cache_key, "nodes")
+
+        await asyncio.to_thread(_invalidate_cache)
 
     return content_changed
 

@@ -84,38 +84,18 @@ def test_cleanup_keeps_models_when_user_is_editing():
                     mock_unload.assert_not_called()
 
 
-def test_orchestrator_loads_models_when_user_is_editing():
-    """Orchestrator should pre-load models when editing:active key exists."""
+def test_orchestrator_does_not_preload_models():
+    """Orchestrator should not pre-load models; only enqueue and cleanup."""
     from backend.services.tasks import orchestrate_inference_work
 
-    with patch("backend.database.redis_ops.enqueue_pending_episodes"):
-        with patch("backend.database.redis_ops.redis_ops") as mock_redis_ops:
-            mock_redis = mock_redis_ops.return_value.__enter__.return_value
-            mock_redis.exists.return_value = True
+    with patch("backend.database.redis_ops.enqueue_pending_episodes") as mock_enqueue:
+        with patch("backend.inference.manager.get_model") as mock_get_model:
+            with patch("backend.inference.manager.cleanup_if_no_work") as mock_cleanup:
+                orchestrate_inference_work.call_local(reschedule=False)
 
-            with patch("backend.inference.manager.get_model") as mock_get_model:
-                with patch("backend.inference.manager.cleanup_if_no_work"):
-                    orchestrate_inference_work.call_local(reschedule=False)
-
-                    mock_redis.exists.assert_called_with("editing:active")
-                    mock_get_model.assert_called_once_with("llm")
-
-
-def test_orchestrator_skips_loading_when_not_editing():
-    """Orchestrator should not load models when editing:active key doesn't exist."""
-    from backend.services.tasks import orchestrate_inference_work
-
-    with patch("backend.database.redis_ops.enqueue_pending_episodes"):
-        with patch("backend.database.redis_ops.redis_ops") as mock_redis_ops:
-            mock_redis = mock_redis_ops.return_value.__enter__.return_value
-            mock_redis.exists.return_value = False
-
-            with patch("backend.inference.manager.get_model") as mock_get_model:
-                with patch("backend.inference.manager.cleanup_if_no_work"):
-                    orchestrate_inference_work.call_local(reschedule=False)
-
-                    mock_redis.exists.assert_called_with("editing:active")
-                    mock_get_model.assert_not_called()
+                mock_enqueue.assert_called_once()
+                mock_get_model.assert_not_called()
+                mock_cleanup.assert_called_once()
 
 
 def test_orchestrator_handles_redis_errors_gracefully():
@@ -135,34 +115,24 @@ def test_orchestrator_handles_redis_errors_gracefully():
                     mock_get_model.assert_not_called()
 
 
-def test_orchestrator_reuses_cached_model_if_already_loaded():
-    """Orchestrator should use cached model if already loaded (idempotent)."""
+def test_orchestrator_leaves_cached_model_untouched():
+    """Orchestrator no longer preloads; cached model remains intact."""
     from backend.services.tasks import orchestrate_inference_work
     from backend.inference.manager import MODELS
     from unittest.mock import MagicMock
 
-    # Pre-load a mock model into the cache
     mock_model = MagicMock()
     MODELS["llm"] = mock_model
 
     try:
         with patch("backend.database.redis_ops.enqueue_pending_episodes"):
-            with patch("backend.database.redis_ops.redis_ops") as mock_redis_ops:
-                mock_redis = mock_redis_ops.return_value.__enter__.return_value
-                mock_redis.exists.return_value = True
+            with patch("backend.inference.manager.get_model") as mock_get_model:
+                with patch("backend.inference.manager.cleanup_if_no_work"):
+                    orchestrate_inference_work.call_local(reschedule=False)
 
-                # Use a spy to track get_model calls without replacing behavior
-                from backend.inference.manager import get_model as real_get_model
-                with patch("backend.inference.manager.get_model", wraps=real_get_model) as spy:
-                    with patch("backend.inference.manager.cleanup_if_no_work"):
-                        orchestrate_inference_work.call_local(reschedule=False)
-
-                        # Should call get_model
-                        spy.assert_called_once_with("llm")
-                        # Should return the cached model (not reload)
-                        assert MODELS["llm"] is mock_model
+                    mock_get_model.assert_not_called()
+                    assert MODELS["llm"] is mock_model
     finally:
-        # Clean up: reset model cache
         MODELS["llm"] = None
 
 
@@ -187,37 +157,35 @@ def test_orchestrator_handles_model_loading_errors_gracefully():
 
 
 def test_editing_presence_keeps_models_warm_end_to_end():
-    """Integration test: typing → model pre-load → cleanup respects editing flag."""
+    """Integration test: editing flag prevents unload; no auto-preload."""
     from backend.services.tasks import orchestrate_inference_work
     from backend.inference.manager import MODELS, cleanup_if_no_work
     from backend.database.redis_ops import redis_ops
     from unittest.mock import MagicMock
 
     try:
-        # Step 1: Simulate user typing (set editing:active key)
+        # Step 1: Simulate user editing (set editing:active key)
         with redis_ops() as r:
-            r.setex("editing:active", 120, "active")
+            r.set("editing:active", "active")
 
-        # Step 2: Verify models not loaded yet
-        assert MODELS["llm"] is None, "Model should not be loaded initially"
+        # Step 2: Manually set a loaded model (simulating prior work)
+        MODELS["llm"] = MagicMock()
 
-        # Step 3: Run orchestrator (should detect editing and pre-load)
+        # Step 3: Run orchestrator (should not preload/alter loaded model)
         with patch("backend.database.redis_ops.enqueue_pending_episodes"):
             with patch("backend.database.redis_ops.get_episodes_by_status", return_value=[]):
                 with patch("backend.database.redis_ops.get_inference_enabled", return_value=True):
-                    # Mock the actual model loading to avoid loading real models in tests
-                    mock_model = MagicMock()
-                    with patch("backend.inference.manager.DspyLM", return_value=mock_model):
-                        orchestrate_inference_work.call_local(reschedule=False)
+                    orchestrate_inference_work.call_local(reschedule=False)
+                    # Model remains loaded; no preload invoked
+                    assert MODELS["llm"] is not None, "Model should remain loaded"
 
-                        # Step 4: Verify model is now loaded
-                        assert MODELS["llm"] is not None, "Model should be loaded after orchestrator runs"
+        # Step 4: Verify cleanup doesn't unload while editing:active exists
+        with patch("backend.database.redis_ops.get_episodes_by_status", return_value=[]):
+            with patch("backend.database.redis_ops.get_inference_enabled", return_value=True):
+                cleanup_if_no_work()
+                assert MODELS["llm"] is not None, "Model should stay loaded while editing"
 
-                        # Step 5: Verify cleanup doesn't unload while editing:active exists
-                        cleanup_if_no_work()
-                        assert MODELS["llm"] is not None, "Model should still be loaded while editing"
-
-        # Step 6: Delete key and verify cleanup unloads
+        # Step 5: Delete key and verify cleanup unloads
         with redis_ops() as r:
             r.delete("editing:active")
 

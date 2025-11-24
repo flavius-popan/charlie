@@ -55,10 +55,10 @@ LOGS_DIR.mkdir(exist_ok=True)
 
 os.environ.setdefault("TEXTUAL_LOG", str(LOGS_DIR / "charlie.log"))
 
-# Editing presence detection TTL (seconds)
-# Models stay loaded for this duration after last keystroke
-EDITING_PRESENCE_TTL = 120
-
+# UI THREAD SAFETY MANDATE:
+# No blocking or synchronous I/O on the UI thread. Offload Redis/DB/file/network
+# work via run_worker(thread=True) or asyncio.to_thread. Keep this invariant when
+# adding handlers or features.
 
 class _NoActiveAppFilter(logging.Filter):
     """Allow records through only when no Textual app context is active."""
@@ -904,6 +904,8 @@ class EditScreen(Screen):
 
     WARNING: Do NOT use recompose() in this screen - TextArea widget
     has internal state (cursor position, undo history) that would be lost.
+    UI thread rule: never add blocking I/O here; offload with run_worker(thread=True)
+    or asyncio.to_thread.
     """
 
     BINDINGS = [
@@ -917,13 +919,45 @@ class EditScreen(Screen):
         self.is_new_entry = episode_uuid is None
         self.episode = None
 
-    def on_text_area_changed(self, event: TextArea.Changed) -> None:
-        """Set Redis key when user types to indicate active editing session."""
+    @staticmethod
+    def _set_editing_presence() -> None:
+        """Mark editing as active (non-blocking via worker)."""
         try:
             with redis_ops() as r:
-                r.setex("editing:active", EDITING_PRESENCE_TTL, "active")
+                r.set("editing:active", "active")
         except Exception as e:
             logger.debug("Failed to set editing presence key: %s", e)
+
+    @staticmethod
+    def _clear_editing_presence() -> None:
+        """Clear editing presence flag (non-blocking via worker)."""
+        try:
+            with redis_ops() as r:
+                r.delete("editing:active")
+        except Exception as e:
+            logger.debug("Failed to delete editing presence key: %s", e)
+
+    def _schedule_set_editing_presence(self) -> None:
+        try:
+            self.run_worker(
+                self._set_editing_presence,
+                exclusive=True,
+                name="editing-presence-set",
+                thread=True,
+            )
+        except Exception as e:
+            logger.debug("Failed to schedule editing presence set: %s", e)
+
+    def _schedule_clear_editing_presence(self) -> None:
+        try:
+            self.run_worker(
+                self._clear_editing_presence,
+                exclusive=True,
+                name="editing-presence-clear",
+                thread=True,
+            )
+        except Exception as e:
+            logger.debug("Failed to schedule editing presence clear: %s", e)
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False, icon="")
@@ -933,6 +967,9 @@ class EditScreen(Screen):
     async def on_mount(self):
         if not self.is_new_entry:
             await self.load_episode()
+
+        # Fire-and-forget: mark editing active without blocking UI thread.
+        self._schedule_set_editing_presence()
 
         editor = self.query_one("#editor", TextArea)
         editor.focus()
@@ -955,11 +992,7 @@ class EditScreen(Screen):
 
     def _delete_editing_key(self) -> None:
         """Delete Redis editing presence key."""
-        try:
-            with redis_ops() as r:
-                r.delete("editing:active")
-        except Exception as e:
-            logger.debug("Failed to delete editing presence key: %s", e)
+        self._schedule_clear_editing_presence()
 
     def on_unmount(self) -> None:
         """Delete Redis key when screen is unmounted."""
@@ -973,6 +1006,9 @@ class EditScreen(Screen):
             editor = self.query_one("#editor", TextArea)
             content = editor.text
 
+            # Clear editing presence as soon as a save is initiated (non-blocking).
+            self._schedule_clear_editing_presence()
+
             if not content.strip():
                 self.app.pop_screen()
                 return
@@ -983,10 +1019,10 @@ class EditScreen(Screen):
                 uuid = await add_journal_entry(content=content)
                 if title:
                     await update_episode(uuid, name=title)
-                inference_enabled = get_inference_enabled()
+                inference_enabled = await asyncio.to_thread(get_inference_enabled)
 
                 # Determine if connections pane should be shown
-                status = get_episode_status(uuid, DEFAULT_JOURNAL)
+                status = await asyncio.to_thread(get_episode_status, uuid, DEFAULT_JOURNAL)
                 show_connections = (
                     inference_enabled and status in ("pending_nodes", "pending_edges")
                 )
@@ -1004,7 +1040,7 @@ class EditScreen(Screen):
                 )
                 # THEN enqueue extraction task in background
                 if inference_enabled:
-                    self._enqueue_extraction_task(uuid, DEFAULT_JOURNAL)
+                    await asyncio.to_thread(self._enqueue_extraction_task, uuid, DEFAULT_JOURNAL)
             else:
                 # Update episode and check if content changed
                 if title:
@@ -1015,9 +1051,11 @@ class EditScreen(Screen):
                     content_changed = await update_episode(
                         self.episode_uuid, content=content
                     )
-                inference_enabled = get_inference_enabled()
+                inference_enabled = await asyncio.to_thread(get_inference_enabled)
 
-                status = get_episode_status(self.episode_uuid, DEFAULT_JOURNAL)
+                status = await asyncio.to_thread(
+                    get_episode_status, self.episode_uuid, DEFAULT_JOURNAL
+                )
                 show_connections = (
                     inference_enabled
                     and content_changed
@@ -1036,7 +1074,9 @@ class EditScreen(Screen):
                 )
                 # THEN enqueue extraction task in background if content changed
                 if content_changed and inference_enabled:
-                    self._enqueue_extraction_task(self.episode_uuid, DEFAULT_JOURNAL)
+                    await asyncio.to_thread(
+                        self._enqueue_extraction_task, self.episode_uuid, DEFAULT_JOURNAL
+                    )
 
         except Exception as e:
             logger.error(f"Failed to save entry: {e}", exc_info=True)

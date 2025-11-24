@@ -67,8 +67,8 @@ class TestEditingPresence:
     """Tests for editing presence detection via Redis keys."""
 
     @pytest.mark.asyncio
-    async def test_text_change_sets_redis_key_with_ttl(self, mock_database):
-        """Should set Redis key with TTL when user types in TextArea."""
+    async def test_edit_screen_sets_presence_on_mount(self, mock_database):
+        """Should set Redis key when entering EditScreen (no TTL, no per-keystroke)."""
         from datetime import datetime
 
         mock_episode = {
@@ -84,33 +84,23 @@ class TestEditingPresence:
         async with app_test_context(app) as pilot:
             await pilot.pause()
 
-            # Open EditScreen with existing episode
-            await pilot.press("space")
-            await pilot.pause()
-            await pilot.pause()
-
-            await pilot.press("e")
-            await pilot.pause()
-
             mock_redis = Mock()
             with patch('charlie.redis_ops') as mock_redis_ops:
                 mock_redis_ops.return_value.__enter__ = Mock(return_value=mock_redis)
                 mock_redis_ops.return_value.__exit__ = Mock(return_value=None)
 
-                # Type some text to trigger TextArea.Changed event
-                await pilot.press("t", "e", "s", "t")
+                # Open EditScreen with existing episode
+                await pilot.press("space")
+                await pilot.pause()
                 await pilot.pause()
 
-                # Verify Redis key was set with correct TTL
-                assert mock_redis.setex.call_count >= 1, \
-                    f"Expected setex to be called at least once, but was called {mock_redis.setex.call_count} times"
+                await pilot.press("e")
+                await pilot.pause()
+                await pilot.pause()
 
-                # Verify it was called with editing:active key
-                mock_redis.setex.assert_called_with(
-                    "editing:active",
-                    120,
-                    "active"
-                )
+                assert mock_redis.set.call_count >= 1, \
+                    f"Expected set to be called at least once, but was called {mock_redis.set.call_count} times"
+                mock_redis.set.assert_called_with("editing:active", "active")
 
     @pytest.mark.asyncio
     async def test_key_deleted_on_save_and_return(self, mock_database):
@@ -131,28 +121,29 @@ class TestEditingPresence:
         async with app_test_context(app) as pilot:
             await pilot.pause()
 
-            # Open EditScreen with existing episode
-            await pilot.press("space")
-            await pilot.pause()
-            await pilot.pause()
-
-            await pilot.press("e")
-            await pilot.pause()
-
             mock_redis = Mock()
             with patch('charlie.redis_ops') as mock_redis_ops:
                 mock_redis_ops.return_value.__enter__ = Mock(return_value=mock_redis)
                 mock_redis_ops.return_value.__exit__ = Mock(return_value=None)
 
+                # Open EditScreen with existing episode
+                await pilot.press("space")
+                await pilot.pause()
+                await pilot.pause()
+
+                await pilot.press("e")
+                await pilot.pause()
+
                 with patch('backend.services.tasks.extract_nodes_task'):
                     # Save and return
                     await pilot.press("escape")
                     await pilot.pause()
+                    await pilot.pause()
 
-                    # Verify Redis key was deleted
-                    assert mock_redis.delete.call_count >= 1, \
-                        f"Expected delete to be called at least once, but was called {mock_redis.delete.call_count} times"
-                    mock_redis.delete.assert_called_with("editing:active")
+                # Verify Redis key was deleted
+                assert mock_redis.delete.call_count >= 1, \
+                    f"Expected delete to be called at least once, but was called {mock_redis.delete.call_count} times"
+                mock_redis.delete.assert_called_with("editing:active")
 
     @pytest.mark.asyncio
     async def test_key_deleted_on_unmount(self, mock_database):
@@ -173,28 +164,29 @@ class TestEditingPresence:
         async with app_test_context(app) as pilot:
             await pilot.pause()
 
-            # Open EditScreen with existing episode
-            await pilot.press("space")
-            await pilot.pause()
-            await pilot.pause()
-
-            await pilot.press("e")
-            await pilot.pause()
-
             mock_redis = Mock()
             with patch('charlie.redis_ops') as mock_redis_ops:
                 mock_redis_ops.return_value.__enter__ = Mock(return_value=mock_redis)
                 mock_redis_ops.return_value.__exit__ = Mock(return_value=None)
 
+                # Open EditScreen with existing episode
+                await pilot.press("space")
+                await pilot.pause()
+                await pilot.pause()
+
+                await pilot.press("e")
+                await pilot.pause()
+
                 with patch('backend.services.tasks.extract_nodes_task'):
                     # Navigate back (triggers save_and_return which then pops)
                     await pilot.press("q")
                     await pilot.pause()
+                    await pilot.pause()
 
-                    # Verify Redis key was deleted (called once in action_save_and_return, once in on_unmount)
-                    assert mock_redis.delete.call_count >= 1, \
-                        f"Expected delete to be called at least once, but was called {mock_redis.delete.call_count} times"
-                    mock_redis.delete.assert_called_with("editing:active")
+                # Verify Redis key was deleted (called at least once)
+                assert mock_redis.delete.call_count >= 1, \
+                    f"Expected delete to be called at least once, but was called {mock_redis.delete.call_count} times"
+                mock_redis.delete.assert_called_with("editing:active")
 
     @pytest.mark.asyncio
     async def test_redis_error_does_not_interrupt_editing(self, mock_database):
@@ -214,56 +206,46 @@ class TestEditingPresence:
         async with app_test_context(app) as pilot:
             await pilot.pause()
 
-            # Open EditScreen with existing episode
-            await pilot.press("space")
-            await pilot.pause()
-            await pilot.pause()
-
-            await pilot.press("e")
-            await pilot.pause()
-
             mock_redis = Mock()
-            mock_redis.setex.side_effect = Exception("Redis connection failed")
+            mock_redis.set.side_effect = Exception("Redis connection failed")
 
             with patch('charlie.redis_ops') as mock_redis_ops:
                 mock_redis_ops.return_value.__enter__ = Mock(return_value=mock_redis)
                 mock_redis_ops.return_value.__exit__ = Mock(return_value=None)
 
-                # Type some text - should not crash despite Redis error
-                await pilot.press("t", "e", "s", "t")
+                # Open EditScreen with existing episode (triggers presence set)
+                await pilot.press("space")
+                await pilot.pause()
                 await pilot.pause()
 
-                # Editing should still work
-                editor = app.query_one("#editor", TextArea)
-                assert "test" in editor.text
+                await pilot.press("e")
+                await pilot.pause()
+                await pilot.pause()
+
+            # Editing should still work
+            editor = app.query_one("#editor", TextArea)
+            assert editor.text == mock_episode["content"]
 
     @pytest.mark.asyncio
     async def test_new_entry_sets_editing_active_key(self, mock_database):
-        """Should set editing:active key for new entries even without UUID."""
+        """Should set editing:active key for new entries on mount (no TTL)."""
         mock_database['add'].return_value = "new-uuid"
 
         app = CharlieApp()
         async with app_test_context(app) as pilot:
             await pilot.pause()
 
-            # Open EditScreen for new entry
-            await pilot.press("n")
-            await pilot.pause()
-
             mock_redis = Mock()
             with patch('charlie.redis_ops') as mock_redis_ops:
                 mock_redis_ops.return_value.__enter__ = Mock(return_value=mock_redis)
                 mock_redis_ops.return_value.__exit__ = Mock(return_value=None)
 
-                # Type some text
-                await pilot.press("t", "e", "s", "t")
+                # Open EditScreen for new entry
+                await pilot.press("n")
+                await pilot.pause()
                 await pilot.pause()
 
                 # Verify Redis key was set with editing:active
-                assert mock_redis.setex.call_count >= 1, \
-                    f"Expected setex to be called at least once for new entries, but was called {mock_redis.setex.call_count} times"
-                mock_redis.setex.assert_called_with(
-                    "editing:active",
-                    120,
-                    "active"
-                )
+                assert mock_redis.set.call_count >= 1, \
+                    f"Expected set to be called at least once for new entries, but was called {mock_redis.set.call_count} times"
+                mock_redis.set.assert_called_with("editing:active", "active")
