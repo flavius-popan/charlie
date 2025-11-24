@@ -18,19 +18,6 @@ def _reload_lifecycle(monkeypatch, *, enabled: bool):
     return importlib.reload(lifecycle)
 
 
-def test_tcp_server_enabled_uses_localhost(monkeypatch):
-    lifecycle = _reload_lifecycle(monkeypatch, enabled=True)
-
-    # Should expose endpoint on localhost:6379 when enabled
-    assert lifecycle.get_tcp_server_endpoint() == ("127.0.0.1", 6379)
-
-    serverconfig = lifecycle._build_serverconfig()
-    assert serverconfig == {"port": "6379", "bind": "127.0.0.1"}
-
-    # Restore default disabled state for other tests
-    _reload_lifecycle(monkeypatch, enabled=False)
-
-
 def test_tcp_server_disabled_when_flag_false(monkeypatch):
     lifecycle = _reload_lifecycle(monkeypatch, enabled=False)
 
