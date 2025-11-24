@@ -224,6 +224,24 @@ class TestUserDeletion:
         machine.send("user_deleted_entity", entities_present=False)
         assert machine.current_state == machine.empty_idle
 
+    def test_delete_last_entity_clears_status(self):
+        """Verify status is None in empty_idle state after last entity deletion.
+
+        Status must be None to prevent EntitySidebar from showing incorrect UI messages
+        based on stale status values.
+        """
+        machine = SidebarStateMachine()
+        machine.send("show", status="done", inference_enabled=True, entities_present=True)
+        assert machine.current_state == machine.ready_entities
+        assert machine.output.status == "done"
+        assert machine.output.active_processing is False
+
+        machine.send("user_deleted_entity", entities_present=False)
+        assert machine.current_state == machine.empty_idle
+        assert machine.output.status is None
+        assert machine.output.active_processing is False
+        assert machine.output.entities_present is False
+
 
 class TestEpisodeClosedEvent:
     """Test episode_closed event."""

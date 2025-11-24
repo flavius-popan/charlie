@@ -406,6 +406,11 @@ class SidebarStateMachine(StateMachine):
             self._entities_present = entities_present
         if status is not None:
             self._status = status
+        elif entities_present is False:
+            # When last entity is deleted (transitioning to empty_idle),
+            # clear status to prevent stale "pending_edges"/"pending_nodes" from
+            # causing EntitySidebar to show "Awaiting processing..." instead of "No connections found"
+            self._status = None
 
     def apply_event(self, event_name: str, **data) -> SidebarOutput:
         """Apply event and return updated output.

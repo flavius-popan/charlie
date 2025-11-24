@@ -6,6 +6,14 @@ Unless I request a simple change, any discussion of architecture, design, featur
 
 Git add & commit are fine for feature branches but NEVER for `main`!
 
+## Comment Rules
+
+- Add code comments sparingly.
+- Focus on *why* something is done, especially for complex logic, rather than *what* is done.
+- Only add high-value comments if necessary for clarity or if requested by the user.
+- Do not edit comments that are separate from the code you are changing. *NEVER* talk to the user or describe your changes through comments.
+- Ensure all comments are evergreen and don't reference line numbers or bugs that were previously fixed, espcially for tests.
+
 ## Testing Textual Applications
 
 **CRITICAL:** Never run the Textual app directly (e.g., `python charlie.py`) in a non-interactive shell or agent environment. It will hang or output raw terminal control codes.
@@ -34,6 +42,18 @@ async def test_with_llm_call(isolated_graph, require_llm):
     # Test automatically skips if dspy.settings.lm is None
     # Test code that makes LLM calls via DSPy
 ```
+
+## State Machine Diagram Regeneration
+
+**CRITICAL: When modifying any state machine (adding/removing states, events, or transitions), regenerate its diagram immediately after implementation.**
+
+State diagrams are generated from the state machine definition and must stay in sync to avoid diagram drift. If a plan or task mentions a state diagram file (e.g., `frontend/diagrams/sidebar_state_machine.png`), regenerate it whenever you modify the corresponding state machine.
+
+**How to regenerate:**
+- Look for a `generate_diagram()` function in the state machine module
+- Call it explicitly: `python -c "from path.to.module import generate_diagram; generate_diagram()"`
+- Verify the updated diagram is committed
+- Never skip this step - diagram drift makes architecture documentation unreliable
 
 ### Misc. Things to Remember
 
