@@ -1,4 +1,5 @@
 ## Technical
+- USE DIFF TOOL TO ONLY RE-EXTRACT DIFF CONTENT??
 - Discover relative time references and auto-map them to time-bounded queries
 - Add toggle for switching between perma-ban/journal delete for entities
 - Implement [Contextual Retreival](https://www.anthropic.com/engineering/contextual-retrieval)
