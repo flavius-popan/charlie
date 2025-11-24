@@ -15,6 +15,12 @@ dependencies = [
     "textual>=6.6.0",
     "pytest-textual-snapshot>=1.0.0",
     "huey>=2.5.4",
+    "python-statemachine>=2.5.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "python-statemachine[diagrams]>=2.5.0",
 ]
 
 [tool.setuptools.packages.find]

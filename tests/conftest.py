@@ -8,18 +8,25 @@ pytest's filterwarnings or Python's warnings module. They are emitted by Textual
 internal async cleanup and do not indicate test failures. See pyproject.toml filterwarnings
 for attempted suppressions.
 """
-
-import sys
 from pathlib import Path
-import pytest
+import sys
+from unittest.mock import AsyncMock, patch
 
-# Ensure project root is importable when running tests directly.
+# Ensure project root is importable before backend imports.
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+# ---------------------------------------------------------------------------
+# Database isolation: redirect all tests to tests/data/charlie-test.db
+# This MUST occur before any other backend imports.
+# ---------------------------------------------------------------------------
+import backend.settings as backend_settings
+backend_settings.DB_PATH = Path(__file__).parent / "data" / "charlie-test.db"
+
+import pytest
+
 # Disable TCP listener in tests to avoid clashing with a running app instance.
-from backend import settings as backend_settings
 backend_settings.REDIS_TCP_ENABLED = False
 backend_settings.TCP_PORT = 0
 
@@ -99,4 +106,5 @@ def assert_worker_running(screen, worker_name):
         True if worker is found and running, False otherwise
     """
     return any(w.name == worker_name and w.is_running for w in screen.workers)
+
 

@@ -175,8 +175,9 @@ async def delete_entity_mention(
                 if updated_map != uuid_map:
                     r.hset(cache_key, "uuid_map", json.dumps(updated_map))
 
-            # 4. If no entities remain, set status to "done"
-            if not remaining_nodes:
+            # 4. If no visible entities remain (excluding "I"), set status to "done"
+            visible_remaining = [n for n in remaining_nodes if n.get("name") != "I"]
+            if not visible_remaining:
                 r.hset(cache_key, "status", "done")
 
             # 5. TODO: Update 'entity_edges' when edge extraction implemented

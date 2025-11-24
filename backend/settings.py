@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-DB_PATH = Path("data/charlie.db")
+DB_PATH = Path(os.getenv("CHARLIE_DB_PATH", "data/charlie.db"))
 DEFAULT_JOURNAL = "default"
 
 # Single switch to expose FalkorDB/Redis over TCP. Set to True to enable.

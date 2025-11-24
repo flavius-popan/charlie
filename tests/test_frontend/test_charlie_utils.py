@@ -2,7 +2,7 @@
 
 import pytest
 
-from charlie import extract_title, get_display_title
+from frontend.utils import extract_title, get_display_title
 
 
 class TestExtractTitle:

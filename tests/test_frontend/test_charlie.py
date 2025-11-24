@@ -34,15 +34,12 @@ from unittest.mock import AsyncMock, Mock, patch, mock_open
 
 import pytest
 
-from charlie import (
-    CharlieApp,
-    HomeScreen,
-    ViewScreen,
-    EditScreen,
-    SettingsScreen,
-    EntitySidebar,
-    DeleteEntityModal,
-)
+from charlie import CharlieApp
+from frontend.screens.home_screen import HomeScreen
+from frontend.screens.view_screen import ViewScreen
+from frontend.screens.edit_screen import EditScreen
+from frontend.screens.settings_screen import SettingsScreen
+from frontend.widgets.entity_sidebar import EntitySidebar, DeleteEntityModal
 
 
 @asynccontextmanager
@@ -71,21 +68,120 @@ async def app_test_context(app):
 @pytest.fixture
 def mock_database():
     """Mock all database operations for testing."""
-    with patch('charlie.ensure_database_ready', new_callable=AsyncMock) as mock_ensure, \
-         patch('charlie.get_all_episodes', new_callable=AsyncMock) as mock_get_all, \
-         patch('charlie.get_episode', new_callable=AsyncMock) as mock_get, \
-         patch('charlie.add_journal_entry', new_callable=AsyncMock) as mock_add, \
-         patch('charlie.update_episode', new_callable=AsyncMock) as mock_update, \
-         patch('charlie.delete_episode', new_callable=AsyncMock) as mock_delete, \
-         patch('charlie.shutdown_database') as mock_shutdown, \
-         patch('charlie.get_inference_enabled') as mock_get_inference_enabled, \
-         patch('charlie.set_inference_enabled') as mock_set_inference_enabled, \
-         patch('charlie.get_episode_status') as mock_get_episode_status:
+    from contextlib import ExitStack
+    from unittest.mock import MagicMock
 
-        mock_ensure.return_value = None
-        mock_get_all.return_value = []
-        mock_get_inference_enabled.return_value = False
-        mock_get_episode_status.return_value = None
+    with ExitStack() as stack:
+        mock_get_all = AsyncMock(return_value=[])
+        mock_get = AsyncMock()
+        mock_add = AsyncMock()
+        mock_update = AsyncMock()
+        mock_delete = AsyncMock()
+        mock_ensure = AsyncMock(return_value=None)
+        mock_shutdown = MagicMock()
+        mock_get_inference_enabled = MagicMock(return_value=False)
+        mock_set_inference_enabled = MagicMock()
+        mock_get_episode_status = MagicMock(return_value=None)
+
+        # Patch shared functions across modules to the same mocks
+        stack.enter_context(patch('charlie.get_all_episodes', mock_get_all))
+        stack.enter_context(patch('backend.database.get_all_episodes', mock_get_all))
+        stack.enter_context(patch('frontend.screens.home_screen.get_all_episodes', mock_get_all))
+
+        stack.enter_context(patch('charlie.get_episode', mock_get))
+        stack.enter_context(patch('backend.database.get_episode', mock_get))
+        stack.enter_context(patch('frontend.screens.edit_screen.get_episode', mock_get))
+        stack.enter_context(patch('frontend.screens.view_screen.get_episode', mock_get))
+
+        stack.enter_context(patch('charlie.add_journal_entry', mock_add))
+        stack.enter_context(patch('backend.add_journal_entry', mock_add))
+        stack.enter_context(patch('frontend.screens.edit_screen.add_journal_entry', mock_add))
+
+        stack.enter_context(patch('charlie.update_episode', mock_update))
+        stack.enter_context(patch('backend.database.update_episode', mock_update))
+        stack.enter_context(patch('frontend.screens.edit_screen.update_episode', mock_update))
+
+        stack.enter_context(patch('charlie.delete_episode', mock_delete))
+        stack.enter_context(patch('backend.database.delete_episode', mock_delete))
+
+        stack.enter_context(patch('charlie.ensure_database_ready', mock_ensure))
+        stack.enter_context(patch('backend.database.ensure_database_ready', mock_ensure))
+        stack.enter_context(patch('frontend.screens.home_screen.ensure_database_ready', mock_ensure))
+
+        stack.enter_context(patch('charlie.shutdown_database', mock_shutdown))
+        stack.enter_context(patch('backend.database.shutdown_database', mock_shutdown))
+
+        stack.enter_context(patch('charlie.get_inference_enabled', mock_get_inference_enabled))
+        stack.enter_context(patch('frontend.screens.view_screen.get_inference_enabled', mock_get_inference_enabled))
+        stack.enter_context(patch('frontend.screens.settings_screen.get_inference_enabled', mock_get_inference_enabled))
+        stack.enter_context(patch('frontend.screens.edit_screen.get_inference_enabled', mock_get_inference_enabled))
+
+        stack.enter_context(patch('charlie.set_inference_enabled', mock_set_inference_enabled))
+        stack.enter_context(patch('frontend.screens.settings_screen.set_inference_enabled', mock_set_inference_enabled))
+
+        stack.enter_context(patch('charlie.get_episode_status', mock_get_episode_status))
+        stack.enter_context(patch('frontend.screens.view_screen.get_episode_status', mock_get_episode_status))
+        stack.enter_context(patch('frontend.screens.edit_screen.get_episode_status', mock_get_episode_status))
+        stack.enter_context(patch('backend.database.redis_ops.get_episode_status', mock_get_episode_status))
+
+        # Keep EditScreen redis_ops in sync with charlie.redis_ops (so test patches propagate)
+        def current_redis_ops():
+            import charlie
+            return charlie.redis_ops()
+        stack.enter_context(patch('frontend.screens.edit_screen.redis_ops', current_redis_ops))
+
+        # Huey / task queue no-ops
+        mock_start_huey = MagicMock()
+        mock_huey_running = MagicMock(return_value=True)
+        stack.enter_context(patch('charlie.start_huey_consumer', mock_start_huey))
+        stack.enter_context(patch('charlie.is_huey_consumer_running', mock_huey_running))
+        stack.enter_context(patch('backend.services.queue.start_huey_consumer', mock_start_huey))
+        stack.enter_context(patch('backend.services.queue.is_huey_consumer_running', mock_huey_running))
+
+        # Prevent extraction tasks from enqueuing
+        mock_extract_task = MagicMock()
+        stack.enter_context(patch('backend.services.tasks.extract_nodes_task', mock_extract_task))
+
+        # Execute EditScreen workers inline for presence keys
+        def immediate_run_worker(self, coro, *, exclusive=False, name=None, thread=False):
+            if asyncio.iscoroutine(coro):
+                asyncio.get_running_loop().create_task(coro)
+                return None
+            if callable(coro):
+                return coro()
+            return coro
+
+        stack.enter_context(patch('frontend.screens.edit_screen.EditScreen.run_worker', immediate_run_worker))
+
+        # Patch presence helpers to honor patched charlie.redis_ops in tests
+        def patched_set_presence():
+            import charlie
+            try:
+                with charlie.redis_ops() as r:
+                    r.set("editing:active", "active")
+            except Exception:
+                pass
+
+        def patched_clear_presence():
+            import charlie
+            try:
+                with charlie.redis_ops() as r:
+                    r.delete("editing:active")
+            except Exception:
+                pass
+
+        stack.enter_context(patch('frontend.screens.edit_screen.EditScreen._set_editing_presence', staticmethod(patched_set_presence)))
+        stack.enter_context(patch('frontend.screens.edit_screen.EditScreen._clear_editing_presence', staticmethod(patched_clear_presence)))
+
+        # Sensible defaults for common expectations
+        mock_add.return_value = "new-uuid"
+        mock_update.return_value = True
+        mock_get.return_value = {
+            "uuid": "existing-uuid",
+            "content": "# Title\nBody",
+            "name": "Title",
+            "valid_at": None,
+        }
 
         yield {
             'ensure': mock_ensure,
@@ -98,6 +194,20 @@ def mock_database():
             'get_inference_enabled': mock_get_inference_enabled,
             'set_inference_enabled': mock_set_inference_enabled,
             'get_episode_status': mock_get_episode_status,
+            # shared mocks reused across layers
+            'backend_get_all': mock_get_all,
+            'backend_get': mock_get,
+            'backend_update': mock_update,
+            'backend_delete': mock_delete,
+            'backend_ensure': mock_ensure,
+            'backend_shutdown': mock_shutdown,
+            'home_get_all': mock_get_all,
+            'home_ensure': mock_ensure,
+            'start_huey': mock_start_huey,
+            'huey_running': mock_huey_running,
+            'backend_start_huey': mock_start_huey,
+            'backend_huey_running': mock_huey_running,
+            'extract_task': mock_extract_task,
         }
 
 
@@ -1114,6 +1224,7 @@ class TestConnectionsPaneVisibility:
             "content": "# Title\nBody",
             "name": "Title",
         }
+        mock_database["get_episode_status"].return_value = "pending_nodes"
 
         with patch("backend.services.tasks.extract_nodes_task") as mock_task, \
              patch("charlie.get_episode_status", return_value="pending_nodes"), \

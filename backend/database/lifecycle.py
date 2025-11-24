@@ -5,8 +5,10 @@ from __future__ import annotations
 import atexit
 import logging
 import os
+import shutil
 import signal
 import time
+from pathlib import Path
 from threading import Lock
 from typing import Any
 
@@ -25,9 +27,6 @@ except Exception:
 
 logger = logging.getLogger(__name__)
 
-# Ensure database directory exists
-DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-
 # Global database state
 _db_lock = Lock()
 _db = None
@@ -35,6 +34,7 @@ _graphs: dict[str, FalkorGraph] = {}
 _graph_locks: dict[str, Lock] = {}
 _db_unavailable = False
 _shutdown_requested = False
+_redis_dir: Path | None = None  # Track redislite's temp directory for cleanup
 
 # TCP server configuration
 _tcp_server = {
@@ -177,7 +177,12 @@ def _ensure_redis_stopped(redis_client) -> None:
     Uses direct SIGTERM instead of the blocking shutdown() command to avoid
     a known redis-py client timeout issue that causes 5-10 second delays.
     See: https://github.com/redis/redis-py/issues/3704
+
+    Also cleans up the redis temp directory (socket file, pidfile) to match
+    what redislite's _cleanup() does, but without the blocking shutdown call.
     """
+    global _redis_dir
+
     if redis_client is None:
         return
 
@@ -193,22 +198,34 @@ def _ensure_redis_stopped(redis_client) -> None:
         )
 
     _send_signal(pid, signal.SIGTERM)
-    if _wait_for_exit(pid, timeout=3.0):
-        return
+    if not _wait_for_exit(pid, timeout=3.0):
+        logger.warning("redis-server pid %s ignored SIGTERM; sending SIGKILL", pid)
+        _send_signal(pid, signal.SIGKILL)
+        _wait_for_exit(pid, timeout=1.0)
 
-    logger.warning("redis-server pid %s ignored SIGTERM; sending SIGKILL", pid)
-    _send_signal(pid, signal.SIGKILL)
-    _wait_for_exit(pid, timeout=1.0)
+    # Clean up the redis temp directory (contains socket file, pidfile, etc.)
+    # This matches redislite's cleanup behavior but without the blocking shutdown()
+    if _redis_dir and _redis_dir.exists():
+        try:
+            shutil.rmtree(_redis_dir, ignore_errors=True)
+            logger.debug("Cleaned up redis temp directory: %s", _redis_dir)
+        except OSError:
+            logger.debug("Failed to clean up redis temp directory", exc_info=True)
+    _redis_dir = None
 
 
 def _init_db() -> None:
     """Initialize the FalkorDB database connection."""
-    global _db, _db_unavailable
+    global _db, _db_unavailable, _redis_dir
 
     if FalkorDB is None:
         logger.debug("FalkorDB client not available")
         _db_unavailable = True
         raise RuntimeError("FalkorDB Lite is unavailable")
+
+    # Ensure database directory exists (deferred from module level to avoid
+    # creating production directory when tests override DB_PATH)
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
     try:
         serverconfig = _build_serverconfig()
@@ -216,6 +233,12 @@ def _init_db() -> None:
         if serverconfig:
             kwargs["serverconfig"] = serverconfig
         _db = FalkorDB(dbfilename=str(DB_PATH), **kwargs)
+
+        # Capture redis temp directory path for cleanup (contains socket, pidfile)
+        client = getattr(_db, "client", None)
+        if client and hasattr(client, "redis_dir") and client.redis_dir:
+            _redis_dir = Path(client.redis_dir)
+
         if serverconfig:
             endpoint = get_tcp_server_endpoint()
             if endpoint:
@@ -281,7 +304,7 @@ def _close_db():
     Sets shutdown flag to fail-fast reject any new operations attempting to
     start during shutdown (no waiting - operations fail immediately).
     """
-    global _db, _graphs, _graph_locks, _shutdown_requested
+    global _db, _graphs, _graph_locks, _shutdown_requested, _redis_dir
 
     # Set shutdown flag FIRST (before lock) for immediate fail-fast
     _shutdown_requested = True
@@ -296,6 +319,7 @@ def _close_db():
             _db = None
             _graphs.clear()
             _graph_locks.clear()
+            _redis_dir = None
 
 
 atexit.register(_close_db)
@@ -325,9 +349,10 @@ def is_shutdown_requested() -> bool:
 
 def reset_lifecycle_state() -> None:
     """Reset lifecycle state flags (for testing)."""
-    global _db_unavailable, _shutdown_requested
+    global _db_unavailable, _shutdown_requested, _redis_dir
     _db_unavailable = False
     _shutdown_requested = False
+    _redis_dir = None
 
 
 __all__ = [
