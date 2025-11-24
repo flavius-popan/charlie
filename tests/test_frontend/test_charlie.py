@@ -565,6 +565,81 @@ class TestIntegration:
             mock_database['update'].assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_new_entry_two_escapes_return_home(self, mock_database):
+        """After leaving editor, a single ESC from viewer should return home."""
+        mock_database["add"].return_value = "uuid-new"
+        mock_database["get"].return_value = {
+            "uuid": "uuid-new",
+            "content": "# Title\nBody",
+            "name": "Title",
+        }
+
+        app = CharlieApp()
+        async with app_test_context(app) as pilot:
+            await pilot.pause()
+
+            await pilot.press("n")
+            await pilot.pause()
+
+            from textual.widgets import TextArea
+            editor = app.query_one("#editor", TextArea)
+            editor.text = "# Title\nBody"
+
+            await pilot.press("escape")
+            await pilot.pause()
+            await pilot.pause()
+
+            assert isinstance(app.screen, ViewScreen)
+
+            await pilot.press("escape")
+            await pilot.pause()
+
+            assert isinstance(app.screen, HomeScreen)
+
+    @pytest.mark.asyncio
+    async def test_edit_existing_single_escape_returns_home(self, mock_database):
+        """Editing an existing entry should need only one ESC from viewer to go home."""
+        mock_episode = {
+            "uuid": "existing-uuid",
+            "content": "# Title\nBody",
+            "name": "Title",
+            "valid_at": datetime(2025, 11, 19, 10, 0, 0),
+        }
+        mock_database["get_all"].return_value = [mock_episode]
+        mock_database["get"].return_value = mock_episode
+        mock_database["update"].return_value = True
+        mock_database["get_inference_enabled"].return_value = False
+        mock_database["get_episode_status"].return_value = None
+
+        app = CharlieApp()
+        async with app_test_context(app) as pilot:
+            await pilot.pause()
+
+            # Open existing entry
+            await pilot.press("space")
+            await pilot.pause()
+            await pilot.pause()
+
+            # Edit the entry
+            await pilot.press("e")
+            await pilot.pause()
+
+            from textual.widgets import TextArea
+            editor = app.query_one("#editor", TextArea)
+            editor.text = "# Title\nUpdated body"
+
+            await pilot.press("escape")
+            await pilot.pause()
+
+            assert isinstance(app.screen, ViewScreen)
+
+            # One escape should return to home
+            await pilot.press("escape")
+            await pilot.pause()
+
+            assert isinstance(app.screen, HomeScreen)
+
+    @pytest.mark.asyncio
     async def test_settings_workflow(self, mock_database):
         """Should open settings, toggle, and return."""
         app = CharlieApp()

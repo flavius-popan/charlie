@@ -1061,17 +1061,61 @@ class EditScreen(Screen):
                     and content_changed
                     and status in ("pending_nodes", "pending_edges")
                 )
-                # Navigate to ViewScreen (atomic screen replacement)
-                self.app.switch_screen(
-                    ViewScreen(
-                        self.episode_uuid,
-                        DEFAULT_JOURNAL,
-                        from_edit=show_connections,
-                        inference_enabled=inference_enabled,
-                        status=status,
-                        active_processing=False,
+                # Prefer reusing existing ViewScreen on the stack (we came from it)
+                existing_view: ViewScreen | None = None
+                for screen in reversed(self.app.screen_stack[:-1]):  # exclude EditScreen
+                    if isinstance(screen, ViewScreen) and screen.episode_uuid == self.episode_uuid:
+                        existing_view = screen
+                        break
+
+                if existing_view:
+                    # Pop EditScreen to reveal original ViewScreen
+                    self.app.pop_screen()
+
+                    # Refresh episode content on the existing view
+                    await existing_view.load_episode()
+                    existing_view.inference_enabled = inference_enabled
+                    existing_view.status = status
+
+                    sidebar = existing_view.query_one("#entity-sidebar", EntitySidebar)
+                    sidebar.inference_enabled = inference_enabled
+                    sidebar.status = status
+
+                    # Manage connections pane visibility/polling based on new state
+                    if show_connections:
+                        sidebar.loading = True
+                        if not sidebar.display:
+                            existing_view.action_toggle_connections()
+                        else:
+                            if existing_view._poll_timer is None:
+                                existing_view._poll_timer = existing_view.set_interval(
+                                    0.5, existing_view._check_job_status
+                                )
+                                sidebar.active_processing = True
+                    else:
+                        if existing_view._poll_timer:
+                            try:
+                                existing_view._poll_timer.stop()
+                            except Exception:
+                                pass
+                            existing_view._poll_timer = None
+                        sidebar.active_processing = False
+                        sidebar.loading = False
+                        sidebar.display = False
+
+                else:
+                    # Fallback: no prior ViewScreen found; create a fresh one
+                    self.app.switch_screen(
+                        ViewScreen(
+                            self.episode_uuid,
+                            DEFAULT_JOURNAL,
+                            from_edit=show_connections,
+                            inference_enabled=inference_enabled,
+                            status=status,
+                            active_processing=False,
+                        )
                     )
-                )
+
                 # THEN enqueue extraction task in background if content changed
                 if content_changed and inference_enabled:
                     self._enqueue_extraction_task(self.episode_uuid, DEFAULT_JOURNAL)
