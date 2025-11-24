@@ -1,3 +1,9 @@
+# Stability Fixes
+
+- No more model loading on edit. Inverse only.
+- Fix charlie.db usage in tests ASAP.
+- BACKUPS! Need to think of ways to always have backups.
+
 ## Technical
 - USE DIFF TOOL TO ONLY RE-EXTRACT DIFF CONTENT??
 - Submit bugs/feature requests to falkdordblite
@@ -8,7 +14,6 @@
   - https://huggingface.co/mlx-community/Qwen3-Embedding-4B-4bit-DWQ
   - https://huggingface.co/tomaarsen/Qwen3-Reranker-0.6B-seq-cls
 - Handle new model downloads to avoid blocking TUI
-- BACKUPS! Need to think of ways to always have backups.
 
 ## Non-Technical
 
