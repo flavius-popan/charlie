@@ -59,26 +59,64 @@
 
 ---
 
-## PHASE 2: STATE MACHINE IMPLEMENTATION (PENDING)
+## PHASE 2: STATE MACHINE IMPLEMENTATION (IN PROGRESS)
 
-### Task 3: Implement SidebarStateMachine module
+### Task 3: Implement SidebarStateMachine module ✓ COMPLETE
 
 **Files:**
-- Create: `frontend/state/sidebar_state_machine.py`
-- Add tests: `tests/test_sidebar_state_machine.py`
+- Created: `frontend/state/sidebar_state_machine.py` (415 lines)
+- Created: `tests/test_frontend/test_sidebar_state_machine.py` (526 lines)
 
-**Steps:**
-1. Define states (flat): `hidden`, `disabled`, `processing_nodes`, `awaiting_edges`, `ready_entities`, `empty_idle`.
-2. Define events:  
-   - `show`, `hide`, `episode_closed`  
-   - `inference_disabled`, `inference_enabled`  
-   - `status_pending_nodes`, `status_pending_edges_or_done`  
-   - `cache_entities_found`, `cache_empty`  
-   - `user_deleted_entity`
-3. Embed outputs: `should_poll`, `active_processing`, `loading`, `visible`, `message`, `status` (data), `entities_present` flag. Implement as computed properties on the model or via a dataclass attached to the machine.
-4. Keep status string semantics unchanged (`pending_nodes`, `pending_edges`, `done`, `None`).
-5. Tests (pure unit): assert legal transitions, guard behavior when inference disabled/enabled, and output flags per state.
-6. Keep module free of Textual imports; expose a small API: `apply_event(event, **data)` returning updated outputs.
+**Implementation Details:**
+
+1. **States (6 flat states):** `hidden`, `disabled`, `processing_nodes`, `awaiting_edges`, `ready_entities`, `empty_idle` ✓
+2. **Events (11 events with guard-based routing):**
+   - `show` → routes to disabled/processing/awaiting/ready/empty based on guards
+   - `hide` → hidden (from any visible state)
+   - `episode_closed` → hidden (from any visible state)
+   - `inference_disabled` → disabled (from any state)
+   - `inference_enabled` → processing/awaiting/ready/empty based on status/entities guards
+   - `status_pending_nodes` → processing_nodes
+   - `status_pending_edges_or_done` → awaiting_edges/ready/empty based on guards
+   - `cache_entities_found` → ready_entities
+   - `cache_empty` → empty_idle
+   - `user_deleted_entity` → ready_entities/empty_idle based on entities remaining ✓
+
+3. **Outputs (SidebarOutput dataclass):** All 7 outputs implemented
+   - `visible`, `should_poll`, `active_processing`, `loading`, `message`, `status`, `entities_present` ✓
+
+4. **Status semantics:** Unchanged (`pending_nodes`, `pending_edges`, `done`, `None`) ✓
+
+5. **API:** Pure logic module with zero Textual imports; `apply_event(event_name, **data) → SidebarOutput` ✓
+
+6. **Tests:** 49 comprehensive tests covering:
+   - Initialization (3 tests)
+   - All event transitions (26 tests)
+   - Guard conditions (14 tests)
+   - Output flags (6 tests)
+   - Complex workflows (4 tests)
+   - API methods (3 tests)
+   - Edge cases (8 new tests: invalid transitions, data persistence, missing data, rapid updates, inference toggle, entity depletion)
+
+**Code Review:** ✓ APPROVED with Important recommendations addressed:
+
+**Important Fixes Applied:**
+1. Removed dead code path: `disabled → hidden` transition on `inference_enabled` event (simplified from 5 to 4 targets)
+2. Added comprehensive documentation:
+   - Class docstring explains guard/hook evaluation order (guards run before `before_*` hooks)
+   - Explains why guards check both `data.get()` and `self._*` patterns
+   - Includes example usage
+3. Clarified `__init__` docstring:
+   - When to use `visible=True` (from_edit initialization path)
+   - When to use `show` event instead (prevents race conditions)
+
+**Nice-to-Have Improvements Applied:**
+1. Added explicit type hints to all `before_*` event methods
+   - `before_show(status: str | None = None, inference_enabled: bool | None = None, entities_present: bool | None = None, **data)`
+   - Similar signatures for all event handlers
+2. Added 8 comprehensive edge case tests
+
+**Test Results:** 49/49 passing (100%)
 
 ---
 
@@ -164,6 +202,40 @@
 
 ---
 
-Execution options after plan approval:
+## Session Handoff Notes (Updated 2025-11-24)
+
+**Completed in this session:**
+- ✅ Task 3 fully implemented, reviewed, and tested (49/49 tests passing)
+- ✅ Code review feedback applied (dead code removed, documentation added, type hints added, edge cases tested)
+- ✅ Test file organized in `tests/test_frontend/` following project structure
+- ✅ Plan document updated with implementation details
+
+**Next steps for continuation:**
+1. **Task 4: ViewScreen Integration**
+   - Key integration point: `ViewScreen.__init__` needs to instantiate `SidebarStateMachine`
+   - See ViewScreen current structure in `frontend/screens/view_screen.py` (currently manages `status`, `inference_enabled`, `active_processing` reactives)
+   - Machine will replace manual state management with `apply_event()` calls
+   - Current helpers to understand: `_refresh_sidebar_context()`, `_poll_until_complete()`, `action_toggle_connections()`
+
+2. **Task 5: EntitySidebar Adaptation**
+   - Current `user_override` logic can be eliminated once ViewScreen feeds machine outputs
+   - Key rendering logic in `_update_content()` method (lines 219-271)
+   - Watch methods can be simplified to consume machine outputs
+
+3. **Task 6: Inference Toggle Wiring**
+   - Global toggle handler in `charlie.py` needs to send events to machine
+   - Current pattern: `get_inference_enabled()` called in several places
+
+4. **Research artifacts available:**
+   - Current ViewScreen manages: visibility (`display`), status polling, sidebar synchronization
+   - Current EntitySidebar has: cache fetch logic, deletion handling, override logic
+   - Test patterns in `tests/test_frontend/test_view_screen.py` and `test_entity_sidebar.py` show async testing approach
+
+**Library reference:**
+- python-statemachine==2.5.0 (already in pyproject.toml)
+- Guards evaluated before `before_*` hooks (see sidebar_state_machine.py docstring)
+- All tests use `machine.send()` and `machine.apply_event()` patterns
+
+Execution options:
 1. Subagent-driven in this session (requires superpowers:subagent-driven-development).
 2. Separate execution session using superpowers:executing-plans.
