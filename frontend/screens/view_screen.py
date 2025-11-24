@@ -128,12 +128,26 @@ class ViewScreen(Screen):
             self._sync_machine_output()
             return  # Skip polling and cache check when sidebar hidden
 
-        # Give EntitySidebar a moment to check cache on mount
-        await asyncio.sleep(0.05)
+        # Polling decision now handled by on_entity_sidebar_cache_check_complete
+        # which fires after EntitySidebar.refresh_entities() completes on mount
 
-        # Only start polling if machine says we should poll (cache miss)
+    def on_entity_sidebar_cache_check_complete(
+        self, event: EntitySidebar.CacheCheckComplete
+    ) -> None:
+        """Handle cache check completion from sidebar."""
+        if not self.from_edit:
+            return  # Only relevant when coming from edit
+
+        # Route cache result to machine only when entities are found.
+        # When cache is empty and processing is still pending (pending_nodes),
+        # don't transition - just start polling for status updates.
+        # The polling worker will route cache_empty after status changes.
+        if event.entities_found:
+            self.sidebar_machine.send("cache_entities_found", entities_present=True)
+            self._sync_machine_output()
+
+        # Start polling if machine indicates we should (still in processing state)
         if self.sidebar_machine.output.should_poll:
-            # Cache doesn't have data - start polling for extraction job
             self.run_worker(self._poll_until_complete(), exclusive=True, name="status-poll")
 
     async def on_screen_resume(self):

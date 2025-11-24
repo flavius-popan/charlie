@@ -257,6 +257,12 @@ class SidebarStateMachine(StateMachine):
 
     # Guard conditions for routing
 
+    def _is_ready_for_entities(self, **data) -> bool:
+        """Helper: check if status and entities indicate ready state."""
+        status = data.get("status", self._status)
+        entities_present = data.get("entities_present", self._entities_present)
+        return status in ("done", None) and entities_present
+
     def _should_go_disabled(self, **data) -> bool:
         """Guard: should go to disabled state."""
         inference_enabled = data.get("inference_enabled", self._inference_enabled)
@@ -277,9 +283,7 @@ class SidebarStateMachine(StateMachine):
     def _should_go_ready(self, **data) -> bool:
         """Guard: should go to ready_entities."""
         inference_enabled = data.get("inference_enabled", self._inference_enabled)
-        status = data.get("status", self._status)
-        entities_present = data.get("entities_present", self._entities_present)
-        return inference_enabled and status in ("done", None) and entities_present
+        return inference_enabled and self._is_ready_for_entities(**data)
 
     def _should_go_processing_on_enable(self, **data) -> bool:
         """Guard: should go to processing when enabling with pending_nodes."""
@@ -293,9 +297,7 @@ class SidebarStateMachine(StateMachine):
 
     def _should_go_ready_on_enable(self, **data) -> bool:
         """Guard: should go to ready when enabling with entities."""
-        status = data.get("status", self._status)
-        entities_present = data.get("entities_present", self._entities_present)
-        return status in ("done", None) and entities_present
+        return self._is_ready_for_entities(**data)
 
     def _should_go_awaiting_from_processing(self, **data) -> bool:
         """Guard: should go from processing to awaiting."""
@@ -304,15 +306,11 @@ class SidebarStateMachine(StateMachine):
 
     def _should_go_ready_from_processing(self, **data) -> bool:
         """Guard: should go from processing to ready."""
-        status = data.get("status", self._status)
-        entities_present = data.get("entities_present", self._entities_present)
-        return status in ("done", None) and entities_present
+        return self._is_ready_for_entities(**data)
 
     def _should_go_ready_from_awaiting(self, **data) -> bool:
         """Guard: should go from awaiting to ready."""
-        status = data.get("status", self._status)
-        entities_present = data.get("entities_present", self._entities_present)
-        return status in ("done", None) and entities_present
+        return self._is_ready_for_entities(**data)
 
     def _no_entities_left(self, **data) -> bool:
         """Guard: no entities left after deletion."""

@@ -6,6 +6,7 @@ from typing import Callable
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical
+from textual.message import Message
 from textual.reactive import reactive
 from textual.screen import ModalScreen
 from textual.widgets import (
@@ -18,7 +19,6 @@ from textual.widgets import (
 
 from backend.database.queries import delete_entity_mention
 from backend.database.redis_ops import redis_ops
-from frontend.utils import extract_title
 
 logger = logging.getLogger("charlie")
 
@@ -116,6 +116,14 @@ class DeleteEntityModal(ModalScreen):
 
 class EntitySidebar(Container):
     """Sidebar showing entities connected to current episode."""
+
+    class CacheCheckComplete(Message):
+        """Posted when initial cache check completes."""
+
+        def __init__(self, entities_found: bool) -> None:
+            self.entities_found = entities_found
+            super().__init__()
+
     _pending_render: bool = False
 
     DEFAULT_CSS = """
@@ -304,10 +312,14 @@ class EntitySidebar(Container):
                 with self.app.batch_update():
                     self.entities = filtered_nodes
                     self.loading = False
-            # If no data found, keep loading=True (ViewScreen will handle polling)
+                self.post_message(self.CacheCheckComplete(entities_found=True))
+            else:
+                # No data found - notify parent, keep loading=True for polling
+                self.post_message(self.CacheCheckComplete(entities_found=False))
         except Exception as e:
             logger.error(f"Failed to fetch entities from Redis: {e}", exc_info=True)
             self.loading = False
+            self.post_message(self.CacheCheckComplete(entities_found=False))
 
     def action_delete_entity(self) -> None:
         """Show delete confirmation for selected entity."""
