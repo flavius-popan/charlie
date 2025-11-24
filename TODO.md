@@ -1,7 +1,7 @@
 # Stability Fixes
 
 - No more model loading on edit. Inverse only.
-- Fix charlie.db usage in tests ASAP.
+- Any other systems in need of an FSM for safety?
 - BACKUPS! Need to think of ways to always have backups.
 
 ## Technical
