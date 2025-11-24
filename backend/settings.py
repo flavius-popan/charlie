@@ -35,6 +35,9 @@ MODEL_CONFIG = {
     "max_tokens": 2048,
 }
 
+# Auto-unload timeout to avoid model thrashing when entering/exiting edit mode
+EDIT_IDLE_GRACE_SECONDS = 10
+
 # Huey task queue configuration
 HUEY_WORKER_TYPE = "thread"
 HUEY_WORKERS = 1

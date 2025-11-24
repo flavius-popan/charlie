@@ -139,7 +139,7 @@ def test_orchestrator_handles_redis_errors_gracefully():
 
 
 def test_orchestrator_leaves_cached_model_untouched():
-    """Orchestrator no longer preloads; cached model remains intact."""
+    """Orchestrator should not reload when model already cached."""
     from backend.services.tasks import orchestrate_inference_work
     from backend.inference.manager import MODELS
     from unittest.mock import MagicMock
@@ -157,6 +157,34 @@ def test_orchestrator_leaves_cached_model_untouched():
                     assert MODELS["llm"] is mock_model
     finally:
         MODELS["llm"] = None
+
+
+def test_cleanup_respects_edit_idle_grace_before_unload(monkeypatch):
+    """Models stay loaded for grace period after editing ends to avoid thrash."""
+    from backend.inference import manager as mgr
+
+    # Seed cached model
+    mgr.MODELS["llm"] = object()
+    monkeypatch.setattr(mgr, "_last_edit_seen", None)
+
+    with patch("backend.database.redis_ops.get_inference_enabled", return_value=True):
+        with patch("backend.database.redis_ops.get_episodes_by_status", return_value=[]):
+            with patch("backend.database.redis_ops.redis_ops") as mock_redis_ops:
+                mock_redis = mock_redis_ops.return_value.__enter__.return_value
+                # First call: editing present; second call: editing absent
+                mock_redis.exists.side_effect = [True, False]
+
+                # First invocation marks last_edit_seen
+                mgr.cleanup_if_no_work()
+
+                with patch("backend.inference.manager.unload_all_models") as mock_unload:
+                    with patch("backend.inference.manager.time.monotonic", return_value=(mgr._last_edit_seen or 0) + 5):
+                        mgr.cleanup_if_no_work()  # within grace
+                        mock_unload.assert_not_called()
+
+                    with patch("backend.inference.manager.time.monotonic", return_value=(mgr._last_edit_seen or 0) + mgr.EDIT_IDLE_GRACE_SECONDS + 1):
+                        mgr.cleanup_if_no_work()  # beyond grace
+                        mock_unload.assert_called_once()
 
 
 def test_orchestrator_handles_model_loading_errors_gracefully():
@@ -214,8 +242,9 @@ def test_editing_presence_keeps_models_warm_end_to_end():
 
         with patch("backend.database.redis_ops.get_episodes_by_status", return_value=[]):
             with patch("backend.database.redis_ops.get_inference_enabled", return_value=True):
-                cleanup_if_no_work()
-                assert MODELS["llm"] is None, "Model should be unloaded after editing stops"
+                    with patch("backend.inference.manager.time.monotonic", return_value=(manager._last_edit_seen or 0) + manager.EDIT_IDLE_GRACE_SECONDS + 1):
+                        cleanup_if_no_work()
+                        assert MODELS["llm"] is None, "Model should be unloaded after grace window expires"
 
     finally:
         # Clean up: ensure model cache is reset and Redis key is deleted
