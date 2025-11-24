@@ -34,7 +34,15 @@ from unittest.mock import AsyncMock, Mock, patch, mock_open
 
 import pytest
 
-from charlie import CharlieApp, HomeScreen, ViewScreen, EditScreen, SettingsScreen
+from charlie import (
+    CharlieApp,
+    HomeScreen,
+    ViewScreen,
+    EditScreen,
+    SettingsScreen,
+    EntitySidebar,
+    DeleteEntityModal,
+)
 
 
 @asynccontextmanager
@@ -565,6 +573,29 @@ class TestIntegration:
             mock_database['update'].assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_shift_enter_stays_in_edit_mode(self, mock_database):
+        """Shift+Enter should insert newline, not exit editor or save."""
+        mock_database["add"].return_value = "new-uuid"
+
+        app = CharlieApp()
+        async with app_test_context(app) as pilot:
+            await pilot.pause()
+
+            await pilot.press("n")
+            await pilot.pause()
+
+            from textual.widgets import TextArea
+            editor = app.query_one("#editor", TextArea)
+            editor.text = "# Title"
+
+            await pilot.press("shift+enter")
+            await pilot.pause()
+
+            assert isinstance(app.screen, EditScreen)
+            mock_database["add"].assert_not_called()
+            assert "\n" in editor.text
+
+    @pytest.mark.asyncio
     async def test_new_entry_two_escapes_return_home(self, mock_database):
         """After leaving editor, a single ESC from viewer should return home."""
         mock_database["add"].return_value = "uuid-new"
@@ -634,6 +665,48 @@ class TestIntegration:
             assert isinstance(app.screen, ViewScreen)
 
             # One escape should return to home
+            await pilot.press("escape")
+            await pilot.pause()
+
+            assert isinstance(app.screen, HomeScreen)
+
+    @pytest.mark.asyncio
+    async def test_escape_works_while_inference_pending(self, mock_database):
+        """Esc from viewer should still return home even while connections polling is active."""
+        mock_episode = {
+            "uuid": "existing-uuid",
+            "content": "# Title\nBody",
+            "name": "Title",
+            "valid_at": datetime(2025, 11, 19, 10, 0, 0),
+        }
+        mock_database["get_all"].return_value = [mock_episode]
+        mock_database["get"].return_value = mock_episode
+        mock_database["update"].return_value = True
+        mock_database["get_inference_enabled"].return_value = True
+        mock_database["get_episode_status"].return_value = "pending_nodes"
+
+        app = CharlieApp()
+        async with app_test_context(app) as pilot:
+            await pilot.pause()
+
+            await pilot.press("space")
+            await pilot.pause(); await pilot.pause()
+
+            await pilot.press("e")
+            await pilot.pause()
+
+            from textual.widgets import TextArea
+            editor = app.query_one("#editor", TextArea)
+            editor.text = "# Title\nUpdated"
+
+            await pilot.press("escape")
+            await pilot.pause(); await pilot.pause()
+
+            # Viewer should be active and polling
+            from charlie import ViewScreen
+            assert isinstance(app.screen, ViewScreen)
+            assert app.screen._poll_timer is not None
+
             await pilot.press("escape")
             await pilot.pause()
 
@@ -1038,6 +1111,48 @@ class TestConnectionsPaneVisibility:
                 assert sidebar.display is True
                 assert app.screen._poll_timer is not None
                 mock_task.assert_called_once_with("uuid-new", "default")
+
+    @pytest.mark.asyncio
+    async def test_delete_entity_requires_open_sidebar(self, mock_database):
+        """Pressing 'd' should only delete when sidebar is open and focused."""
+        mock_episode = {
+            "uuid": "existing-uuid",
+            "content": "# Title\nBody",
+            "name": "Title",
+            "valid_at": datetime(2025, 11, 19, 10, 0, 0),
+        }
+        mock_database["get_all"].return_value = [mock_episode]
+        mock_database["get"].return_value = mock_episode
+
+        app = CharlieApp()
+        async with app_test_context(app) as pilot:
+            await pilot.pause()
+
+            await pilot.press("space")
+            await pilot.pause()
+            await pilot.pause()
+
+            view = app.screen
+            sidebar = view.query_one(EntitySidebar)
+            sidebar.entities = [
+                {"uuid": "entity-1", "name": "Alice", "type": "Person"},
+            ]
+            sidebar.loading = False
+            sidebar._update_content()
+            list_view = sidebar.query_one(ListView)
+            list_view.index = 0
+            list_view.focus()
+            assert list_view.has_focus
+            sidebar.display = False  # hidden/closed
+
+            # Directly invoke the action to ensure it short-circuits when hidden
+            with patch.object(app, "push_screen", wraps=app.push_screen) as mock_push:
+                sidebar.action_delete_entity()
+                mock_push.assert_not_called()
+
+            # Should remain on ViewScreen and no delete modal should appear
+            assert isinstance(app.screen, ViewScreen)
+            assert all(not isinstance(s, DeleteEntityModal) for s in app.screen_stack)
 
 
 @pytest.mark.asyncio

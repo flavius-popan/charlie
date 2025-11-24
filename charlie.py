@@ -5,6 +5,7 @@ import logging
 import os
 from pathlib import Path
 
+from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical
@@ -282,6 +283,10 @@ class EntitySidebar(Container):
             return
 
         content_container = self.query_one("#entity-content", Container)
+        if not content_container.is_attached:
+            # Defer until the container is attached to avoid mount errors.
+            self.call_after_refresh(self._update_content)
+            return
         content_container.remove_children()
 
         should_show_spinner = (
@@ -312,11 +317,12 @@ class EntitySidebar(Container):
             if clear_loading:
                 self.loading = False
         else:
-            list_view = ListView()
+            items = [
+                EntityListItem(self._format_entity_label(entity))
+                for entity in self.entities
+            ]
+            list_view = ListView(*items)
             content_container.mount(list_view)
-            for entity in self.entities:
-                formatted_label = self._format_entity_label(entity)
-                list_view.append(EntityListItem(formatted_label))
 
             def focus_and_select():
                 list_view.index = 0
@@ -353,6 +359,11 @@ class EntitySidebar(Container):
     def action_delete_entity(self) -> None:
         """Show delete confirmation for selected entity."""
         list_view = self.query_one(ListView)
+        # Deletion is only valid when the sidebar is visible and actively focused.
+        if not self.display:
+            return
+        if not list_view.has_focus:
+            return
         if list_view.index is None or list_view.index < 0:
             return
 
@@ -1061,60 +1072,29 @@ class EditScreen(Screen):
                     and content_changed
                     and status in ("pending_nodes", "pending_edges")
                 )
-                # Prefer reusing existing ViewScreen on the stack (we came from it)
-                existing_view: ViewScreen | None = None
-                for screen in reversed(self.app.screen_stack[:-1]):  # exclude EditScreen
-                    if isinstance(screen, ViewScreen) and screen.episode_uuid == self.episode_uuid:
-                        existing_view = screen
-                        break
-
-                if existing_view:
-                    # Pop EditScreen to reveal original ViewScreen
+                # Remove the previous ViewScreen (if present) before showing the fresh one
+                if len(self.app.screen_stack) >= 2 and isinstance(
+                    self.app.screen_stack[-2], ViewScreen
+                ):
+                    # pop EditScreen
+                    self.app.pop_screen()
+                    # pop the prior ViewScreen
+                    self.app.pop_screen()
+                else:
+                    # pop EditScreen
                     self.app.pop_screen()
 
-                    # Refresh episode content on the existing view
-                    await existing_view.load_episode()
-                    existing_view.inference_enabled = inference_enabled
-                    existing_view.status = status
-
-                    sidebar = existing_view.query_one("#entity-sidebar", EntitySidebar)
-                    sidebar.inference_enabled = inference_enabled
-                    sidebar.status = status
-
-                    # Manage connections pane visibility/polling based on new state
-                    if show_connections:
-                        sidebar.loading = True
-                        if not sidebar.display:
-                            existing_view.action_toggle_connections()
-                        else:
-                            if existing_view._poll_timer is None:
-                                existing_view._poll_timer = existing_view.set_interval(
-                                    0.5, existing_view._check_job_status
-                                )
-                                sidebar.active_processing = True
-                    else:
-                        if existing_view._poll_timer:
-                            try:
-                                existing_view._poll_timer.stop()
-                            except Exception:
-                                pass
-                            existing_view._poll_timer = None
-                        sidebar.active_processing = False
-                        sidebar.loading = False
-                        sidebar.display = False
-
-                else:
-                    # Fallback: no prior ViewScreen found; create a fresh one
-                    self.app.switch_screen(
-                        ViewScreen(
-                            self.episode_uuid,
-                            DEFAULT_JOURNAL,
-                            from_edit=show_connections,
-                            inference_enabled=inference_enabled,
-                            status=status,
-                            active_processing=False,
-                        )
+                # Push a fresh ViewScreen reflecting the updated episode state
+                self.app.push_screen(
+                    ViewScreen(
+                        self.episode_uuid,
+                        DEFAULT_JOURNAL,
+                        from_edit=show_connections,
+                        inference_enabled=inference_enabled,
+                        status=status,
+                        active_processing=False,
                     )
+                )
 
                 # THEN enqueue extraction task in background if content changed
                 if content_changed and inference_enabled:
