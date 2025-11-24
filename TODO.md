@@ -1,4 +1,5 @@
 ## Technical
+- Discover relative time references and auto-map them to time-bounded queries
 - Add toggle for switching between perma-ban/journal delete for entities
 - Implement [Contextual Retreival](https://www.anthropic.com/engineering/contextual-retrieval)
 - Use [SBERT](https://sbert.net/docs/quickstart.html) with embedding & reranking/cross-encoder models

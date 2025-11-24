@@ -350,7 +350,7 @@ async def cleanup_orphaned_journal_caches(journal: str) -> int:
 # Entity Suppression Management
 
 
-def add_suppressed_entity(journal: str, entity_name: str) -> None:
+async def add_suppressed_entity(journal: str, entity_name: str) -> None:
     """Add entity to global suppression list for journal.
 
     Args:
@@ -361,11 +361,17 @@ def add_suppressed_entity(journal: str, entity_name: str) -> None:
         Entity name is normalized to lowercase for case-insensitive matching.
         Suppressed entities will be filtered out during extraction.
         Uses Redis Set for atomic operations and better performance.
+        This function runs synchronous Redis I/O on a background thread.
     """
-    with redis_ops() as r:
-        key = f"journal:{journal}:suppressed_entities"
-        normalized_name = entity_name.lower()
-        r.sadd(key, normalized_name)
+    import asyncio
+
+    def _sync_add():
+        with redis_ops() as r:
+            key = f"journal:{journal}:suppressed_entities"
+            normalized_name = entity_name.lower()
+            r.sadd(key, normalized_name)
+
+    await asyncio.to_thread(_sync_add)
 
 
 def get_suppressed_entities(journal: str) -> set[str]:

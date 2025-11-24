@@ -468,13 +468,14 @@ def test_get_episodes_by_status_scan_consistency(falkordb_test_context):
     remove_episode_from_queue(episode3, DEFAULT_JOURNAL)
 
 
-def test_get_episodes_by_status_ignores_suppressed_entities_set(falkordb_test_context):
+@pytest.mark.asyncio
+async def test_get_episodes_by_status_ignores_suppressed_entities_set(falkordb_test_context):
     """Suppression sets should not break or pollute status scanning."""
     episode = str(uuid4())
     set_episode_status(episode, "pending_nodes", DEFAULT_JOURNAL)
 
     # Create suppression set under same journal:* prefix
-    add_suppressed_entity(DEFAULT_JOURNAL, "bob")
+    await add_suppressed_entity(DEFAULT_JOURNAL, "bob")
 
     pending = get_episodes_by_status("pending_nodes")
 

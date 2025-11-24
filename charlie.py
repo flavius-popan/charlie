@@ -9,8 +9,10 @@ from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical
+from textual.css.query import NoMatches
 from textual.reactive import reactive
 from textual.screen import ModalScreen, Screen
+from textual.worker import WorkerCancelled
 from textual.widgets import (
     Button,
     Footer,
@@ -235,6 +237,7 @@ class EntitySidebar(Container):
     inference_enabled: reactive[bool] = reactive(True)
     status: reactive[str | None] = reactive(None)
     active_processing: reactive[bool] = reactive(False)
+    user_override: reactive[bool] = reactive(False)
 
     def __init__(
         self,
@@ -249,9 +252,9 @@ class EntitySidebar(Container):
         super().__init__(**kwargs)
         self.episode_uuid = episode_uuid
         self.journal = journal
-        self.inference_enabled = inference_enabled
-        self.status = status
-        self.active_processing = active_processing
+        self.set_reactive(EntitySidebar.inference_enabled, inference_enabled)
+        self.set_reactive(EntitySidebar.status, status)
+        self.set_reactive(EntitySidebar.active_processing, active_processing)
 
     def compose(self) -> ComposeResult:
         yield Label("Connections", classes="sidebar-header")
@@ -266,14 +269,34 @@ class EntitySidebar(Container):
 
     def watch_loading(self, loading: bool) -> None:
         """Reactive: swap between loading indicator and entity list."""
+        if not self.is_mounted:
+            return
         self._update_content()
 
     def watch_active_processing(self, active_processing: bool) -> None:
         """Reactive: re-render when processing state changes."""
+        if not self.is_mounted:
+            return
         self._update_content()
 
     def watch_entities(self, entities: list[dict]) -> None:
         """Reactive: re-render when entities change."""
+        if not self.is_mounted:
+            return
+        if not self.loading:
+            self._update_content()
+
+    def watch_status(self, status: str | None) -> None:
+        """Reactive: re-render when status changes.
+
+        Note: If user_override is True, don't update.
+        This prevents background polling from overwriting
+        user-initiated changes like entity deletion.
+        """
+        if not self.is_mounted:
+            return
+        if self.user_override:
+            return
         if not self.loading:
             self._update_content()
 
@@ -391,6 +414,7 @@ class EntitySidebar(Container):
             # If we deleted all entities, ensure UI shows "No connections found"
             # Set status/loading BEFORE updating entities to avoid race in watchers
             if len(new_entities) == 0:
+                self.user_override = True
                 self.status = "done"
                 self.loading = False
 
@@ -751,6 +775,10 @@ class ViewScreen(Screen):
     }
     """
 
+    status: reactive[str | None] = reactive(None)
+    inference_enabled: reactive[bool] = reactive(True)
+    active_processing: reactive[bool] = reactive(False)
+
     def __init__(
         self,
         episode_uuid: str,
@@ -764,13 +792,13 @@ class ViewScreen(Screen):
         self.episode_uuid = episode_uuid
         self.journal = journal
         self.episode = None
-        self._poll_timer = None
-        self.from_edit = from_edit  # Track if opened from EditScreen
-        self.inference_enabled = (
+        self.from_edit = from_edit
+        inferred_enabled = (
             inference_enabled if inference_enabled is not None else get_inference_enabled()
         )
-        self.status = status
-        self.active_processing = active_processing
+        self.set_reactive(ViewScreen.inference_enabled, inferred_enabled)
+        self.set_reactive(ViewScreen.status, status)
+        self.set_reactive(ViewScreen.active_processing, active_processing)
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False, icon="")
@@ -805,13 +833,43 @@ class ViewScreen(Screen):
         # Only start polling if sidebar is still loading (cache miss)
         if sidebar.loading:
             # Cache doesn't have data - start polling for extraction job
-            self._poll_timer = self.set_interval(0.5, self._check_job_status)
             sidebar.active_processing = True
+            self.run_worker(self._poll_until_complete(), exclusive=True, name="status-poll")
 
     async def on_screen_resume(self):
         """Called when returning to this screen."""
         self._refresh_sidebar_context()
         await self.load_episode()
+
+    def watch_status(self, status: str | None) -> None:
+        """When ViewScreen.status changes, sync to sidebar."""
+        if not self.is_mounted:
+            return
+        try:
+            sidebar = self.query_one("#entity-sidebar", EntitySidebar)
+            sidebar.status = status
+        except NoMatches:
+            pass
+
+    def watch_inference_enabled(self, enabled: bool) -> None:
+        """When inference toggle changes, sync to sidebar."""
+        if not self.is_mounted:
+            return
+        try:
+            sidebar = self.query_one("#entity-sidebar", EntitySidebar)
+            sidebar.inference_enabled = enabled
+        except NoMatches:
+            pass
+
+    def watch_active_processing(self, active: bool) -> None:
+        """When processing state changes, sync to sidebar."""
+        if not self.is_mounted:
+            return
+        try:
+            sidebar = self.query_one("#entity-sidebar", EntitySidebar)
+            sidebar.active_processing = active
+        except NoMatches:
+            pass
 
     async def load_episode(self):
         try:
@@ -835,13 +893,8 @@ class ViewScreen(Screen):
         self.app.push_screen(EditScreen(self.episode_uuid))
 
     def action_back(self):
-        # Stop any pending poll timer before leaving
-        if self._poll_timer:
-            try:
-                self._poll_timer.stop()
-            except Exception:
-                pass
-            self._poll_timer = None
+        # Cancel any pending status polling worker before leaving
+        self.workers.cancel_group(self, "status-poll")
         self.app.pop_screen()
 
     def action_toggle_connections(self) -> None:
@@ -860,8 +913,8 @@ class ViewScreen(Screen):
             if sidebar.loading:
                 sidebar.run_worker(sidebar.refresh_entities(), exclusive=True)
                 # If still loading, start polling for job completion
-                if self._poll_timer is None:
-                    self._poll_timer = self.set_interval(0.5, self._check_job_status)
+                if not any(w.name == "status-poll" for w in self.workers if w.is_running):
+                    self.run_worker(self._poll_until_complete(), exclusive=True, name="status-poll")
                     sidebar.active_processing = True
             sidebar._update_content()
 
@@ -874,33 +927,48 @@ class ViewScreen(Screen):
                 except Exception:
                     pass
         else:
-            if self._poll_timer:
-                try:
-                    self._poll_timer.stop()
-                except Exception:
-                    pass
-                self._poll_timer = None
+            self.workers.cancel_group(self, "status-poll")
             sidebar.active_processing = False
 
     def action_show_logs(self) -> None:
         """Navigate to log viewer."""
         self.app.push_screen(LogScreen())
 
-    def _check_job_status(self) -> None:
-        """Poll Huey for job completion, then refresh entities."""
-        status = get_episode_status(self.episode_uuid, self.journal)
-        self.status = status
+    async def _poll_until_complete(self) -> None:
+        """Poll Redis until extraction completes (non-blocking background task)."""
+        while True:
+            try:
+                # Run blocking I/O in thread to keep UI responsive
+                status = await asyncio.to_thread(
+                    get_episode_status,
+                    self.episode_uuid,
+                    self.journal
+                )
 
-        # Job is complete when node extraction finishes (pending_edges/done) or None (old episodes)
-        if status in ("pending_edges", "done", None):
-            if self._poll_timer:
-                self._poll_timer.stop()
-                self._poll_timer = None
+                # Update reactive (watch_status will sync to sidebar)
+                self.status = status
 
-            sidebar = self.query_one("#entity-sidebar", EntitySidebar)
-            sidebar.status = status
-            sidebar.active_processing = False
-            self.run_worker(sidebar.refresh_entities(), exclusive=True)
+                # When extraction complete, refresh and stop
+                if status in ("pending_edges", "done", None):
+                    self.active_processing = False
+                    sidebar = self.query_one("#entity-sidebar", EntitySidebar)
+                    await sidebar.refresh_entities()
+                    break
+
+                # Wait before next check
+                await asyncio.sleep(0.5)
+            except WorkerCancelled:
+                logger.debug("Status polling worker cancelled")
+                self.active_processing = False
+                break
+            except NoMatches:
+                logger.debug("Sidebar not found during poll - stopping")
+                self.active_processing = False
+                break
+            except Exception as exc:
+                logger.exception(f"Status poll error: {exc}")
+                self.active_processing = False
+                break
 
     def _refresh_sidebar_context(self):
         """Update sidebar with latest inference toggle and processing status."""
@@ -911,9 +979,10 @@ class ViewScreen(Screen):
         except Exception as exc:
             logger.debug("Failed to refresh sidebar context: %s", exc)
             # fall back to previous values
-        sidebar.inference_enabled = self.inference_enabled
-        sidebar.status = self.status
-        sidebar.active_processing = self._poll_timer is not None
+        with self.app.batch_update():
+            sidebar.inference_enabled = self.inference_enabled
+            sidebar.status = self.status
+            sidebar.active_processing = any(w.name == "status-poll" and w.is_running for w in self.workers)
         sidebar._update_content()
 
 
