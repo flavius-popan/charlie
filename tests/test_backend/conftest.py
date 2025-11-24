@@ -45,8 +45,13 @@ def isolated_graph(falkordb_test_context) -> Iterator[object]:
     Provide a clean FalkorDB graph for each test.
 
     Uses DEFAULT_JOURNAL and clears all data before/after each test.
+    Also resets lifecycle flags to ensure test isolation.
     """
     from backend.settings import DEFAULT_JOURNAL
+    import backend.database.lifecycle as lifecycle
+
+    # Reset lifecycle state BEFORE test (in case previous test left dirty state)
+    lifecycle.reset_lifecycle_state()
 
     graph = db_utils.get_falkordb_graph(DEFAULT_JOURNAL)
 
@@ -61,6 +66,8 @@ def isolated_graph(falkordb_test_context) -> Iterator[object]:
     try:
         yield graph
     finally:
+        # Reset lifecycle state AFTER test
+        lifecycle.reset_lifecycle_state()
         # Clear all data after test
         graph.query("MATCH (n) DETACH DELETE n")
         persistence._graph_initialized.clear()
