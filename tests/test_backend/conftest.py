@@ -21,9 +21,13 @@ def falkordb_test_context(tmp_path_factory: pytest.TempPathFactory) -> Iterator[
     db_dir = tmp_path_factory.mktemp("falkordb-lite")
     db_path = db_dir / "backend-tests.db"
 
+    # Disable TCP listener in tests to avoid clashing with a running app instance.
+    backend_settings.REDIS_TCP_ENABLED = False
+    import backend.database.lifecycle as lifecycle
+    lifecycle.REDIS_TCP_ENABLED = False  # type: ignore[misc]
+
     backend_settings.DB_PATH = db_path
     # Update DB_PATH in lifecycle module
-    import backend.database.lifecycle as lifecycle
     lifecycle.DB_PATH = db_path  # type: ignore[misc]
 
     # Reset cached connections before opening a new graph

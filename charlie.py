@@ -364,8 +364,11 @@ class EntitySidebar(Container):
         try:
             cache_key = f"journal:{self.journal}:{self.episode_uuid}"
 
-            with redis_ops() as r:
-                nodes_json = r.hget(cache_key, "nodes")
+            def _fetch_nodes():
+                with redis_ops() as r:
+                    return r.hget(cache_key, "nodes")
+
+            nodes_json = await asyncio.to_thread(_fetch_nodes)
 
             if nodes_json:
                 nodes = json.loads(nodes_json.decode())
@@ -615,7 +618,7 @@ class HomeScreen(Screen):
             await ensure_database_ready(DEFAULT_JOURNAL)
             # Start Huey worker after database is ready to avoid startup races
             if hasattr(self.app, "_ensure_huey_worker_running"):
-                self.app._ensure_huey_worker_running()
+                await asyncio.to_thread(self.app._ensure_huey_worker_running)
             await self.load_episodes()
         except Exception as e:
             logger.error(f"Database initialization failed: {e}", exc_info=True)
