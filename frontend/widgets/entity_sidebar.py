@@ -116,6 +116,7 @@ class DeleteEntityModal(ModalScreen):
 
 class EntitySidebar(Container):
     """Sidebar showing entities connected to current episode."""
+    _pending_render: bool = False
 
     DEFAULT_CSS = """
     EntitySidebar {
@@ -189,27 +190,40 @@ class EntitySidebar(Container):
         """Reactive: swap between loading indicator and entity list."""
         if not self.is_mounted:
             return
-        self._update_content()
+        self._request_render()
 
     def watch_active_processing(self, active_processing: bool) -> None:
         """Reactive: re-render when processing state changes."""
         if not self.is_mounted:
             return
-        self._update_content()
+        self._request_render()
 
-    async def watch_entities(self, entities: list[dict]) -> None:
+    def watch_entities(self, entities: list[dict]) -> None:
         """Reactive: re-render when entities change."""
         if not self.is_mounted:
             return
         if not self.loading:
-            await asyncio.sleep(0)
-            self._update_content()
+            self._request_render()
 
     def watch_status(self, status: str | None) -> None:
         """Reactive: re-render when status changes."""
         if not self.is_mounted:
             return
         if not self.loading:
+            self._request_render()
+
+    def _request_render(self) -> None:
+        """Coalesce multiple watcher triggers into a single render per refresh."""
+        if self._pending_render:
+            return
+        self._pending_render = True
+        # Schedule on next event loop tick to coalesce multiple reactive triggers.
+        self.call_later(self._flush_render)
+
+    def _flush_render(self) -> None:
+        """Flush the scheduled render if sidebar is ready."""
+        self._pending_render = False
+        if self.is_mounted:
             self._update_content()
 
     def _update_content(self) -> None:
@@ -244,9 +258,14 @@ class EntitySidebar(Container):
                     message = "Inference disabled; extraction is paused."
                 else:
                     message = "Inference disabled; enable inference to extract connections."
-            elif self.status in ("pending_nodes", "pending_edges") and self.active_processing:
-                message = "Awaiting processing..."
-                clear_loading = False  # keep loading True so polling/spinner can proceed
+            else:
+                awaiting = self.status in ("pending_nodes", "pending_edges") and (
+                    self.active_processing or self.loading
+                )
+                if awaiting:
+                    message = "Awaiting processing..."
+                    # Keep loading True only if we were already loading to allow polling/spinner.
+                    clear_loading = not self.loading
 
             content_container.mount(Label(message))
             if clear_loading:

@@ -291,8 +291,13 @@ dependencies = [
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-textual-snapshot" },
-    { name = "python-statemachine", extra = ["diagrams"] },
+    { name = "python-statemachine" },
     { name = "textual" },
+]
+
+[package.optional-dependencies]
+dev = [
+    { name = "python-statemachine", extra = ["diagrams"] },
 ]
 
 [package.metadata]
@@ -306,9 +311,11 @@ requires-dist = [
     { name = "pytest", specifier = ">=8.0.0" },
     { name = "pytest-asyncio", specifier = ">=0.23.0" },
     { name = "pytest-textual-snapshot", specifier = ">=1.0.0" },
-    { name = "python-statemachine", extras = ["diagrams"], specifier = ">=2.5.0" },
+    { name = "python-statemachine", specifier = ">=2.5.0" },
+    { name = "python-statemachine", extras = ["diagrams"], marker = "extra == 'dev'", specifier = ">=2.5.0" },
     { name = "textual", specifier = ">=6.6.0" },
 ]
+provides-extras = ["dev"]
 
 [[package]]
 name = "charset-normalizer"

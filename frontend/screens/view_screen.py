@@ -88,18 +88,27 @@ class ViewScreen(Screen):
         self._sync_machine_output()
 
     def compose(self) -> ComposeResult:
+        sidebar = EntitySidebar(
+            episode_uuid=self.episode_uuid,
+            journal=self.journal,
+            inference_enabled=self.inference_enabled,
+            status=self.status,
+            active_processing=self.active_processing,
+            on_entity_deleted=self._on_entity_deleted,
+            id="entity-sidebar",
+        )
+
+        # Bind sidebar reactives to parent so state stays synchronized automatically.
+        sidebar.data_bind(
+            status=ViewScreen.status,
+            active_processing=ViewScreen.active_processing,
+            inference_enabled=ViewScreen.inference_enabled,
+        )
+
         yield Header(show_clock=False, icon="")
         yield Horizontal(
             Markdown("Loading...", id="journal-content"),
-            EntitySidebar(
-                episode_uuid=self.episode_uuid,
-                journal=self.journal,
-                inference_enabled=self.inference_enabled,
-                status=self.status,
-                active_processing=self.active_processing,
-                on_entity_deleted=self._on_entity_deleted,
-                id="entity-sidebar",
-            ),
+            sidebar,
         )
         yield Footer()
 
@@ -137,14 +146,6 @@ class ViewScreen(Screen):
         output = self.sidebar_machine.output
         self.status = output.status
         self.active_processing = output.active_processing
-
-        # Ensure EntitySidebar's reactive properties stay synchronized with machine state
-        try:
-            sidebar = self.query_one("#entity-sidebar", EntitySidebar)
-            sidebar.status = output.status
-            sidebar.active_processing = output.active_processing
-        except NoMatches:
-            pass
 
         # Inference state is handled separately in _refresh_sidebar_context
         # since it requires reading from Redis

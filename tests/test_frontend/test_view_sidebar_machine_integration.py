@@ -529,3 +529,97 @@ async def test_delete_last_entity_shows_correct_message():
                     # With active_processing=False and no entities, loading should be cleared
                     assert sidebar.loading is False, \
                         f"With no entities and no active processing, loading should be False, got {sidebar.loading}"
+
+
+@pytest.mark.asyncio
+async def test_parent_reactives_propagate_via_binding():
+    """Parent reactive updates should flow to sidebar; child writes stay local."""
+
+    with patch("frontend.screens.view_screen.get_episode", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = {
+            "uuid": "test-uuid",
+            "content": "# Test",
+        }
+
+        with patch("frontend.screens.view_screen.get_inference_enabled", return_value=True):
+            with patch("frontend.screens.view_screen.get_episode_status", return_value="pending_nodes"):
+                app = ViewScreenMachineTestApp(
+                    from_edit=True,
+                    initial_status="pending_nodes",
+                    inference_enabled=True,
+                )
+
+                async with app.run_test() as pilot:
+                    await pilot.pause()
+                    screen = app.screen
+
+                    from frontend.widgets.entity_sidebar import EntitySidebar
+
+                    sidebar = screen.query_one("#entity-sidebar", EntitySidebar)
+
+                    # Parent and child start in sync
+                    assert screen.status == sidebar.status == "pending_nodes"
+
+                    # Update parent reactives directly; child should follow via binding
+                    screen.status = "pending_edges"
+                    screen.active_processing = False
+                    await pilot.pause()
+
+                    assert sidebar.status == "pending_edges"
+                    assert sidebar.active_processing is False
+
+                    # Child writes must not mutate parent (one-way binding)
+                    sidebar.status = "done"
+                    sidebar.active_processing = True
+                    await pilot.pause()
+
+                    assert screen.status == "pending_edges"
+                    assert screen.active_processing is False
+
+
+@pytest.mark.asyncio
+async def test_sidebar_renders_once_per_cycle():
+    """Rapid reactive changes should coalesce into one render via _pending_render."""
+
+    with patch("frontend.screens.view_screen.get_episode", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = {
+            "uuid": "test-uuid",
+            "content": "# Test",
+        }
+
+        with patch("frontend.screens.view_screen.get_inference_enabled", return_value=True):
+            with patch("frontend.screens.view_screen.get_episode_status", return_value="pending_nodes"):
+                app = ViewScreenMachineTestApp(
+                    from_edit=True,
+                    initial_status="pending_nodes",
+                    inference_enabled=True,
+                )
+
+                async with app.run_test() as pilot:
+                    await pilot.pause()
+                    screen = app.screen
+                    from frontend.widgets.entity_sidebar import EntitySidebar
+
+                    sidebar = screen.query_one("#entity-sidebar", EntitySidebar)
+
+                    # Count renders by wrapping _update_content
+                    render_count = 0
+                    original_update = sidebar._update_content
+
+                    def counting_update():
+                        nonlocal render_count
+                        render_count += 1
+                        original_update()
+
+                    sidebar._update_content = counting_update
+                    # Allow renders (initial loading True prevents watcher renders)
+                    sidebar.loading = False
+
+                    # Trigger multiple reactive changes within one cycle
+                    screen.status = "pending_edges"  # change from pending_nodes
+                    sidebar.active_processing = False  # toggle value to trigger watcher
+                    sidebar.entities = [{"uuid": "e1", "name": "X", "type": "Entity"}]
+
+                    await pilot.pause()
+
+                    assert render_count == 1, f"Expected 1 render, got {render_count}"

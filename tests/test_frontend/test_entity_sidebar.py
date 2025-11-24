@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import inspect
 import pytest
 from unittest.mock import patch, AsyncMock, MagicMock
 from textual.app import App, ComposeResult
@@ -20,6 +21,42 @@ class EntitySidebarTestApp(App):
 
     def compose(self) -> ComposeResult:
         yield EntitySidebar(episode_uuid=self.episode_uuid, journal=self.journal)
+
+
+def test_watch_entities_is_synchronous():
+    """watch_entities should be synchronous (no async def)."""
+
+    assert inspect.iscoroutinefunction(EntitySidebar.watch_entities) is False
+
+
+@pytest.mark.asyncio
+async def test_request_render_coalesces_updates():
+    """_request_render should coalesce multiple watcher triggers into one render."""
+    app = EntitySidebarTestApp()
+
+    async with app.run_test() as pilot:
+        sidebar = app.query_one(EntitySidebar)
+
+        # Wrap _update_content to count calls
+        render_count = 0
+        original_update = sidebar._update_content
+
+        def counting_update():
+            nonlocal render_count
+            render_count += 1
+            original_update()
+
+        sidebar._update_content = counting_update
+
+        # Trigger multiple watcher paths rapidly
+        sidebar.status = "pending_edges"
+        sidebar.entities = []
+        sidebar.active_processing = True
+        sidebar.loading = False
+
+        await pilot.pause()
+
+        assert render_count == 1, f"Expected 1 render, got {render_count}"
 
 
 @pytest.mark.asyncio
@@ -91,7 +128,7 @@ async def test_entity_sidebar_formats_entity_labels():
         list_view = sidebar.query_one(ListView)
         items = list(list_view.children)
 
-        from charlie import EntityListItem
+        from frontend.widgets.entity_sidebar import EntityListItem
         item1_label = items[0].label_text if isinstance(items[0], EntityListItem) else ""
         item2_label = items[1].label_text if isinstance(items[1], EntityListItem) else ""
 
@@ -116,7 +153,7 @@ async def test_entity_sidebar_refresh_entities():
         json.dumps(mock_entities).encode() if field == "nodes" else None
     )
 
-    with patch("charlie.redis_ops") as mock_redis_ops:
+    with patch("frontend.widgets.entity_sidebar.redis_ops") as mock_redis_ops:
         mock_redis_ops.return_value.__enter__.return_value = mock_redis
         mock_redis_ops.return_value.__exit__.return_value = None
 
@@ -140,6 +177,8 @@ async def test_entity_sidebar_shows_delete_confirmation():
         ]
         sidebar.loading = False
 
+        await pilot.pause()
+
         list_view = sidebar.query_one(ListView)
         list_view.focus()
 
@@ -154,7 +193,7 @@ async def test_entity_sidebar_deletes_entity():
     """Confirming deletion should remove entity from list."""
     app = EntitySidebarTestApp(episode_uuid="test-uuid", journal="test")
 
-    with patch("charlie.delete_entity_mention", new_callable=AsyncMock) as mock_delete:
+    with patch("frontend.widgets.entity_sidebar.delete_entity_mention", new_callable=AsyncMock) as mock_delete:
         mock_delete.return_value = False
 
         async with app.run_test() as pilot:
@@ -164,6 +203,8 @@ async def test_entity_sidebar_deletes_entity():
                 {"uuid": "uuid-2", "name": "Park", "type": "Place"},
             ]
             sidebar.loading = False
+
+            await pilot.pause()
 
             list_view = sidebar.query_one(ListView)
             list_view.focus()
@@ -187,7 +228,7 @@ async def test_entity_sidebar_delete_last_entity_shows_no_connections():
     """Deleting the last entity should show 'No connections found', not 'Awaiting processing...'."""
     app = EntitySidebarTestApp(episode_uuid="test-uuid", journal="test")
 
-    with patch("charlie.delete_entity_mention", new_callable=AsyncMock) as mock_delete:
+    with patch("frontend.widgets.entity_sidebar.delete_entity_mention", new_callable=AsyncMock) as mock_delete:
         mock_delete.return_value = True
 
         async with app.run_test() as pilot:
@@ -300,7 +341,7 @@ async def test_entity_sidebar_batch_update_atomicity():
         json.dumps(mock_entities).encode() if field == "nodes" else None
     )
 
-    with patch("charlie.redis_ops") as mock_redis_ops:
+    with patch("frontend.widgets.entity_sidebar.redis_ops") as mock_redis_ops:
         mock_redis_ops.return_value.__enter__.return_value = mock_redis
         mock_redis_ops.return_value.__exit__.return_value = None
 
@@ -337,7 +378,7 @@ async def test_entity_sidebar_refresh_with_missing_cache_key():
     # Return None to simulate missing cache key
     mock_redis.hget.return_value = None
 
-    with patch("charlie.redis_ops") as mock_redis_ops:
+    with patch("frontend.widgets.entity_sidebar.redis_ops") as mock_redis_ops:
         mock_redis_ops.return_value.__enter__.return_value = mock_redis
         mock_redis_ops.return_value.__exit__.return_value = None
 
@@ -364,11 +405,11 @@ async def test_entity_sidebar_refresh_with_malformed_json():
     # Return malformed JSON
     mock_redis.hget.return_value = b"not valid json {{"
 
-    with patch("charlie.redis_ops") as mock_redis_ops:
+    with patch("frontend.widgets.entity_sidebar.redis_ops") as mock_redis_ops:
         mock_redis_ops.return_value.__enter__.return_value = mock_redis
         mock_redis_ops.return_value.__exit__.return_value = None
 
-        with patch("charlie.logger") as mock_logger:
+        with patch("frontend.widgets.entity_sidebar.logger") as mock_logger:
             async with app.run_test() as pilot:
                 sidebar = app.query_one(EntitySidebar)
 
@@ -521,7 +562,7 @@ async def test_entity_sidebar_refresh_triggered_on_manual_display():
         json.dumps(mock_entities).encode() if field == "nodes" else None
     )
 
-    with patch("charlie.redis_ops") as mock_redis_ops:
+    with patch("frontend.widgets.entity_sidebar.redis_ops") as mock_redis_ops:
         mock_redis_ops.return_value.__enter__.return_value = mock_redis
         mock_redis_ops.return_value.__exit__.return_value = None
 
