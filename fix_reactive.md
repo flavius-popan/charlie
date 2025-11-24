@@ -13,6 +13,8 @@ The sidebar implementation has a **code smell**: duplicate reactive properties m
 
 **Scope:** ViewScreen ↔ EntitySidebar reactive property flow only. Other parent-child relationships will use this as the reference pattern.
 
+**Framework baseline:** Textual 6.6.0 (latest stable as of 2025-11-24; matches `uv.lock`).
+
 ---
 
 ## Problem Statement
@@ -27,9 +29,9 @@ ViewScreen                          EntitySidebar
 │ inference_enabled: bool │◄────────│ inference_enabled: b.│
 └─────────────────────────┘         └──────────────────────┘
         ▲                                   ▲
-        │ set values manually              │ reads from parent
-        │ in _sync_machine_output()        │ (stale values!)
-        │ FRAGILE!                         │
+        │ set values manually               │ reads from parent
+        │ in _sync_machine_output()         │ (stale values!)
+        │ FRAGILE!                          │
         └───────────────────────────────────┘
                     Race Condition!
 ```
@@ -58,299 +60,86 @@ ViewScreen                          EntitySidebar
 
 ---
 
-## Solution Design
+## Design
 
-### Option A: Parent-Owned State (Recommended)
+1) **Single source of truth in the parent (ViewScreen).** `status`, `active_processing`, and `inference_enabled` live only on the screen.
 
-**Philosophy:** ViewScreen owns all state. EntitySidebar reads from parent.
+2) **One-way binding with `data_bind()`.** In `compose()`, bind those reactives from `ViewScreen` to the matching reactives on `EntitySidebar`. Child treats them as read-only and communicates up via events/messages, never by mutating the bound values.
 
-```
-ViewScreen (Single Source of Truth)
-┌──────────────────────────────┐
-│ status: reactive[str]        │
-│ active_processing: reactive  │
-│ inference_enabled: reactive  │
-└──────────────────────────────┘
-        │
-        │ Data binding (automatic sync)
-        ▼
-EntitySidebar (Read-Only)
-┌──────────────────────────────┐
-│ Receives values from parent   │
-│ No local copies, no duplication
-│ Reads: self.screen.status    │
-└──────────────────────────────┘
-```
+3) **Seed child reactives safely.** In `EntitySidebar.__init__`, use `set_reactive()` to load initial values without firing watchers before mount (Textual guidance).
 
-**Pros:**
-- Single source of truth
-- Automatic synchronization (no manual calls)
-- Type-safe
-- Textual best practice
+4) **No manual synchronization.** Delete any direct assignments from parent to child reactives (_e.g._ in `_sync_machine_output`). Parent updates its own reactives; binding propagates.
 
-**Cons:**
-- Requires refactoring EntitySidebar watchers
-- EntitySidebar becomes tightly coupled to ViewScreen type
+5) **Watcher discipline.** Watchers stay synchronous. Use a tiny `_pending_render` flag plus `call_after_refresh()` to coalesce multiple triggers into one `_update_content()` per refresh cycle.
 
-**Complexity:** Medium
-
-### Option B: Textual Data Binding (Best Practice)
-
-**Philosophy:** Use Textual's built-in `data_bind()` for automatic reactive property synchronization.
-
-```python
-# ViewScreen.compose()
-EntitySidebar(...).data_bind(
-    status=ViewScreen.status,
-    active_processing=ViewScreen.active_processing,
-    inference_enabled=ViewScreen.inference_enabled,
-)
-```
-
-**How it works:**
-- Textual automatically creates two-way binding
-- Child properties sync with parent automatically
-- No manual synchronization code needed
-- Textual handles the reactive system internally
-
-**Pros:**
-- Automatic, declarative synchronization
-- Textual framework handles all complexity
-- Zero manual synchronization code
-- Extensible to other widgets
-
-**Cons:**
-- Requires understanding Textual's data binding semantics
-- Limited to constructor-time binding (can't be dynamic)
-- May need conditional binding logic
-
-**Complexity:** Low (once understood)
-
-### Option C: Derived Reactive Properties
-
-**Philosophy:** Child widget has a derived reactive property that watches parent.
-
-```python
-# EntitySidebar
-class EntitySidebar(Container):
-    status: reactive[str | None] = reactive(None, init=False)
-
-    async def watch_entities(self):
-        # When entities change, read parent's status
-        parent_status = self.screen.status if hasattr(self.screen, 'status') else None
-        self.status = parent_status
-        self._update_content()
-```
-
-**Pros:**
-- Explicit parent-child relationship
-- Child controls when to read parent
-- Can add logic/filtering
-
-**Cons:**
-- Still has duplication (two properties)
-- More complex watchers
-- Extra rendering passes
-
-**Complexity:** Medium
+6) **Batching is optional.** Use `batch_update()` only for large cross-widget layout churn; normal reactive updates already benefit from Textual’s coalesced refreshes.
 
 ---
 
-## Recommended Approach: Option B + Defensive Properties
+## Implementation
 
-**Hybrid Solution:**
-
-1. **Use Textual's `data_bind()` for automatic synchronization**
-   - Declarative in `compose()`
-   - Framework handles all complexity
-   - Type-safe and verifiable
-
-2. **Keep EntitySidebar's reactive properties** (for widget interface)
-   - But mark as "synced from parent" in comments
-   - Document the binding relationship
-   - Add assertions to verify binding worked
-
-3. **Remove all manual synchronization code** from ViewScreen
-   - Delete lines that manually set `sidebar.status = ...`
-   - Trust the binding mechanism
-
-4. **Simplify watchers** in EntitySidebar
-   - Keep them sync (remove async sleep)
-   - Data is always current due to binding
-   - Cleaner, more straightforward
-
----
-
-## Implementation Steps
-
-### Phase 1: Add Textual Data Binding (Non-Breaking)
-
-**File:** `frontend/screens/view_screen.py`
-
-**Step 1.1: Import data_bind helper**
-```python
-# Already imported from textual
-```
-
-**Step 1.2: Modify compose() to bind properties**
+1) **Bind in `ViewScreen.compose()`.**
 ```python
 def compose(self) -> ComposeResult:
-    # ... existing code ...
-
     sidebar = EntitySidebar(
         episode_uuid=self.episode_uuid,
         journal=self.journal,
-        inference_enabled=self.inference_enabled,
+        inference_enabled=self.inference_enabled,  # keep during transition
         status=self.status,
         active_processing=self.active_processing,
         on_entity_deleted=self._on_entity_deleted,
         id="entity-sidebar",
     )
-
-    # Data binding: automatic reactive synchronization
     sidebar.data_bind(
         status=ViewScreen.status,
         active_processing=ViewScreen.active_processing,
         inference_enabled=ViewScreen.inference_enabled,
     )
-
-    yield sidebar
+    yield Header(show_clock=False, icon="")
+    yield Horizontal(Markdown("Loading...", id="journal-content"), sidebar)
+    yield Footer()
 ```
 
-**Why non-breaking:** Binding happens in addition to manual sync (redundant but safe during transition).
-
-### Phase 2: Verify Binding Works
-
-**Testing:**
-- Run integration tests to verify properties sync
-- Add assertions in `_sync_machine_output()` to verify binding worked
-- Test stale value scenarios
-
+2) **Drop manual sync in `_sync_machine_output()`.**
 ```python
 def _sync_machine_output(self) -> None:
     output = self.sidebar_machine.output
     self.status = output.status
     self.active_processing = output.active_processing
-
-    # Verify binding worked
-    try:
-        sidebar = self.query_one("#entity-sidebar", EntitySidebar)
-        assert sidebar.status == self.status, \
-            f"Binding failed: sidebar.status={sidebar.status}, self.status={self.status}"
-        assert sidebar.active_processing == self.active_processing, \
-            f"Binding failed: sidebar.active_processing={sidebar.active_processing}"
-    except NoMatches:
-        pass  # Not mounted yet
+    # Binding handles sidebar synchronization
 ```
 
-### Phase 3: Remove Manual Synchronization
-
-**File:** `frontend/screens/view_screen.py`
-
-Once binding is verified, remove manual sync code:
-
+3) **Dedupe renders in `EntitySidebar`.**
 ```python
-# DELETE these lines from _sync_machine_output():
-try:
-    sidebar = self.query_one("#entity-sidebar", EntitySidebar)
-    sidebar.status = output.status
-    sidebar.active_processing = output.active_processing
-except NoMatches:
-    pass
+class EntitySidebar(Container):
+    _pending_render: bool = False
+
+    def _request_render(self) -> None:
+        if self._pending_render:
+            return
+        self._pending_render = True
+        self.call_after_refresh(self._flush_render)
+
+    def _flush_render(self) -> None:
+        self._pending_render = False
+        if self.is_mounted and not self.loading:
+            self._update_content()
+
+    def watch_status(self, status: str | None) -> None:
+        if self.is_mounted:
+            self._request_render()
+
+    def watch_active_processing(self, active_processing: bool) -> None:
+        if self.is_mounted:
+            self._request_render()
+
+    def watch_entities(self, entities: list[dict]) -> None:
+        if self.is_mounted:
+            self._request_render()
 ```
+Keep watchers synchronous; remove the async/sleep variant. Keep `set_reactive()` seeding in `__init__`.
 
-Keep only the ViewScreen's own reactive updates:
-```python
-def _sync_machine_output(self) -> None:
-    output = self.sidebar_machine.output
-    self.status = output.status
-    self.active_processing = output.active_processing
-    # Binding handles EntitySidebar synchronization automatically
-```
-
-### Phase 4: Simplify EntitySidebar Watchers
-
-**File:** `frontend/widgets/entity_sidebar.py`
-
-Change async watcher back to sync (since data is now always current):
-
-```python
-# Before (with async sleep):
-async def watch_entities(self, entities: list[dict]) -> None:
-    if not self.is_mounted:
-        return
-    if not self.loading:
-        await asyncio.sleep(0)
-        self._update_content()
-
-# After (simple and clean):
-def watch_entities(self, entities: list[dict]) -> None:
-    """Re-render when entities change."""
-    if not self.is_mounted:
-        return
-    if not self.loading:
-        self._update_content()
-```
-
-**Why this works:** With data binding, properties are synchronized automatically. No race condition.
-
----
-
-## Batch Updates Strategy
-
-### Current Issue
-When ViewScreen's reactive properties change, EntitySidebar's multiple watchers fire:
-1. `watch_status()` → calls `_update_content()`
-2. `watch_active_processing()` → calls `_update_content()`
-3. `watch_entities()` → calls `_update_content()`
-
-This causes **3 renders for 1 update** (inefficient).
-
-### Solution: Use `batch_update()` Context
-
-**File:** `frontend/screens/view_screen.py`
-
-```python
-def _sync_machine_output(self) -> None:
-    """Sync machine output with batch update for efficiency."""
-    output = self.sidebar_machine.output
-
-    # Batch all reactive updates to prevent multiple renders
-    with self.app.batch_update():
-        self.status = output.status
-        self.active_processing = output.active_processing
-
-    # All bound properties update atomically
-    # EntitySidebar's watchers fire once at end of batch
-```
-
-**Effect:**
-- ViewScreen updates 2 properties
-- Binding propagates to EntitySidebar
-- All watchers batch together
-- Single render pass instead of 3
-
-### Batch Update Best Practices
-
-**When to use:**
-- Multiple related property changes
-- Expensive update operations (UI rendering)
-- Preventing cascading updates
-
-**Pattern:**
-```python
-with self.app.batch_update():
-    # All changes here are batched
-    self.prop1 = value1
-    self.prop2 = value2
-    self.prop3 = value3
-# All watchers fire once here
-```
-
-**Not needed for:**
-- Single property changes
-- Independent unrelated changes
-- Internal-only changes (not bound to UI)
+4) **Batching:** use `batch_update()` only for large cross-widget layout churn; normal reactive updates don’t require it.
 
 ---
 
@@ -359,6 +148,7 @@ with self.app.batch_update():
 ### Unit Tests
 - Verify ViewScreen properties update correctly
 - Verify EntitySidebar receives updates via binding
+- Confirm child writes do not mutate parent (one-way discipline)
 - Test with and without binding
 
 ### Integration Tests
@@ -382,6 +172,11 @@ def test_data_binding_syncs_status():
 
         # Verify child is synchronized
         assert sidebar.status == "pending_edges"
+
+        # Child write should not change parent
+        sidebar.status = "should_not_propagate"
+        await pilot.pause()
+        assert screen.status == "pending_edges"
 ```
 
 ### Race Condition Verification
@@ -397,9 +192,39 @@ def test_no_race_condition_on_deletion():
         await pilot.pause()
 
         # Verify sidebar reads fresh values
-        content = sidebar._get_display_message()
-        assert content == "No connections found"
-        assert "Awaiting processing" not in content
+        content_container = sidebar.query_one("#entity-content", Container)
+        text_nodes = [
+            n.renderable.plain
+            for n in content_container.children
+            if isinstance(n, Label)
+        ]
+        assert any("No connections found" in t for t in text_nodes)
+        assert all("Awaiting processing" not in t for t in text_nodes)
+
+def test_sidebar_renders_once_per_cycle():
+    """Rapid reactive changes only schedule one sidebar render."""
+    app = TestApp()
+    async with app.run_test() as pilot:
+        screen = app.screen
+        sidebar = screen.query_one("#entity-sidebar", EntitySidebar)
+
+        sidebar._pending_render = False
+        sidebar._update_count = 0
+
+        # Monkeypatch to count updates
+        original_update = sidebar._update_content
+        def _counting_update():
+            sidebar._update_count += 1
+            original_update()
+        sidebar._update_content = _counting_update
+
+        # Trigger multiple watchers in one tick
+        screen.status = "pending_nodes"
+        sidebar.entities = []
+        sidebar.active_processing = True
+        await pilot.pause()
+
+        assert sidebar._update_count == 1
 ```
 
 ---
@@ -452,10 +277,10 @@ sidebar.data_bind(status=ViewScreen.status)
 - Keep watchers clean and sync
 - Update tests as needed
 
-### Commit 4: Optimize with Batch Updates
-- Add `batch_update()` context
-- Verify rendering efficiency
-- Add performance tests
+### Commit 4: Dedupe Watcher Renders
+- Add `_pending_render` flag + `call_after_refresh` scheduler
+- Keep `_update_content()` idempotent and single-shot per refresh cycle
+- Add performance/behavioral tests around rapid status+entities changes
 
 ### Commit 5: Documentation & Pattern Guide
 - Document the pattern for future developers
@@ -466,50 +291,14 @@ sidebar.data_bind(status=ViewScreen.status)
 
 ## Pattern Guide for Future Development
 
-### When You Add Parent-Child Widgets
-
-**DON'T DO THIS:**
-```python
-# Anti-pattern: Duplicate reactive properties
-class ParentWidget(Container):
-    status: reactive = reactive("idle")
-
-class ChildWidget(Container):
-    status: reactive = reactive("idle")  # DUPLICATE!
-
-    def on_mount(self):
-        # Manual sync code everywhere - FRAGILE!
-        self.status = self.screen.status
-```
-
-**DO THIS:**
-```python
-# Pattern: Parent owns state, use data binding
-class ParentWidget(Container):
-    status: reactive = reactive("idle")
-
-    def compose(self):
-        child = ChildWidget(status=self.status)
-        # Automatic synchronization - ROBUST!
-        child.data_bind(status=ParentWidget.status)
-        yield child
-
-class ChildWidget(Container):
-    status: reactive = reactive("idle")  # Receives via binding
-
-    def watch_status(self, status: str) -> None:
-        # Watcher fires when parent changes status
-        self._update_display()
-```
-
 ### Checklist for All Parent-Child Reactive Relationships
 
 - [ ] Parent owns the canonical state
 - [ ] Child has reactive properties that match parent's
 - [ ] `data_bind()` called in parent's `compose()`
 - [ ] No manual synchronization code
-- [ ] Watchers assume data is current (sync, not async)
-- [ ] Use `batch_update()` for multiple property changes
+- [ ] Watchers assume data is current (sync, not async) and use a scheduler to avoid duplicate renders
+- [ ] Use `batch_update()` only when batching large cross-widget layout changes
 - [ ] Comments explain the binding relationship
 - [ ] Tests verify synchronization works
 
@@ -521,7 +310,7 @@ class ChildWidget(Container):
 - ✓ Single source of truth (ViewScreen owns state)
 - ✓ Automatic binding (no manual sync code)
 - ✓ No race conditions (data always current)
-- ✓ Efficient rendering (batch updates)
+- ✓ Efficient rendering (coalesced refresh + watcher dedupe)
 - ✓ All tests passing (63+ tests)
 - ✓ Code quality (AGENTS.md compliance)
 
@@ -546,7 +335,7 @@ class ChildWidget(Container):
 | 1 | Add data binding | Low | 1-2 hours |
 | 2 | Verify & remove manual sync | Low | 1 hour |
 | 3 | Simplify watchers | Low | 30 min |
-| 4 | Batch updates | Low | 30 min |
+| 4 | Dedupe renders (`_pending_render` scheduler) | Low | 30 min |
 | 5 | Testing & verification | Medium | 1-2 hours |
 | 6 | Documentation & review | Low | 1 hour |
 | **Total** | | | **5-7 hours** |
@@ -557,8 +346,12 @@ class ChildWidget(Container):
 
 ### Textual Documentation
 - [Reactive Guide](https://textual.textualize.io/guide/reactivity/)
-- [Data Binding](https://textual.textualize.io/guide/actions/#data-binding)
+- [Data Binding](https://textual.textualize.io/guide/reactivity/#data-binding)
 - [Widget Composition](https://textual.textualize.io/guide/widgets/)
+- [App.batch_update](https://textual.textualize.io/api/app/#textual.app.App.batch_update)
+
+### Versions
+- Textual 6.6.0 (PyPI, released 2025-11-10) — matches `uv.lock`
 
 ### Related Code
 - `frontend/screens/view_screen.py` - Parent widget (ViewScreen)
@@ -577,8 +370,8 @@ class ChildWidget(Container):
 
 | Risk | Probability | Impact | Mitigation |
 |------|-------------|--------|-----------|
-| Binding doesn't work | Low | High | Test thoroughly in Phase 1 |
-| Performance regression | Low | Medium | Profile with batch updates |
+| Binding doesn't work | Low | High | Test binding immediately after adding `data_bind()` |
+| Performance regression | Low | Medium | Profile render scheduling; ensure `_pending_render` is in place |
 | Watchers fire incorrectly | Low | Medium | Unit test each watcher |
 | Type errors in binding | Low | Medium | Use type hints, add assertions |
 
@@ -592,16 +385,5 @@ Each commit is independently reversible. If Phase 2+ fails, revert and keep Phas
 ### Once Established
 - Apply this pattern to all parent-child widget pairs
 - Create utility helpers if patterns emerge
-- Update onboarding documentation
 - Make this the "golden standard" for this codebase
 
-### Extensions
-- Consider reactive composition patterns for complex apps
-- Document state management best practices
-- Create examples for new developers
-
----
-
-**Author:** Code Review Process
-**Last Updated:** 2025-11-24
-**Status:** Ready for Implementation
