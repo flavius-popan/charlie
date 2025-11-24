@@ -138,6 +138,14 @@ class ViewScreen(Screen):
         self.status = output.status
         self.active_processing = output.active_processing
 
+        # Ensure EntitySidebar's reactive properties stay synchronized with machine state
+        try:
+            sidebar = self.query_one("#entity-sidebar", EntitySidebar)
+            sidebar.status = output.status
+            sidebar.active_processing = output.active_processing
+        except NoMatches:
+            pass
+
         # Inference state is handled separately in _refresh_sidebar_context
         # since it requires reading from Redis
 

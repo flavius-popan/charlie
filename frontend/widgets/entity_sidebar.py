@@ -197,11 +197,12 @@ class EntitySidebar(Container):
             return
         self._update_content()
 
-    def watch_entities(self, entities: list[dict]) -> None:
+    async def watch_entities(self, entities: list[dict]) -> None:
         """Reactive: re-render when entities change."""
         if not self.is_mounted:
             return
         if not self.loading:
+            await asyncio.sleep(0)
             self._update_content()
 
     def watch_status(self, status: str | None) -> None:
