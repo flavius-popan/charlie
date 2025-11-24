@@ -526,9 +526,9 @@ async def test_delete_last_entity_shows_correct_message():
                     children = list(content_container.children)
                     assert len(children) > 0, "Content should have a message"
 
-                    # With active_processing=False and no entities, loading should be cleared
-                    assert sidebar.loading is False, \
-                        f"With no entities and no active processing, loading should be False, got {sidebar.loading}"
+                        # With pending status we keep loading True while awaiting processing
+                    assert sidebar.loading is True, \
+                        f"With pending status and no entities, loading should stay True, got {sidebar.loading}"
 
 
 @pytest.mark.asyncio

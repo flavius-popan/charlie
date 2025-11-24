@@ -127,7 +127,7 @@ async def test_toggle_connections_starts_polling_and_refreshes_when_pending():
         }
 
         # Simulate pending -> pending_edges transition
-        with patch("charlie.get_episode_status") as mock_status, patch(
+        with patch("frontend.screens.view_screen.get_episode_status") as mock_status, patch(
             "charlie.get_inference_enabled", return_value=True
         ):
             from itertools import chain, repeat
@@ -197,7 +197,7 @@ async def test_view_screen_from_edit_starts_polling_and_spinner_when_pending():
     """Opening ViewScreen from Edit flow should keep loading, start polling, and show spinner."""
 
     with patch("charlie.get_episode", new_callable=AsyncMock) as mock_get, patch(
-        "charlie.get_episode_status", return_value="pending_nodes"
+        "frontend.screens.view_screen.get_episode_status", return_value="pending_nodes"
     ), patch("charlie.get_inference_enabled", return_value=True):
         mock_get.return_value = {
             "uuid": "test-uuid",

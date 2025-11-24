@@ -6,6 +6,27 @@ Unless I request a simple change, any discussion of architecture, design, featur
 
 Git add & commit are fine for feature branches but NEVER for `main`!
 
+## DATABASE ISOLATION - NEVER WRITE TO PRODUCTION DB
+
+**CRITICAL RULE: Agents and tests must NEVER write to `data/charlie.db`**
+
+The test suite automatically uses `tests/data/charlie-test.db` via conftest.py fixtures.
+
+**Verification after running tests:**
+```bash
+# Production database should NEVER change during tests
+git status data/charlie.db  # Should show "nothing to commit"
+```
+
+If `data/charlie.db` was modified, tests have a critical isolation bug that must be fixed immediately.
+
+**For manual testing/development:**
+```bash
+# Use environment variable to override database location
+export CHARLIE_DB_PATH="tests/data/manual-test.db"
+python charlie.py
+```
+
 ## Comment Rules
 
 - Add code comments sparingly.

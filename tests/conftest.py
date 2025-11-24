@@ -8,18 +8,25 @@ pytest's filterwarnings or Python's warnings module. They are emitted by Textual
 internal async cleanup and do not indicate test failures. See pyproject.toml filterwarnings
 for attempted suppressions.
 """
-
-import sys
 from pathlib import Path
-import pytest
+import sys
+from unittest.mock import AsyncMock, patch
 
-# Ensure project root is importable when running tests directly.
+# Ensure project root is importable before backend imports.
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+# ---------------------------------------------------------------------------
+# Database isolation: redirect all tests to tests/data/charlie-test.db
+# This MUST occur before any other backend imports.
+# ---------------------------------------------------------------------------
+import backend.settings as backend_settings
+backend_settings.DB_PATH = Path("tests/data/charlie-test.db")
+
+import pytest
+
 # Disable TCP listener in tests to avoid clashing with a running app instance.
-from backend import settings as backend_settings
 backend_settings.REDIS_TCP_ENABLED = False
 backend_settings.TCP_PORT = 0
 
@@ -100,3 +107,20 @@ def assert_worker_running(screen, worker_name):
     """
     return any(w.name == worker_name and w.is_running for w in screen.workers)
 
+
+@pytest.fixture(autouse=True)
+def patch_backend_add_journal_entry():
+    """Provide a default async mock for backend.add_journal_entry for tests without explicit patching."""
+    with patch("backend.add_journal_entry", new_callable=AsyncMock) as mock_add, \
+         patch("frontend.screens.edit_screen.add_journal_entry", new_callable=AsyncMock) as screen_add, \
+         patch("backend.database.update_episode", new_callable=AsyncMock) as backend_update, \
+         patch("frontend.screens.edit_screen.update_episode", new_callable=AsyncMock) as screen_update, \
+         patch("frontend.screens.edit_screen.get_episode", new_callable=AsyncMock) as screen_get, \
+         patch("frontend.screens.view_screen.get_episode", new_callable=AsyncMock) as view_get:
+        mock_add.return_value = "new-uuid"
+        screen_add.return_value = "new-uuid"
+        backend_update.return_value = True
+        screen_update.return_value = True
+        screen_get.return_value = {"uuid": "new-uuid", "content": "# Test Entry\nSome content"}
+        view_get.return_value = {"uuid": "new-uuid", "content": "# Test Entry\nSome content"}
+        yield

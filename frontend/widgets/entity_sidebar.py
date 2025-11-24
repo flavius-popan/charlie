@@ -258,14 +258,10 @@ class EntitySidebar(Container):
                     message = "Inference disabled; extraction is paused."
                 else:
                     message = "Inference disabled; enable inference to extract connections."
-            else:
-                awaiting = self.status in ("pending_nodes", "pending_edges") and (
-                    self.active_processing or self.loading
-                )
-                if awaiting:
-                    message = "Awaiting processing..."
-                    # Keep loading True only if we were already loading to allow polling/spinner.
-                    clear_loading = not self.loading
+            elif self.status in ("pending_nodes", "pending_edges"):
+                message = "Awaiting processing..."
+                clear_loading = False
+                self.loading = True
 
             content_container.mount(Label(message))
             if clear_loading:
