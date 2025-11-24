@@ -1277,7 +1277,6 @@ class CharlieApp(App):
 
     async def on_mount(self):
         self.theme = "catppuccin-mocha"
-        self.title = "Charlie"
         self.push_screen(HomeScreen())
         # Worker is started after DB readiness in HomeScreen._init_and_load.
 
