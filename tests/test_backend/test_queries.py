@@ -115,3 +115,70 @@ async def test_delete_entity_mention_updates_redis_cache(isolated_graph, require
 
     suppressed = get_suppressed_entities("test_journal")
     assert entity_name.lower() in suppressed, "Deleted entity should be globally suppressed"
+
+
+@pytest.mark.asyncio
+async def test_delete_entity_mention_sets_done_when_only_self_remains(isolated_graph, episode_uuid):
+    """Deleting last visible entity should set status to done, even if 'I' remains."""
+    from backend.database.queries import delete_entity_mention
+    from backend.database.redis_ops import get_episode_status
+    from backend.settings import DEFAULT_JOURNAL
+
+    journal = DEFAULT_JOURNAL
+
+    # Setup: Create episode node
+    isolated_graph.query(f"""
+        CREATE (:Episodic {{
+            uuid: '{episode_uuid}',
+            group_id: '{journal}',
+            content: 'Test entry',
+            name: 'Test',
+            source: 'text',
+            source_description: 'test',
+            entity_edges: [],
+            created_at: '2025-01-01T00:00:00Z',
+            valid_at: '2025-01-01T00:00:00Z'
+        }})
+    """)
+
+    # Create "I" entity and visible entity "Alice"
+    isolated_graph.query(f"""
+        CREATE (:Entity:Person {{uuid: 'self-uuid', group_id: '{journal}', name: 'I'}}),
+               (:Entity:Person {{uuid: 'alice-uuid', group_id: '{journal}', name: 'Alice'}})
+    """)
+
+    # Create MENTIONS edges
+    isolated_graph.query(f"""
+        MATCH (ep:Episodic {{uuid: '{episode_uuid}'}}), (i:Entity {{uuid: 'self-uuid'}})
+        CREATE (ep)-[:MENTIONS {{uuid: 'm1'}}]->(i)
+    """)
+    isolated_graph.query(f"""
+        MATCH (ep:Episodic {{uuid: '{episode_uuid}'}}), (alice:Entity {{uuid: 'alice-uuid'}})
+        CREATE (ep)-[:MENTIONS {{uuid: 'm2'}}]->(alice)
+    """)
+
+    # Setup Redis cache with both entities and pending_edges status
+    with redis_ops() as r:
+        cache_key = f"journal:{journal}:{episode_uuid}"
+        r.hset(cache_key, "nodes", json.dumps([
+            {"uuid": "self-uuid", "name": "I", "type": "Person"},
+            {"uuid": "alice-uuid", "name": "Alice", "type": "Person"},
+        ]))
+        r.hset(cache_key, "mentions_edges", json.dumps(["m1", "m2"]))
+        r.hset(cache_key, "status", "pending_edges")
+        r.hset(cache_key, "journal", journal)
+
+    # Act: Delete the visible entity (Alice)
+    await delete_entity_mention(episode_uuid, "alice-uuid", journal)
+
+    # Assert: Status should be "done" since only "I" remains
+    status = get_episode_status(episode_uuid, journal)
+    assert status == "done", f"Expected 'done' but got '{status}'"
+
+    # Verify "I" is still in the nodes cache
+    with redis_ops() as r:
+        cache_key = f"journal:{journal}:{episode_uuid}"
+        nodes_json = r.hget(cache_key, "nodes")
+        nodes = json.loads(nodes_json.decode())
+        assert len(nodes) == 1
+        assert nodes[0]["name"] == "I"

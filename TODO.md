@@ -4,6 +4,12 @@
 - Any other systems in need of an FSM for safety?
 - BACKUPS! Need to think of ways to always have backups.
 
+## Minor but important
+
+- Hide "d/up/down" labels in connections pane if no connections found
+- Improve readability/UI when no connections found/other valid statuses.
+- Add wc/token/journal metrics at bottom of md viewer
+
 ## Technical
 - USE DIFF TOOL TO ONLY RE-EXTRACT DIFF CONTENT??
 - Submit bugs/feature requests to falkdordblite
