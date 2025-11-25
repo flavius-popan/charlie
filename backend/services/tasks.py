@@ -115,6 +115,8 @@ def extract_nodes_task(episode_uuid: str, journal: str):
                 episode_uuid,
             )
 
+        check_cancellation()  # After persistence - work saved, safe to exit early
+
         return {
             "episode_uuid": result.episode_uuid,
             "extracted_count": result.extracted_count,

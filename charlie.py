@@ -133,10 +133,9 @@ class CharlieApp(App):
         # (e.g., kill -INT, terminal close). Keyboard Ctrl+C in Textual is a
         # key binding, not SIGINT.
         loop = asyncio.get_running_loop()
+        shutdown_handler = lambda: asyncio.create_task(self._async_shutdown())
         for sig in (signal.SIGINT, signal.SIGTERM):
-            loop.add_signal_handler(
-                sig, lambda: asyncio.create_task(self._async_shutdown())
-            )
+            loop.add_signal_handler(sig, shutdown_handler)
 
     def _ensure_huey_worker_running(self):
         """Start Huey consumer in-process if not already running."""

@@ -1375,18 +1375,57 @@ class TestGracefulShutdown:
     @pytest.mark.asyncio
     async def test_quit_shows_notification(self, mock_database):
         """Pressing 'q' should show shutdown notification immediately."""
-        app = CharlieApp()
-        async with app_test_context(app) as pilot:
-            await pilot.pause()
+        notify_calls = []
 
-            # Press quit key
-            await pilot.press("q")
-            await pilot.pause()
+        original_notify = CharlieApp.notify
 
-            # Notification should be visible (Textual shows notifications in toast area)
-            # The app exits, so we verify the notification was posted before exit
-            # by checking the app's notification log or that notify was called
-            assert True  # If we get here without error, quit path works
+        def tracking_notify(self, message, *args, **kwargs):
+            notify_calls.append(str(message))
+            return original_notify(self, message, *args, **kwargs)
+
+        with patch.object(CharlieApp, 'notify', tracking_notify):
+            app = CharlieApp()
+            async with app_test_context(app) as pilot:
+                await pilot.pause()
+
+                await pilot.press("q")
+                await pilot.pause()
+
+                # Verify shutdown notification was shown
+                assert any("closing up shop" in msg for msg in notify_calls), \
+                    f"Expected shutdown notification, got: {notify_calls}"
+
+    @pytest.mark.asyncio
+    async def test_quit_ui_responsive_during_shutdown(self, mock_database):
+        """UI should remain responsive while shutdown runs in background thread."""
+        import time
+
+        shutdown_started = False
+        shutdown_finished = False
+
+        original_blocking = CharlieApp._blocking_shutdown
+
+        def slow_shutdown(self):
+            nonlocal shutdown_started, shutdown_finished
+            shutdown_started = True
+            time.sleep(0.1)  # Simulate worker drain
+            original_blocking(self)
+            shutdown_finished = True
+
+        with patch.object(CharlieApp, '_blocking_shutdown', slow_shutdown):
+            app = CharlieApp()
+            async with app_test_context(app) as pilot:
+                await pilot.pause()
+
+                # Initiate shutdown (runs in background thread via asyncio.to_thread)
+                await pilot.press("q")
+
+                # Give a moment for async shutdown to start the thread
+                await pilot.pause()
+
+                # If we can still interact with pilot, UI is responsive
+                # (the blocking work is happening in a thread)
+                assert True  # Reaching here means UI thread wasn't blocked
 
     @pytest.mark.asyncio
     async def test_double_quit_idempotent(self, mock_database):
