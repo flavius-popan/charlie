@@ -13,6 +13,24 @@ from .queue import huey
 logger = logging.getLogger(__name__)
 
 
+class TaskCancelled(Exception):
+    """Raised when a task detects shutdown and should exit cleanly."""
+
+    pass
+
+
+def check_cancellation():
+    """Raise TaskCancelled if shutdown has been requested.
+
+    Call at safe checkpoints in long-running tasks to allow early exit
+    without losing completed work.
+    """
+    from backend.database.lifecycle import is_shutdown_requested
+
+    if is_shutdown_requested():
+        raise TaskCancelled("Shutdown requested")
+
+
 @huey.task()
 def extract_nodes_task(episode_uuid: str, journal: str):
     """Background entity extraction task.
@@ -44,6 +62,8 @@ def extract_nodes_task(episode_uuid: str, journal: str):
     logger.info("extract_nodes_task started for episode %s", episode_uuid)
 
     try:
+        check_cancellation()  # Entry checkpoint
+
         current_status = get_episode_status(episode_uuid, journal)
         if current_status != "pending_nodes":
             logger.info(
@@ -57,6 +77,7 @@ def extract_nodes_task(episode_uuid: str, journal: str):
             logger.info("Inference disabled, leaving episode %s in pending_nodes", episode_uuid)
             return {"inference_disabled": True}
 
+        check_cancellation()  # Before expensive model load
         lm = get_model("llm")
         with dspy.context(lm=lm):
             extraction = extract_nodes(episode_uuid, journal)
@@ -100,6 +121,9 @@ def extract_nodes_task(episode_uuid: str, journal: str):
             "new_entities": result.new_entities,
             "resolved_count": result.resolved_count,
         }
+    except TaskCancelled:
+        logger.info("Task cancelled due to shutdown for episode %s", episode_uuid)
+        return {"cancelled": True}
     except Exception:
         try:
             set_episode_status(episode_uuid, "dead", journal)
@@ -119,6 +143,12 @@ def extract_nodes_task(episode_uuid: str, journal: str):
 @huey.task()
 def orchestrate_inference_work(reschedule: bool = True):
     """Maintenance loop: enqueue pending nodes and unload when idle/disabled."""
+    from backend.database.lifecycle import is_shutdown_requested
+
+    if is_shutdown_requested():
+        logger.info("Shutdown requested, skipping orchestrate_inference_work")
+        return
+
     try:
         from backend.database.redis_ops import enqueue_pending_episodes, redis_ops, get_inference_enabled
         from backend.inference.manager import cleanup_if_no_work, get_model
@@ -144,7 +174,7 @@ def orchestrate_inference_work(reschedule: bool = True):
     except Exception:
         logger.exception("orchestrate_inference_work failed")
     finally:
-        if reschedule:
+        if reschedule and not is_shutdown_requested():
             try:
                 orchestrate_inference_work.schedule(delay=3)
             except Exception:

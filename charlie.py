@@ -3,6 +3,7 @@ import atexit
 import json
 import logging
 import os
+import signal
 from pathlib import Path
 
 from textual import events
@@ -127,6 +128,15 @@ class CharlieApp(App):
         self.theme = "catppuccin-mocha"
         self.push_screen(HomeScreen())
         # Worker is started after DB readiness in HomeScreen._init_and_load.
+
+        # Register signal handlers for graceful shutdown on external signals
+        # (e.g., kill -INT, terminal close). Keyboard Ctrl+C in Textual is a
+        # key binding, not SIGINT.
+        loop = asyncio.get_running_loop()
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            loop.add_signal_handler(
+                sig, lambda: asyncio.create_task(self._async_shutdown())
+            )
 
     def _ensure_huey_worker_running(self):
         """Start Huey consumer in-process if not already running."""
