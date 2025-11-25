@@ -10,7 +10,7 @@ from frontend.widgets.entity_sidebar import (
     EntityListItem,
     EntitySidebar,
 )
-from frontend.utils import extract_title, get_display_title
+from frontend.utils import get_display_title
 
 __all__ = [
     "EditScreen",
@@ -21,6 +21,5 @@ __all__ = [
     "EntitySidebar",
     "EntityListItem",
     "DeleteEntityModal",
-    "extract_title",
     "get_display_title",
 ]

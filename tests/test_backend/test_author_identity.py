@@ -51,13 +51,11 @@ async def test_author_entity_seeded_with_canonical_name(isolated_graph) -> None:
     graph = get_falkordb_graph(journal)
     result = graph.query(query)
 
-    # Parse raw response: [headers, [data_rows], stats]
-    data_rows = result._raw_response[1] if len(result._raw_response) > 1 else []
-    assert data_rows, "Author entity should exist after seeding"
+    assert result.result_set, "Author entity should exist after seeding"
 
-    row = data_rows[0]
-    name_val = row[0][1]
-    count_val = row[1][1]
+    row = result.result_set[0]
+    name_val = row[0]
+    count_val = row[1]
 
     name = name_val.decode("utf-8") if hasattr(name_val, "decode") else name_val
     count = int(count_val)

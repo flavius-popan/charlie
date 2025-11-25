@@ -114,19 +114,18 @@ async def _fetch_existing_entities(driver, group_id: str) -> dict[str, EntityNod
         with lock:
             result = graph.query(query)
 
-        rows = getattr(result, "_raw_response", None)
-        if not rows or len(rows) < 2:
+        if not result.result_set:
             return {}
 
         entities = {}
-        for row in rows[1]:  # Skip header row
-            uuid = _decode_value(row[0][1]) if len(row) > 0 else None
-            name = _decode_value(row[1][1]) if len(row) > 1 else ""
-            summary = _decode_value(row[2][1]) if len(row) > 2 else ""
-            labels = _decode_json(row[3][1] if len(row) > 3 else None, ["Entity"])
-            attributes = _decode_json(row[4][1] if len(row) > 4 else None, {})
-            created_at_raw = _decode_value(row[5][1]) if len(row) > 5 else None
-            group_id_val = _decode_value(row[6][1]) if len(row) > 6 else group_id
+        for row in result.result_set:
+            uuid = _decode_value(row[0]) if len(row) > 0 else None
+            name = _decode_value(row[1]) if len(row) > 1 else ""
+            summary = _decode_value(row[2]) if len(row) > 2 else ""
+            labels = _decode_json(row[3] if len(row) > 3 else None, ["Entity"])
+            attributes = _decode_json(row[4] if len(row) > 4 else None, {})
+            created_at_raw = _decode_value(row[5]) if len(row) > 5 else None
+            group_id_val = _decode_value(row[6]) if len(row) > 6 else group_id
 
             if isinstance(created_at_raw, str):
                 try:
@@ -193,18 +192,17 @@ async def _collect_candidate_nodes_by_text_search(
             with lock:
                 result = graph.query(query)
 
-            rows = getattr(result, "_raw_response", None)
-            if not rows or len(rows) < 2:
+            if not result.result_set:
                 continue
 
-            for row in rows[1]:
-                uuid = _decode_value(row[0][1]) if len(row) > 0 else None
-                name = _decode_value(row[1][1]) if len(row) > 1 else ""
-                summary = _decode_value(row[2][1]) if len(row) > 2 else ""
-                labels = _decode_json(row[3][1] if len(row) > 3 else None, ["Entity"])
-                attributes = _decode_json(row[4][1] if len(row) > 4 else None, {})
-                created_at_raw = _decode_value(row[5][1]) if len(row) > 5 else None
-                group_id_val = _decode_value(row[6][1]) if len(row) > 6 else group_id
+            for row in result.result_set:
+                uuid = _decode_value(row[0]) if len(row) > 0 else None
+                name = _decode_value(row[1]) if len(row) > 1 else ""
+                summary = _decode_value(row[2]) if len(row) > 2 else ""
+                labels = _decode_json(row[3] if len(row) > 3 else None, ["Entity"])
+                attributes = _decode_json(row[4] if len(row) > 4 else None, {})
+                created_at_raw = _decode_value(row[5]) if len(row) > 5 else None
+                group_id_val = _decode_value(row[6]) if len(row) > 6 else group_id
 
                 if isinstance(created_at_raw, str):
                     try:

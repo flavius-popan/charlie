@@ -284,19 +284,20 @@ source = { virtual = "." }
 dependencies = [
     { name = "dspy" },
     { name = "falkordblite" },
-    { name = "gradio" },
     { name = "graphiti-core" },
     { name = "huey" },
+    { name = "huggingface-hub" },
     { name = "llama-cpp-python" },
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "pytest-textual-snapshot" },
     { name = "python-statemachine" },
     { name = "textual" },
 ]
 
 [package.optional-dependencies]
 dev = [
+    { name = "gradio" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "pytest-textual-snapshot" },
     { name = "python-statemachine", extra = ["diagrams"] },
 ]
 
@@ -304,13 +305,14 @@ dev = [
 requires-dist = [
     { name = "dspy", specifier = ">=3.0.4" },
     { name = "falkordblite", specifier = ">=0.1.0" },
-    { name = "gradio", specifier = ">=5.49.1" },
+    { name = "gradio", marker = "extra == 'dev'", specifier = ">=5.49.1" },
     { name = "graphiti-core", specifier = ">=0.21.0" },
     { name = "huey", specifier = ">=2.5.4" },
+    { name = "huggingface-hub", specifier = ">=0.36.0" },
     { name = "llama-cpp-python", specifier = ">=0.2.0" },
-    { name = "pytest", specifier = ">=8.0.0" },
-    { name = "pytest-asyncio", specifier = ">=0.23.0" },
-    { name = "pytest-textual-snapshot", specifier = ">=1.0.0" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
+    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23.0" },
+    { name = "pytest-textual-snapshot", marker = "extra == 'dev'", specifier = ">=1.0.0" },
     { name = "python-statemachine", specifier = ">=2.5.0" },
     { name = "python-statemachine", extras = ["diagrams"], marker = "extra == 'dev'", specifier = ">=2.5.0" },
     { name = "textual", specifier = ">=6.6.0" },
@@ -453,17 +455,34 @@ wheels = [
 ]
 
 [[package]]
-name = "falkordblite"
-version = "0.1.0"
+name = "falkordb"
+version = "1.2.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
+    { name = "python-dateutil" },
+    { name = "redis" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/9e/3b/2d846e877aec104841c523e99e1c584d4aa2423a0e31afee5b8369e3c8c5/falkordb-1.2.0.tar.gz", hash = "sha256:ce57365b86722d538e75aa5d438de67ecd8eb9478da612506d9812cd7f182d0b", size = 28976, upload-time = "2025-06-30T18:03:37.829Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/39/81/1265e623c989bb8c12fe566645bad390d04e66fa62b84ca656e5bafce1f0/falkordb-1.2.0-py3-none-any.whl", hash = "sha256:7572d9cc377735d22efc52fe6fe73c7a435422c827b6ea3ca223a850a77be12e", size = 34737, upload-time = "2025-06-30T18:03:36.582Z" },
+]
+
+[[package]]
+name = "falkordblite"
+version = "0.4.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "falkordb" },
     { name = "psutil" },
     { name = "redis" },
     { name = "setuptools" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/19/10/1795d0e2ad3daa1abd3540ec7b0fc953a9e5699e2814ecb71ab45fa072b7/falkordblite-0.1.0.tar.gz", hash = "sha256:59ace8ff0e9aac9c0d8157312547e4d6f221dd9eca96061a37951323595ce8d8", size = 16172973, upload-time = "2025-10-14T11:40:40.583Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a6/24/f1435e3ac5c4495eb1efde3752afffc6784b9086f1a36b1e3cbe10199b78/falkordblite-0.4.0.tar.gz", hash = "sha256:66d7d2393aa7e075351e785272462d08b2c3660e7a35326007297d778cdaa0bb", size = 16174030, upload-time = "2025-11-24T19:08:37.695Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c6/ca/09c48bb32ebd8f145af195255672818ea55936c181f19a51625508bf6170/falkordblite-0.1.0-cp313-cp313-manylinux_2_39_x86_64.whl", hash = "sha256:4c582801dace3c412a6868684ba3efa0d13a6ad3ab8dde0a162f3aed42a66072", size = 39979715, upload-time = "2025-10-14T11:40:38.17Z" },
+    { url = "https://files.pythonhosted.org/packages/49/df/bce76cbefb647f4138b29e326831cba7c505960d0090522916eb5ecc1a4d/falkordblite-0.4.0-cp313-cp313-macosx_10_13_x86_64.macosx_15_0_arm64.whl", hash = "sha256:2ce312be773d334f0981c7895a624a5536ef4ea9e817f94923dbd9f865097a92", size = 21890873, upload-time = "2025-11-24T19:08:24.247Z" },
+    { url = "https://files.pythonhosted.org/packages/6e/75/87320fa7e095fe4414fb0e2b0f2ded716942caf213e1b29a67bedf1a6005/falkordblite-0.4.0-cp313-cp313-manylinux_2_39_x86_64.whl", hash = "sha256:dcc99f9ba97eaf83b5b5fe102343d8af1e1f547d4663c2adffed14c012b6d3dd", size = 39989258, upload-time = "2025-11-24T19:08:27.741Z" },
+    { url = "https://files.pythonhosted.org/packages/69/13/0d3c89877db6042827986ca37c3f97854db70b91db6efb1adef77c4112d8/falkordblite-0.4.0-cp314-cp314-macosx_10_15_x86_64.macosx_15_0_arm64.whl", hash = "sha256:909452c7b4d3cb9c4971f93bda3dcc7372cc880a0ee711cbda2ef8533309b26e", size = 21891052, upload-time = "2025-11-24T19:08:31.499Z" },
+    { url = "https://files.pythonhosted.org/packages/6b/a3/3dd22958a845a898eb26176be0d69431a560bdeeedb0a814f5a790bb51c7/falkordblite-0.4.0-cp314-cp314-manylinux_2_39_x86_64.whl", hash = "sha256:7a7b79146abfbcc19b7f049acba8c3a586c3f4e08111c324b397503a947a260c", size = 39989264, upload-time = "2025-11-24T19:08:34.504Z" },
 ]
 
 [[package]]
@@ -1650,6 +1669,15 @@ wheels = [
 ]
 
 [[package]]
+name = "pyjwt"
+version = "2.10.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/e7/46/bd74733ff231675599650d3e47f361794b22ef3e3770998dda30d3b63726/pyjwt-2.10.1.tar.gz", hash = "sha256:3cc5772eb20009233caf06e9d8a0577824723b44e6648ee0a2aedb6cf9381953", size = 87785, upload-time = "2024-11-28T03:43:29.933Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/61/ad/689f02752eeec26aed679477e80e632ef1b682313be70793d798c1d5fc8f/PyJWT-2.10.1-py3-none-any.whl", hash = "sha256:dcdd193e30abefd5debf142f9adfcdd2b58004e644f25406ffaebd50bd98dacb", size = 22997, upload-time = "2024-11-28T03:43:27.893Z" },
+]
+
+[[package]]
 name = "pyparsing"
 version = "3.2.5"
 source = { registry = "https://pypi.org/simple" }
@@ -1793,11 +1821,14 @@ wheels = [
 
 [[package]]
 name = "redis"
-version = "7.0.1"
+version = "5.3.1"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/57/8f/f125feec0b958e8d22c8f0b492b30b1991d9499a4315dfde466cf4289edc/redis-7.0.1.tar.gz", hash = "sha256:c949df947dca995dc68fdf5a7863950bf6df24f8d6022394585acc98e81624f1", size = 4755322, upload-time = "2025-10-27T14:34:00.33Z" }
+dependencies = [
+    { name = "pyjwt" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/6a/cf/128b1b6d7086200c9f387bd4be9b2572a30b90745ef078bd8b235042dc9f/redis-5.3.1.tar.gz", hash = "sha256:ca49577a531ea64039b5a36db3d6cd1a0c7a60c34124d46924a45b956e8cf14c", size = 4626200, upload-time = "2025-07-25T08:06:27.778Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e9/97/9f22a33c475cda519f20aba6babb340fb2f2254a02fb947816960d1e669a/redis-7.0.1-py3-none-any.whl", hash = "sha256:4977af3c7d67f8f0eb8b6fec0dafc9605db9343142f634041fb0235f67c0588a", size = 339938, upload-time = "2025-10-27T14:33:58.553Z" },
+    { url = "https://files.pythonhosted.org/packages/7f/26/5c5fa0e83c3621db835cfc1f1d789b37e7fa99ed54423b5f519beb931aa7/redis-5.3.1-py3-none-any.whl", hash = "sha256:dc1909bd24669cc31b5f67a039700b16ec30571096c5f1f0d9d2324bff31af97", size = 272833, upload-time = "2025-07-25T08:06:26.317Z" },
 ]
 
 [[package]]

@@ -1,6 +1,5 @@
 # Stability Fixes
 
-- No more model loading on edit. Inverse only.
 - Any other systems in need of an FSM for safety?
 - BACKUPS! Need to think of ways to always have backups.
 
@@ -28,6 +27,5 @@
 
 ## Nice-to-haves
 
-- Upgrade to python 3.14
 - [Count input tokens properly](https://www.perplexity.ai/search/does-qwen3-use-tiktoken-for-ca-APRBFEnXRPawkHgtv5EryQ#0)
 - Confirm facts/extractions with "Let's reflect...., you felt ___?". Humanize and use mirrored reflection from psychology to clean up data

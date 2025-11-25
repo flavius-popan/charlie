@@ -347,6 +347,17 @@ def is_shutdown_requested() -> bool:
     return _shutdown_requested
 
 
+def request_shutdown() -> None:
+    """Request shutdown without triggering teardown.
+
+    Sets the shutdown flag so tasks can detect they should exit early.
+    Call this BEFORE stopping the Huey consumer so in-flight tasks see it.
+    Thread-safe: can be called from any thread.
+    """
+    global _shutdown_requested
+    _shutdown_requested = True
+
+
 def reset_lifecycle_state() -> None:
     """Reset lifecycle state flags (for testing)."""
     global _db_unavailable, _shutdown_requested, _redis_dir
@@ -363,5 +374,6 @@ __all__ = [
     "get_tcp_server_endpoint",
     "get_tcp_server_password",
     "is_shutdown_requested",
+    "request_shutdown",
     "reset_lifecycle_state",
 ]

@@ -22,7 +22,7 @@ from backend.database.persistence import (
     reset_persistence_state,
     update_episode,
 )
-from backend.database.queries import get_all_episodes, get_episode
+from backend.database.queries import get_episode, get_home_screen
 from backend.database.redis_ops import redis_ops
 from backend.database.utils import (
     SELF_ENTITY_LABELS,
@@ -34,14 +34,15 @@ from backend.database.utils import (
 
 
 def shutdown_database():
-    """Manual database shutdown for testing.
+    """Shut down the database cleanly.
 
-    Resets all global state to allow clean database reinitialization.
+    Stops the embedded Redis process. The shutdown flag remains set
+    so tasks know shutdown is in progress. For test re-initialization,
+    call reset_lifecycle_state() and reset_persistence_state() explicitly.
     """
     from backend.database.lifecycle import _close_db
 
     _close_db()
-    reset_lifecycle_state()
     reset_persistence_state()
 
 
@@ -55,7 +56,7 @@ __all__ = [
     "delete_episode",
     # Query operations
     "get_episode",
-    "get_all_episodes",
+    "get_home_screen",
     # Redis operations
     "redis_ops",
     # Driver access

@@ -32,11 +32,13 @@ def falkordb_test_context(tmp_path_factory: pytest.TempPathFactory) -> Iterator[
 
     # Reset cached connections before opening a new graph
     db_utils.shutdown_database()
+    lifecycle.reset_lifecycle_state()
 
     try:
         yield
     finally:
         db_utils.shutdown_database()
+        lifecycle.reset_lifecycle_state()
 
 
 @pytest.fixture

@@ -10,12 +10,23 @@ from __future__ import annotations
 
 import logging
 import time
-from threading import Thread
+from threading import Lock, Thread
 from typing import Optional
 
 from huey import PriorityRedisHuey
 from huey.consumer import Consumer
 from redis import ConnectionPool
+
+
+class SafeTaskSet(set):
+    """Set wrapper that makes remove() thread-safe by using discard().
+
+    Huey's _execute() does remove(task) in its finally block while
+    notify_interrupted_tasks() does pop(). With threads, these race
+    even with graceful shutdown. This wrapper makes remove() safe.
+    """
+    def remove(self, item):
+        self.discard(item)
 
 from backend.settings import DEFAULT_JOURNAL, HUEY_WORKER_TYPE, HUEY_WORKERS
 
@@ -77,14 +88,23 @@ class InProcessConsumer(Consumer):
 
 _consumer: Optional[Consumer] = None
 _consumer_thread: Optional[Thread] = None
+_consumer_lock = Lock()
 
 
 def start_huey_consumer() -> None:
     """Start Huey consumer in a background thread (idempotent)."""
     global _consumer, _consumer_thread
 
-    if _consumer_thread and _consumer_thread.is_alive():
-        return
+    with _consumer_lock:
+        if _consumer_thread and _consumer_thread.is_alive():
+            return
+
+        _start_huey_consumer_unlocked()
+
+
+def _start_huey_consumer_unlocked() -> None:
+    """Internal: start consumer without lock (caller must hold _consumer_lock)."""
+    global _consumer, _consumer_thread
 
     # Ensure the embedded database/Redis is initialized before connecting.
     from backend.database import lifecycle
@@ -111,6 +131,18 @@ def start_huey_consumer() -> None:
                 raise RuntimeError("Embedded Redis not ready for Huey consumer startup")
             time.sleep(0.05)
 
+    # Clear stale editing key from prior crash and mark startup time
+    from backend.database.redis_ops import redis_ops
+    from backend.inference.manager import mark_app_started
+
+    try:
+        with redis_ops() as r:
+            r.delete("editing:active")
+    except Exception:
+        pass
+
+    mark_app_started()
+
     _consumer = InProcessConsumer(
         huey,
         workers=HUEY_WORKERS,
@@ -118,6 +150,10 @@ def start_huey_consumer() -> None:
         flush_locks=False,
         check_worker_health=False,
     )
+
+    # Replace _tasks_in_flight with SafeTaskSet to handle race between worker's
+    # finally block (remove) and notify_interrupted_tasks (pop).
+    huey._tasks_in_flight = SafeTaskSet(huey._tasks_in_flight)
 
     def _run():
         try:

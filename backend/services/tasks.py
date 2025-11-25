@@ -5,12 +5,32 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+import time
 
 import backend.dspy_cache  # noqa: F401
 import dspy
+from backend.settings import ORCHESTRATOR_INTERVAL_SECONDS
 from .queue import huey
 
 logger = logging.getLogger(__name__)
+
+
+class TaskCancelled(Exception):
+    """Raised when a task detects shutdown and should exit cleanly."""
+
+    pass
+
+
+def check_cancellation():
+    """Raise TaskCancelled if shutdown has been requested.
+
+    Call at safe checkpoints in long-running tasks to allow early exit
+    without losing completed work.
+    """
+    from backend.database.lifecycle import is_shutdown_requested
+
+    if is_shutdown_requested():
+        raise TaskCancelled("Shutdown requested")
 
 
 @huey.task()
@@ -39,11 +59,13 @@ def extract_nodes_task(episode_uuid: str, journal: str):
         set_episode_status,
     )
     from backend.graph.extract_nodes import extract_nodes
-    from backend.inference.manager import cleanup_if_no_work, get_model
+    from backend.inference.manager import cleanup_if_no_work, get_model, is_model_loading_blocked
 
     logger.info("extract_nodes_task started for episode %s", episode_uuid)
 
     try:
+        check_cancellation()  # Entry checkpoint
+
         current_status = get_episode_status(episode_uuid, journal)
         if current_status != "pending_nodes":
             logger.info(
@@ -56,6 +78,17 @@ def extract_nodes_task(episode_uuid: str, journal: str):
         if not get_inference_enabled():
             logger.info("Inference disabled, leaving episode %s in pending_nodes", episode_uuid)
             return {"inference_disabled": True}
+
+        check_cancellation()  # Before expensive model load
+
+        # Wait for editing to end before loading model
+        wait_logged = False
+        while is_model_loading_blocked():
+            check_cancellation()  # Allow graceful shutdown
+            if not wait_logged:
+                logger.info("Waiting for editing to end before loading model for episode %s", episode_uuid)
+                wait_logged = True
+            time.sleep(1)
 
         lm = get_model("llm")
         with dspy.context(lm=lm):
@@ -94,12 +127,17 @@ def extract_nodes_task(episode_uuid: str, journal: str):
                 episode_uuid,
             )
 
+        check_cancellation()  # After persistence - work saved, safe to exit early
+
         return {
             "episode_uuid": result.episode_uuid,
             "extracted_count": result.extracted_count,
             "new_entities": result.new_entities,
             "resolved_count": result.resolved_count,
         }
+    except TaskCancelled:
+        logger.info("Task cancelled due to shutdown for episode %s", episode_uuid)
+        return {"cancelled": True}
     except Exception:
         try:
             set_episode_status(episode_uuid, "dead", journal)
@@ -118,34 +156,24 @@ def extract_nodes_task(episode_uuid: str, journal: str):
 
 @huey.task()
 def orchestrate_inference_work(reschedule: bool = True):
-    """Maintenance loop: enqueue pending nodes and unload when idle/disabled."""
+    """Maintenance loop: enqueue pending episodes and manage model lifecycle."""
+    from backend.database.lifecycle import is_shutdown_requested
+
+    if is_shutdown_requested():
+        logger.info("Shutdown requested, skipping orchestrate_inference_work")
+        return
+
     try:
-        from backend.database.redis_ops import enqueue_pending_episodes, redis_ops, get_inference_enabled
-        from backend.inference.manager import cleanup_if_no_work, get_model
+        from backend.database.redis_ops import enqueue_pending_episodes
+        from backend.inference.manager import cleanup_if_no_work
 
         enqueue_pending_episodes()
-
-        # Pre-load models when user is actively editing (only if inference is enabled).
-        if get_inference_enabled():
-            try:
-                with redis_ops() as r:
-                    user_is_editing = r.exists("editing:active")
-            except Exception as e:
-                logger.debug("Failed to check editing presence: %s", e)
-                user_is_editing = False
-
-            if user_is_editing:
-                try:
-                    get_model("llm")
-                except Exception as e:
-                    logger.warning("Failed to pre-load model during editing: %s", e, exc_info=True)
-
-        cleanup_if_no_work()
+        cleanup_if_no_work()  # Now handles unload during editing
     except Exception:
         logger.exception("orchestrate_inference_work failed")
     finally:
-        if reschedule:
+        if reschedule and not is_shutdown_requested():
             try:
-                orchestrate_inference_work.schedule(delay=3)
+                orchestrate_inference_work.schedule(delay=ORCHESTRATOR_INTERVAL_SECONDS)
             except Exception:
                 logger.exception("Failed to reschedule orchestrate_inference_work")

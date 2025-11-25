@@ -82,16 +82,15 @@ async def test_add_journal_entry_persistence(isolated_graph):
     """
     result = isolated_graph.query(query)
 
-    # Parse _raw_response: [headers, [data_rows], stats]
-    assert hasattr(result, '_raw_response')
-    data_rows = result._raw_response[1] if len(result._raw_response) > 1 else []
-    assert len(data_rows) == 1
+    assert result.result_set and len(result.result_set) == 1
 
-    row = data_rows[0]
-    # Each field is [type_id, value]
-    assert row[0][1].decode('utf-8') == content  # content
-    assert row[1][1].decode('utf-8') == DEFAULT_JOURNAL  # journal
-    assert row[2][1].decode('utf-8') == uuid  # uuid
+    row = result.result_set[0]
+    stored_content = row[0].decode('utf-8') if hasattr(row[0], 'decode') else row[0]
+    stored_journal = row[1].decode('utf-8') if hasattr(row[1], 'decode') else row[1]
+    stored_uuid = row[2].decode('utf-8') if hasattr(row[2], 'decode') else row[2]
+    assert stored_content == content
+    assert stored_journal == DEFAULT_JOURNAL
+    assert stored_uuid == uuid
 
 
 @pytest.mark.asyncio
@@ -122,9 +121,7 @@ async def test_multiple_journals_isolation(isolated_graph):
     RETURN count(e) as count
     """
     work_result = work_graph.query(work_query)
-    # Parse _raw_response: [headers, [data_rows], stats]
-    work_data_rows = work_result._raw_response[1] if len(work_result._raw_response) > 1 else []
-    work_count = work_data_rows[0][0][1] if work_data_rows else 0
+    work_count = work_result.result_set[0][0] if work_result.result_set else 0
     assert work_count == 1
 
     # Query the personal graph
@@ -134,9 +131,7 @@ async def test_multiple_journals_isolation(isolated_graph):
     RETURN count(e) as count
     """
     personal_result = personal_graph.query(personal_query)
-    # Parse _raw_response: [headers, [data_rows], stats]
-    personal_data_rows = personal_result._raw_response[1] if len(personal_result._raw_response) > 1 else []
-    personal_count = personal_data_rows[0][0][1] if personal_data_rows else 0
+    personal_count = personal_result.result_set[0][0] if personal_result.result_set else 0
     assert personal_count == 1
 
 
@@ -153,14 +148,13 @@ async def test_self_entity_created(isolated_graph):
     """
     result = isolated_graph.query(self_query)
 
-    # Parse _raw_response: [headers, [data_rows], stats]
-    assert hasattr(result, '_raw_response')
-    data_rows = result._raw_response[1] if len(result._raw_response) > 1 else []
-    assert len(data_rows) >= 1
+    assert result.result_set and len(result.result_set) >= 1
 
-    row = data_rows[0]
-    assert row[0][1].decode('utf-8') == SELF_ENTITY_NAME  # name
-    assert row[1][1].decode('utf-8') == DEFAULT_JOURNAL  # journal
+    row = result.result_set[0]
+    name_val = row[0].decode('utf-8') if hasattr(row[0], 'decode') else row[0]
+    journal_val = row[1].decode('utf-8') if hasattr(row[1], 'decode') else row[1]
+    assert name_val == SELF_ENTITY_NAME
+    assert journal_val == DEFAULT_JOURNAL
 
 
 @pytest.mark.asyncio
@@ -228,9 +222,7 @@ async def test_no_entity_extraction(isolated_graph):
     """
     result = isolated_graph.query(entities_query)
 
-    # Parse _raw_response: [headers, [data_rows], stats]
-    data_rows = result._raw_response[1] if len(result._raw_response) > 1 else []
-    entity_count = data_rows[0][0][1] if data_rows else 0
+    entity_count = result.result_set[0][0] if result.result_set else 0
 
     assert entity_count == 0
 
@@ -297,8 +289,7 @@ async def test_concurrent_multi_journal_writes(isolated_graph):
         result = graph.query(
             f"MATCH (e:Episodic {{group_id: '{journal_name}'}}) RETURN count(e)"
         )
-        data_rows = result._raw_response[1] if len(result._raw_response) > 1 else []
-        count = data_rows[0][0][1] if data_rows else 0
+        count = result.result_set[0][0] if result.result_set else 0
         assert count == 5, f"Expected 5 entries in {journal_name}, got {count}"
 
 
@@ -326,9 +317,7 @@ async def test_multiple_entries_same_journal(isolated_graph):
     """
     result = isolated_graph.query(count_query)
 
-    # Parse _raw_response: [headers, [data_rows], stats]
-    data_rows = result._raw_response[1] if len(result._raw_response) > 1 else []
-    count = data_rows[0][0][1] if data_rows else 0
+    count = result.result_set[0][0] if result.result_set else 0
 
     assert count == 3
 
@@ -358,10 +347,10 @@ async def test_content_with_backslashes(isolated_graph):
         RETURN e.content
         """
         result = isolated_graph.query(query)
-        data_rows = result._raw_response[1] if len(result._raw_response) > 1 else []
-        assert len(data_rows) == 1, f"Expected 1 row for content: {content}"
+        assert result.result_set and len(result.result_set) == 1, f"Expected 1 row for content: {content}"
 
-        stored_content = data_rows[0][0][1].decode('utf-8')
+        val = result.result_set[0][0]
+        stored_content = val.decode('utf-8') if hasattr(val, 'decode') else val
         assert stored_content == expected, \
             f"Content mismatch for input '{content}': got '{stored_content}', expected '{expected}'"
 
@@ -389,10 +378,10 @@ async def test_content_with_special_characters(isolated_graph):
         RETURN e.content
         """
         result = isolated_graph.query(query)
-        data_rows = result._raw_response[1] if len(result._raw_response) > 1 else []
-        assert len(data_rows) == 1
+        assert result.result_set and len(result.result_set) == 1
 
-        stored_content = data_rows[0][0][1].decode('utf-8')
+        val = result.result_set[0][0]
+        stored_content = val.decode('utf-8') if hasattr(val, 'decode') else val
         assert stored_content == content, \
             f"Content mismatch: got '{stored_content}', expected '{content}'"
 
@@ -414,8 +403,8 @@ async def test_auto_generated_title_format(isolated_graph):
     RETURN e.name
     """
     result = isolated_graph.query(query)
-    data_rows = result._raw_response[1] if len(result._raw_response) > 1 else []
-    title = data_rows[0][0][1].decode('utf-8')
+    val = result.result_set[0][0] if result.result_set else None
+    title = val.decode('utf-8') if hasattr(val, 'decode') else val
 
     assert title == "Monday Nov 18, 2024"
 
@@ -448,7 +437,7 @@ async def test_concurrent_same_journal_writes(isolated_graph):
     result = graph.query(
         "MATCH (e:Episodic {group_id: 'shared-journal'}) RETURN count(e)"
     )
-    count = result._raw_response[1][0][0][1] if result._raw_response[1] else 0
+    count = result.result_set[0][0] if result.result_set else 0
     assert count == 10, f"Expected 10 entries, found {count}"
 
 
@@ -470,8 +459,8 @@ async def test_naive_datetime_converted_to_utc(isolated_graph):
     RETURN e.valid_at
     """
     result = isolated_graph.query(query)
-    data_rows = result._raw_response[1] if len(result._raw_response) > 1 else []
-    stored_time = data_rows[0][0][1].decode('utf-8')
+    val = result.result_set[0][0] if result.result_set else None
+    stored_time = val.decode('utf-8') if hasattr(val, 'decode') else val
 
     # Should be stored as UTC (with timezone suffix)
     # Either "2024-11-18T14:30:00+00:00" or "2024-11-18T14:30:00Z"
@@ -528,9 +517,9 @@ async def test_unicode_edge_cases(isolated_graph):
         RETURN e.content
         """
         result = isolated_graph.query(query)
-        data_rows = result._raw_response[1] if len(result._raw_response) > 1 else []
-        assert len(data_rows) == 1, f"Expected 1 row for content: {content[:50]}"
+        assert result.result_set and len(result.result_set) == 1, f"Expected 1 row for content: {content[:50]}"
 
-        stored_content = data_rows[0][0][1].decode('utf-8')
+        val = result.result_set[0][0]
+        stored_content = val.decode('utf-8') if hasattr(val, 'decode') else val
         assert stored_content == expected, \
             f"Unicode mismatch for '{content[:50]}': got '{stored_content}', expected '{expected}'"

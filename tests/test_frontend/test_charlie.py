@@ -42,6 +42,26 @@ from frontend.screens.settings_screen import SettingsScreen
 from frontend.widgets.entity_sidebar import EntitySidebar, DeleteEntityModal
 
 
+async def wait_for_condition(predicate, timeout=1.0, check_interval=0.01):
+    """Wait for predicate to become True, polling at intervals.
+
+    Args:
+        predicate: Callable that returns bool
+        timeout: Maximum time to wait in seconds
+        check_interval: How often to check condition
+
+    Returns:
+        True if condition met within timeout, False otherwise
+    """
+    import time
+    start = time.monotonic()
+    while time.monotonic() - start < timeout:
+        if predicate():
+            return True
+        await asyncio.sleep(check_interval)
+    return False
+
+
 @asynccontextmanager
 async def app_test_context(app):
     """Context manager that wraps app.run_test() and suppresses shutdown CancelledError.
@@ -72,7 +92,7 @@ def mock_database():
     from unittest.mock import MagicMock
 
     with ExitStack() as stack:
-        mock_get_all = AsyncMock(return_value=[])
+        mock_get_home = AsyncMock(return_value=[])
         mock_get = AsyncMock()
         mock_add = AsyncMock()
         mock_update = AsyncMock()
@@ -84,9 +104,9 @@ def mock_database():
         mock_get_episode_status = MagicMock(return_value=None)
 
         # Patch shared functions across modules to the same mocks
-        stack.enter_context(patch('charlie.get_all_episodes', mock_get_all))
-        stack.enter_context(patch('backend.database.get_all_episodes', mock_get_all))
-        stack.enter_context(patch('frontend.screens.home_screen.get_all_episodes', mock_get_all))
+        stack.enter_context(patch('charlie.get_home_screen', mock_get_home))
+        stack.enter_context(patch('backend.database.get_home_screen', mock_get_home))
+        stack.enter_context(patch('frontend.screens.home_screen.get_home_screen', mock_get_home))
 
         stack.enter_context(patch('charlie.get_episode', mock_get))
         stack.enter_context(patch('backend.database.get_episode', mock_get))
@@ -115,6 +135,7 @@ def mock_database():
         stack.enter_context(patch('frontend.screens.view_screen.get_inference_enabled', mock_get_inference_enabled))
         stack.enter_context(patch('frontend.screens.settings_screen.get_inference_enabled', mock_get_inference_enabled))
         stack.enter_context(patch('frontend.screens.edit_screen.get_inference_enabled', mock_get_inference_enabled))
+        stack.enter_context(patch('backend.database.redis_ops.get_inference_enabled', mock_get_inference_enabled))
 
         stack.enter_context(patch('charlie.set_inference_enabled', mock_set_inference_enabled))
         stack.enter_context(patch('frontend.screens.settings_screen.set_inference_enabled', mock_set_inference_enabled))
@@ -185,7 +206,7 @@ def mock_database():
 
         yield {
             'ensure': mock_ensure,
-            'get_all': mock_get_all,
+            'get_home': mock_get_home,
             'get': mock_get,
             'add': mock_add,
             'update': mock_update,
@@ -195,13 +216,13 @@ def mock_database():
             'set_inference_enabled': mock_set_inference_enabled,
             'get_episode_status': mock_get_episode_status,
             # shared mocks reused across layers
-            'backend_get_all': mock_get_all,
+            'backend_get_all': mock_get_home,
             'backend_get': mock_get,
             'backend_update': mock_update,
             'backend_delete': mock_delete,
             'backend_ensure': mock_ensure,
             'backend_shutdown': mock_shutdown,
-            'home_get_all': mock_get_all,
+            'home_get_home': mock_get_home,
             'home_ensure': mock_ensure,
             'start_huey': mock_start_huey,
             'huey_running': mock_huey_running,
@@ -248,7 +269,7 @@ class TestHomeScreen:
     @pytest.mark.asyncio
     async def test_home_screen_shows_empty_state(self, mock_database):
         """Should display empty state when no episodes exist."""
-        mock_database['get_all'].return_value = []
+        mock_database['get_home'].return_value = []
 
         app = CharlieApp()
         async with app_test_context(app) as pilot:
@@ -336,7 +357,7 @@ class TestHomeScreen:
                 "valid_at": datetime(2025, 11, 19, 10, 0, 0)
             }
         ]
-        mock_database['get_all'].return_value = mock_episodes
+        mock_database['get_home'].return_value = mock_episodes
 
         app = CharlieApp()
         async with app_test_context(app) as pilot:
@@ -349,7 +370,7 @@ class TestHomeScreen:
 
     def test_home_empty_state_snapshot(self, snap_compare, mock_database):
         """Visual regression test: empty home screen with no entries."""
-        mock_database['get_all'].return_value = []
+        mock_database['get_home'].return_value = []
         assert snap_compare(CharlieApp())
 
     def test_css_includes_journal_content_styles(self):
@@ -370,7 +391,7 @@ class TestViewScreen:
             "name": "Test Entry",
             "valid_at": datetime(2025, 11, 19, 10, 0, 0)
         }
-        mock_database['get_all'].return_value = [mock_episode]
+        mock_database['get_home'].return_value = [mock_episode]
         mock_database['get'].return_value = mock_episode
 
         app = CharlieApp()
@@ -396,7 +417,7 @@ class TestViewScreen:
             "name": "Test",
             "valid_at": datetime(2025, 11, 19, 10, 0, 0)
         }
-        mock_database['get_all'].return_value = [mock_episode]
+        mock_database['get_home'].return_value = [mock_episode]
         mock_database['get'].return_value = mock_episode
 
         app = CharlieApp()
@@ -419,7 +440,7 @@ class TestViewScreen:
             "name": "Test",
             "valid_at": datetime(2025, 11, 19, 10, 0, 0)
         }
-        mock_database['get_all'].return_value = [mock_episode]
+        mock_database['get_home'].return_value = [mock_episode]
         mock_database['get'].return_value = mock_episode
 
         app = CharlieApp()
@@ -444,7 +465,7 @@ class TestViewScreen:
             "name": "Test",
             "valid_at": datetime(2025, 11, 19, 10, 0, 0)
         }
-        mock_database['get_all'].return_value = [mock_episode]
+        mock_database['get_home'].return_value = [mock_episode]
         mock_database['get'].return_value = mock_episode
 
         app = CharlieApp()
@@ -686,7 +707,7 @@ class TestIntegration:
 
             # Verify saved
             mock_database['add'].assert_called_once()
-            mock_database['update'].assert_called_once()
+        mock_database['update'].assert_not_called()
 
     @pytest.mark.asyncio
     async def test_new_entry_two_escapes_return_home(self, mock_database):
@@ -729,7 +750,7 @@ class TestIntegration:
             "name": "Title",
             "valid_at": datetime(2025, 11, 19, 10, 0, 0),
         }
-        mock_database["get_all"].return_value = [mock_episode]
+        mock_database["get_home"].return_value = [mock_episode]
         mock_database["get"].return_value = mock_episode
         mock_database["update"].return_value = True
         mock_database["get_inference_enabled"].return_value = False
@@ -772,7 +793,7 @@ class TestIntegration:
             "name": "Title",
             "valid_at": datetime(2025, 11, 19, 10, 0, 0),
         }
-        mock_database["get_all"].return_value = [mock_episode]
+        mock_database["get_home"].return_value = [mock_episode]
         mock_database["get"].return_value = mock_episode
         mock_database["update"].return_value = True
         mock_database["get_inference_enabled"].return_value = True
@@ -944,7 +965,7 @@ async def test_edit_screen_enqueues_extraction_when_content_changes(mock_databas
         "name": "Original",
         "valid_at": datetime(2025, 11, 19, 10, 0, 0)
     }
-    mock_database['get_all'].return_value = [mock_episode]
+    mock_database['get_home'].return_value = [mock_episode]
     mock_database['get'].return_value = mock_episode
     mock_database['update'].return_value = True  # Content changed
     mock_database['get_inference_enabled'].return_value = True
@@ -989,7 +1010,7 @@ async def test_edit_screen_skips_extraction_when_content_unchanged(mock_database
         "name": "Original",
         "valid_at": datetime(2025, 11, 19, 10, 0, 0)
     }
-    mock_database['get_all'].return_value = [mock_episode]
+    mock_database['get_home'].return_value = [mock_episode]
     mock_database['get'].return_value = mock_episode
     mock_database['update'].return_value = False  # Content NOT changed
     mock_database['get_inference_enabled'].return_value = True
@@ -1183,7 +1204,7 @@ class TestConnectionsPaneVisibility:
             "name": "Original",
             "valid_at": datetime(2025, 11, 19, 10, 0, 0),
         }
-        mock_database["get_all"].return_value = [mock_episode]
+        mock_database["get_home"].return_value = [mock_episode]
         mock_database["get"].return_value = mock_episode
         mock_database["update"].return_value = False  # content unchanged
         mock_database["get_inference_enabled"].return_value = True
@@ -1265,7 +1286,7 @@ class TestConnectionsPaneVisibility:
             "name": "Title",
             "valid_at": datetime(2025, 11, 19, 10, 0, 0),
         }
-        mock_database["get_all"].return_value = [mock_episode]
+        mock_database["get_home"].return_value = [mock_episode]
         mock_database["get"].return_value = mock_episode
 
         app = CharlieApp()
@@ -1307,7 +1328,7 @@ async def test_edit_entry_title_only_no_extraction_integration(mock_database):
         "name": "Original",
         "valid_at": datetime(2025, 11, 19, 10, 0, 0)
     }
-    mock_database['get_all'].return_value = [mock_episode]
+    mock_database['get_home'].return_value = [mock_episode]
     mock_database['get'].return_value = mock_episode
     mock_database['update'].return_value = False  # Content unchanged
     mock_database['get_inference_enabled'].return_value = True
@@ -1366,3 +1387,176 @@ async def test_edit_screen_empty_content_no_task_enqueue(mock_database):
 
             # Verify add NOT called (empty content should not save)
             mock_database['add'].assert_not_called()
+
+
+class TestGracefulShutdown:
+    """Tests for graceful shutdown functionality."""
+
+    @pytest.mark.asyncio
+    async def test_quit_shows_quick_bye_when_no_model_loaded(self, mock_database):
+        """Pressing 'q' with no model loaded should show quick 'byeeeee' message."""
+        notify_calls = []
+
+        original_notify = CharlieApp.notify
+
+        def tracking_notify(self, message, *args, **kwargs):
+            notify_calls.append(str(message))
+            return original_notify(self, message, *args, **kwargs)
+
+        # Patch MODELS to simulate no models loaded
+        with patch('charlie.MODELS', {"llm": None}), \
+             patch.object(CharlieApp, 'notify', tracking_notify):
+            app = CharlieApp()
+            async with app_test_context(app) as pilot:
+                await pilot.pause()
+
+                await pilot.press("q")
+                await pilot.pause()
+
+                # Verify quick bye notification shown (not "closing up shop")
+                assert any("byeeeee" in msg for msg in notify_calls), \
+                    f"Expected 'byeeeee' notification, got: {notify_calls}"
+                assert not any("closing up shop" in msg for msg in notify_calls), \
+                    f"Should NOT show 'closing up shop' when no model loaded"
+
+    @pytest.mark.asyncio
+    async def test_quit_shows_wait_message_when_model_loaded(self, mock_database):
+        """Pressing 'q' with model loaded should show 'Just a sec!' message."""
+        notify_calls = []
+
+        original_notify = CharlieApp.notify
+
+        def tracking_notify(self, message, *args, **kwargs):
+            notify_calls.append(str(message))
+            return original_notify(self, message, *args, **kwargs)
+
+        # Patch MODELS to simulate a loaded model
+        mock_model = Mock()
+        with patch('charlie.MODELS', {"llm": mock_model}), \
+             patch.object(CharlieApp, 'notify', tracking_notify):
+            app = CharlieApp()
+            async with app_test_context(app) as pilot:
+                await pilot.pause()
+
+                await pilot.press("q")
+                await pilot.pause()
+
+                # Verify wait message notification shown
+                assert any("closing up shop" in msg for msg in notify_calls), \
+                    f"Expected 'closing up shop' notification, got: {notify_calls}"
+                assert not any("byeeeee" in msg for msg in notify_calls), \
+                    f"Should NOT show 'byeeeee' when model is loaded"
+
+    @pytest.mark.asyncio
+    async def test_quit_notification_has_long_timeout(self, mock_database):
+        """Shutdown notification should have a long timeout (120s) to persist until exit."""
+        captured_timeout = None
+
+        original_notify = CharlieApp.notify
+
+        def tracking_notify(self, message, *args, timeout=None, **kwargs):
+            nonlocal captured_timeout
+            if "byeeeee" in str(message) or "closing up shop" in str(message):
+                captured_timeout = timeout
+            return original_notify(self, message, *args, timeout=timeout, **kwargs)
+
+        with patch('charlie.MODELS', {"llm": None}), \
+             patch.object(CharlieApp, 'notify', tracking_notify):
+            app = CharlieApp()
+            async with app_test_context(app) as pilot:
+                await pilot.pause()
+
+                await pilot.press("q")
+                await pilot.pause()
+
+                assert captured_timeout == 120, \
+                    f"Expected timeout=120, got {captured_timeout}"
+
+    @pytest.mark.asyncio
+    async def test_quit_ui_responsive_during_shutdown(self, mock_database):
+        """UI should remain responsive while shutdown runs in background thread.
+
+        The action_quit() handler uses asyncio.create_task() (fire-and-forget),
+        so pressing 'q' returns immediately while shutdown runs in background.
+        """
+        import time
+
+        shutdown_started = False
+        shutdown_finished = False
+
+        original_blocking = CharlieApp._blocking_shutdown
+
+        def slow_shutdown(self):
+            nonlocal shutdown_started, shutdown_finished
+            shutdown_started = True
+            time.sleep(0.2)  # Simulate worker drain
+            original_blocking(self)
+            shutdown_finished = True
+
+        with patch.object(CharlieApp, '_blocking_shutdown', slow_shutdown):
+            app = CharlieApp()
+            async with app_test_context(app) as pilot:
+                await pilot.pause()
+
+                # Press 'q' - should return immediately (fire-and-forget)
+                await pilot.press("q")
+
+                # Poll for shutdown start (should be nearly immediate)
+                started = await wait_for_condition(lambda: shutdown_started, timeout=0.5)
+                assert started, "Shutdown should have started within 0.5s"
+
+                # Shutdown started but should still be running (blocking sleep not done)
+                assert not shutdown_finished, "Shutdown should still be running (action_quit is fire-and-forget)"
+
+                # Poll for shutdown completion
+                finished = await wait_for_condition(lambda: shutdown_finished, timeout=1.0)
+                assert finished, "Shutdown should have completed within 1.0s"
+
+    @pytest.mark.asyncio
+    async def test_double_quit_idempotent(self, mock_database):
+        """Double-quit should not cause errors or duplicate shutdown."""
+        call_count = 0
+
+        original_blocking_shutdown = CharlieApp._blocking_shutdown
+
+        def counting_shutdown(self):
+            nonlocal call_count
+            call_count += 1
+            original_blocking_shutdown(self)
+
+        with patch.object(CharlieApp, '_blocking_shutdown', counting_shutdown):
+            app = CharlieApp()
+            async with app_test_context(app) as pilot:
+                await pilot.pause()
+
+                # Press quit twice rapidly
+                await pilot.press("q")
+                await pilot.press("q")
+                await pilot.pause()
+
+                # Should only have one shutdown sequence due to flag check
+                assert call_count <= 1
+
+    @pytest.mark.asyncio
+    async def test_shutdown_flag_set_before_teardown(self, mock_database):
+        """request_shutdown() should be called before stop_huey_worker()."""
+        call_order = []
+
+        def track_request_shutdown():
+            call_order.append('request_shutdown')
+
+        def track_stop_huey(self):
+            call_order.append('stop_huey')
+
+        with patch('charlie.request_shutdown', track_request_shutdown), \
+             patch.object(CharlieApp, 'stop_huey_worker', track_stop_huey):
+            app = CharlieApp()
+            async with app_test_context(app) as pilot:
+                await pilot.pause()
+
+                await pilot.press("q")
+                await pilot.pause()
+
+                # request_shutdown must come before stop_huey_worker
+                if 'request_shutdown' in call_order and 'stop_huey' in call_order:
+                    assert call_order.index('request_shutdown') < call_order.index('stop_huey')

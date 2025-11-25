@@ -9,11 +9,9 @@ from textual.widgets import Footer, Header, Label, ListItem, ListView, Static
 from backend.database import (
     delete_episode,
     ensure_database_ready,
-    get_all_episodes,
-    shutdown_database,
+    get_home_screen,
 )
 from backend.settings import DEFAULT_JOURNAL
-from backend.services.queue import start_huey_consumer, stop_huey_consumer
 from frontend.screens.settings_screen import SettingsScreen
 from frontend.screens.view_screen import ViewScreen
 from frontend.screens.log_screen import LogScreen
@@ -50,6 +48,14 @@ class HomeScreen(Screen):
         super().__init__()
         self.episodes = []
 
+    @staticmethod
+    def _format_date(valid_at) -> str:
+        """Handle datetime or string dates gracefully for list rendering."""
+        try:
+            return valid_at.strftime("%Y-%m-%d")  # type: ignore[arg-type]
+        except Exception:
+            return str(valid_at)
+
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False, icon="")
         if not self.episodes:
@@ -61,7 +67,7 @@ class HomeScreen(Screen):
                 *[
                     ListItem(
                         Label(
-                            f"{episode['valid_at'].strftime('%Y-%m-%d')} - {get_display_title(episode)}"
+                            f"{self._format_date(episode['valid_at'])} - {get_display_title(episode)}"
                         )
                     )
                     for episode in self.episodes
@@ -98,7 +104,7 @@ class HomeScreen(Screen):
 
     async def load_episodes(self):
         try:
-            new_episodes = await get_all_episodes()
+            new_episodes = await get_home_screen()
 
             if not new_episodes:
                 self.episodes = []
@@ -117,7 +123,7 @@ class HomeScreen(Screen):
                     items = [
                         ListItem(
                             Label(
-                                f"{episode['valid_at'].strftime('%Y-%m-%d')} - {get_display_title(episode)}"
+                                f"{self._format_date(episode['valid_at'])} - {get_display_title(episode)}"
                             )
                         )
                         for episode in new_episodes
@@ -167,19 +173,18 @@ class HomeScreen(Screen):
             logger.error(f"Failed to delete entry: {e}", exc_info=True)
             self.notify("Failed to delete entry", severity="error")
 
-    def _graceful_shutdown(self):
-        """Ensure worker stops before database teardown (idempotent)."""
-        try:
-            if hasattr(self.app, "stop_huey_worker"):
-                self.app.stop_huey_worker()
-        finally:
-            shutdown_database()
-
     def action_quit(self):
-        # Stop background worker before tearing down the database to avoid
-        # connection errors/backoff during shutdown.
-        self._graceful_shutdown()
-        self.app.exit()
+        """Request graceful shutdown via unified async path (fire-and-forget)."""
+        def handle_shutdown_done(task):
+            try:
+                exc = task.exception()
+                if exc is not None:
+                    logger.error(f"Shutdown failed: {exc}", exc_info=exc)
+            except asyncio.CancelledError:
+                pass
+
+        task = asyncio.create_task(self.app._async_shutdown())
+        task.add_done_callback(handle_shutdown_done)
 
     def action_cursor_down(self):
         if not self.episodes:

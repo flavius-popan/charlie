@@ -81,9 +81,6 @@ def redis_ops() -> Iterator[RedisOpsProxy]:
     """
     from . import lifecycle
 
-    if lifecycle.is_shutdown_requested():
-        raise RuntimeError("Database shutdown in progress")
-
     lifecycle._ensure_graph(DEFAULT_JOURNAL)
 
     if lifecycle._db is None:

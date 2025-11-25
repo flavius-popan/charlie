@@ -3,6 +3,7 @@ import atexit
 import json
 import logging
 import os
+import signal
 from pathlib import Path
 
 from textual import events
@@ -33,12 +34,14 @@ from backend import add_journal_entry
 from backend.database import (
     delete_episode,
     ensure_database_ready,
-    get_all_episodes,
+    get_home_screen,
     get_episode,
     get_tcp_server_endpoint,
     shutdown_database,
     update_episode,
 )
+from backend.database.lifecycle import is_shutdown_requested, request_shutdown
+from backend.inference.manager import MODELS
 from backend.database.queries import delete_entity_mention
 from backend.database.redis_ops import (
     get_episode_status,
@@ -127,6 +130,26 @@ class CharlieApp(App):
         self.push_screen(HomeScreen())
         # Worker is started after DB readiness in HomeScreen._init_and_load.
 
+        # Register signal handlers for graceful shutdown on external signals
+        # (e.g., kill -INT, terminal close). Keyboard Ctrl+C in Textual is a
+        # key binding, not SIGINT.
+        loop = asyncio.get_running_loop()
+
+        def shutdown_handler():
+            def handle_shutdown_done(task):
+                try:
+                    exc = task.exception()
+                    if exc is not None:
+                        logger.error(f"Signal shutdown failed: {exc}", exc_info=exc)
+                except asyncio.CancelledError:
+                    pass
+
+            task = asyncio.create_task(self._async_shutdown())
+            task.add_done_callback(handle_shutdown_done)
+
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            loop.add_signal_handler(sig, shutdown_handler)
+
     def _ensure_huey_worker_running(self):
         """Start Huey consumer in-process if not already running."""
         if is_huey_consumer_running():
@@ -167,8 +190,35 @@ class CharlieApp(App):
         """Public wrapper to stop worker (used by UI handlers)."""
         self._shutdown_huey()
 
-    def _graceful_shutdown(self):
-        """Stop background worker before tearing down the database."""
+    async def _async_shutdown(self):
+        """Unified shutdown path for all exit triggers.
+
+        Non-blocking: shows notification immediately, runs teardown in thread.
+        """
+        if is_shutdown_requested():
+            return  # Already shutting down (double-quit)
+
+        request_shutdown()  # Set flag FIRST so tasks see it
+
+        # Show context-aware message: "Just a sec!" if inference active, else quick bye
+        model_loaded = any(model is not None for model in MODELS.values())
+        if model_loaded:
+            self.notify("Just a sec! (closing up shop)", timeout=120)
+        else:
+            self.notify("byeeeee", timeout=120)
+
+        # Yield to allow notification to render before blocking work
+        await asyncio.sleep(0)
+
+        # Run blocking teardown off the event loop
+        await asyncio.to_thread(self._blocking_shutdown)
+        self.exit()
+
+    def _blocking_shutdown(self):
+        """Blocking teardown (runs in thread).
+
+        Stops Huey worker (waits for current task) then shuts down database.
+        """
         try:
             self.stop_huey_worker()
         finally:
@@ -180,8 +230,10 @@ class CharlieApp(App):
                 )
 
     def on_unmount(self):
-        # Covers exits triggered outside the key binding (e.g., cmd+q/ctrl+c)
-        self._graceful_shutdown()
+        """Fallback safety net for exits outside the normal quit path."""
+        if not is_shutdown_requested():
+            request_shutdown()
+        self._blocking_shutdown()
 
 
 CharlieApp.CSS = """

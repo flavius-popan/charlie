@@ -5,7 +5,20 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
-def patch_backend_for_frontend_tests():
+def reset_lifecycle_for_frontend_tests():
+    """Reset lifecycle state before each frontend test.
+
+    Frontend tests mock the database but some code paths still check
+    is_shutdown_requested(). Ensure the flag is False at test start.
+    """
+    import backend.database.lifecycle as lifecycle
+    lifecycle.reset_lifecycle_state()
+    yield
+    lifecycle.reset_lifecycle_state()
+
+
+@pytest.fixture(autouse=True)
+def patch_backend_for_frontend_tests(reset_lifecycle_for_frontend_tests):
     """Provide default async mocks for backend operations in frontend tests.
 
     This ensures frontend tests don't accidentally trigger real database ops.

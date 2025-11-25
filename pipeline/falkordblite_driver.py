@@ -480,16 +480,11 @@ def _parse_datetime(value: Any) -> datetime | None:
         return None
 
 
-def _iter_statistics_rows(result) -> Iterable[list[Any]]:
+def _iter_result_rows(result) -> Iterable[list[Any]]:
     """Yield decoded rows from a FalkorDB query result."""
-    rows = getattr(result, "statistics", None) or []
+    rows = getattr(result, "result_set", None) or []
     for row in rows:
-        yield [
-            _decode_value(col[1])
-            if isinstance(col, (list, tuple)) and len(col) > 1
-            else None
-            for col in row
-        ]
+        yield [_decode_value(col) for col in row]
 
 
 def _fetch_recent_episodes_sync(
@@ -531,7 +526,7 @@ def _fetch_recent_episodes_sync(
         entity_edges,
         labels,
         source_value,
-    ) in _iter_statistics_rows(result):
+    ) in _iter_result_rows(result):
         source_literal = _decode_value(source_value) or EpisodeType.text.value
         try:
             source = EpisodeType(source_literal)
@@ -591,7 +586,7 @@ def _fetch_entities_by_group_sync(group_id: str) -> dict[str, EntityNode]:
         return {}
 
     entities: dict[str, EntityNode] = {}
-    for uuid, name, summary, labels, attributes, created_at in _iter_statistics_rows(
+    for uuid, name, summary, labels, attributes, created_at in _iter_result_rows(
         result
     ):
         node_kwargs: dict[str, Any] = {
@@ -635,7 +630,7 @@ def _fetch_self_entity_sync() -> EntityNode | None:
         logger.warning("FalkorDB query failed (fetch_self_entity): %s", exc)
         return None
 
-    rows = list(_iter_statistics_rows(result))
+    rows = list(_iter_result_rows(result))
     if not rows:
         return None
 
@@ -693,7 +688,7 @@ def _fetch_entity_edges_by_group_sync(group_id: str) -> dict[str, EntityEdge]:
         attributes,
         source_uuid,
         target_uuid,
-    ) in _iter_statistics_rows(result):
+    ) in _iter_result_rows(result):
         edge_kwargs: dict[str, Any] = {
             "name": str(name or ""),
             "fact": str(fact or ""),
@@ -739,17 +734,13 @@ def _get_db_stats_sync() -> dict[str, int]:
     try:
         episodic_result = graph.query("MATCH (e:Episodic) RETURN count(e)")
         episodic_count = 0
-        if episodic_result.statistics and episodic_result.statistics[0]:
-            col = episodic_result.statistics[0][0]
-            val = col[1] if len(col) > 1 else col[0]
-            episodic_count = int(_decode_value(val) or 0)
+        if episodic_result.result_set and episodic_result.result_set[0]:
+            episodic_count = int(episodic_result.result_set[0][0] or 0)
 
         entity_result = graph.query("MATCH (n:Entity) RETURN count(n)")
         entity_count = 0
-        if entity_result.statistics and entity_result.statistics[0]:
-            col = entity_result.statistics[0][0]
-            val = col[1] if len(col) > 1 else col[0]
-            entity_count = int(_decode_value(val) or 0)
+        if entity_result.result_set and entity_result.result_set[0]:
+            entity_count = int(entity_result.result_set[0][0] or 0)
 
         return {"episodes": episodic_count, "entities": entity_count}
     except Exception as exc:  # noqa: BLE001
@@ -969,18 +960,16 @@ class FalkorLiteDriver(GraphDriver):
         formatted_query = _inject(cypher_query_, params)
         result = await asyncio.to_thread(graph.query, formatted_query, None)
 
-        raw = getattr(result, "_raw_response", None)
         records: list[dict[str, Any]] = []
         header: list[str] = []
-        rows = []
-        if isinstance(raw, list) and len(raw) >= 2:
-            header = [_decode_value(col[1]) for col in raw[0]]
-            rows = raw[1]
 
-        for row in rows:
+        if result.header:
+            header = [_decode_value(col[1]) for col in result.header]
+
+        for row in result.result_set or []:
             record: dict[str, Any] = {}
             for idx, field_name in enumerate(header):
-                value = row[idx][1] if idx < len(row) else None
+                value = row[idx] if idx < len(row) else None
                 record[str(field_name)] = _decode_value(value)
             records.append(record)
 

@@ -145,20 +145,18 @@ class FalkorLiteDriver(GraphDriver):
 
         result = await asyncio.to_thread(_locked_query)
 
-        raw = getattr(result, "_raw_response", None)
         records: list[dict[str, Any]] = []
         header: list[str] = []
 
-        if isinstance(raw, list) and len(raw) >= 2:
-            header = [_decode_value(col[1]) for col in raw[0]]
-            rows = raw[1]
+        if result.header:
+            header = [_decode_value(col[1]) for col in result.header]
 
-            for row in rows:
-                record: dict[str, Any] = {}
-                for idx, field_name in enumerate(header):
-                    value = row[idx][1] if idx < len(row) else None
-                    record[str(field_name)] = _decode_value(value)
-                records.append(record)
+        for row in result.result_set or []:
+            record: dict[str, Any] = {}
+            for idx, field_name in enumerate(header):
+                value = row[idx] if idx < len(row) else None
+                record[str(field_name)] = _decode_value(value)
+            records.append(record)
 
         return records, header, None
 
