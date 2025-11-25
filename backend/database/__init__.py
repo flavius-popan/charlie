@@ -34,14 +34,15 @@ from backend.database.utils import (
 
 
 def shutdown_database():
-    """Manual database shutdown for testing.
+    """Shut down the database cleanly.
 
-    Resets all global state to allow clean database reinitialization.
+    Stops the embedded Redis process. The shutdown flag remains set
+    so tasks know shutdown is in progress. For test re-initialization,
+    call reset_lifecycle_state() and reset_persistence_state() explicitly.
     """
     from backend.database.lifecycle import _close_db
 
     _close_db()
-    reset_lifecycle_state()
     reset_persistence_state()
 
 

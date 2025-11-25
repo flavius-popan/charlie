@@ -39,6 +39,7 @@ from backend.database import (
     shutdown_database,
     update_episode,
 )
+from backend.database.lifecycle import is_shutdown_requested, request_shutdown
 from backend.database.queries import delete_entity_mention
 from backend.database.redis_ops import (
     get_episode_status,
@@ -167,8 +168,26 @@ class CharlieApp(App):
         """Public wrapper to stop worker (used by UI handlers)."""
         self._shutdown_huey()
 
-    def _graceful_shutdown(self):
-        """Stop background worker before tearing down the database."""
+    async def _async_shutdown(self):
+        """Unified shutdown path for all exit triggers.
+
+        Non-blocking: shows notification immediately, runs teardown in thread.
+        """
+        if is_shutdown_requested():
+            return  # Already shutting down (double-quit)
+
+        request_shutdown()  # Set flag FIRST so tasks see it
+        self.notify("Just a sec! (closing up shop)", timeout=10)
+
+        # Run blocking teardown off the event loop
+        await asyncio.to_thread(self._blocking_shutdown)
+        self.exit()
+
+    def _blocking_shutdown(self):
+        """Blocking teardown (runs in thread).
+
+        Stops Huey worker (waits for current task) then shuts down database.
+        """
         try:
             self.stop_huey_worker()
         finally:
@@ -180,8 +199,10 @@ class CharlieApp(App):
                 )
 
     def on_unmount(self):
-        # Covers exits triggered outside the key binding (e.g., cmd+q/ctrl+c)
-        self._graceful_shutdown()
+        """Fallback safety net for exits outside the normal quit path."""
+        if not is_shutdown_requested():
+            request_shutdown()
+        self._blocking_shutdown()
 
 
 CharlieApp.CSS = """
