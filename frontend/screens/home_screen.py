@@ -173,9 +173,18 @@ class HomeScreen(Screen):
             logger.error(f"Failed to delete entry: {e}", exc_info=True)
             self.notify("Failed to delete entry", severity="error")
 
-    async def action_quit(self):
-        """Request graceful shutdown via unified async path."""
-        await self.app._async_shutdown()
+    def action_quit(self):
+        """Request graceful shutdown via unified async path (fire-and-forget)."""
+        def handle_shutdown_done(task):
+            try:
+                exc = task.exception()
+                if exc is not None:
+                    logger.error(f"Shutdown failed: {exc}", exc_info=exc)
+            except asyncio.CancelledError:
+                pass
+
+        task = asyncio.create_task(self.app._async_shutdown())
+        task.add_done_callback(handle_shutdown_done)
 
     def action_cursor_down(self):
         if not self.episodes:

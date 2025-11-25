@@ -324,3 +324,74 @@ The shutdown flag is for **cooperative cancellation at checkpoints** (via `check
 | `backend/database/redis_ops.py` | Removed premature shutdown check (lines 84-85) |
 | `tests/test_backend/test_redis_ops.py` | Updated `test_shutdown_behavior` → `test_shutdown_flag_allows_operations_while_db_available` |
 | `tests/test_backend/test_services_tasks.py` | Added `test_redis_ops_allows_operations_during_shutdown` |
+
+---
+
+## Post-Implementation Bug: UI Freeze on Quit (2025-11-24)
+
+### Symptom
+
+After implementing the halting problem solution, pressing `q` to quit caused a complete UI freeze:
+- No notification appeared ("Just a sec! (closing up shop)" never rendered)
+- UI was completely unresponsive
+- User had to spam quit commands to exit
+
+### Root Cause
+
+`action_quit()` in `frontend/screens/home_screen.py` used `await` instead of `asyncio.create_task()`:
+
+```python
+# WRONG (blocking):
+async def action_quit(self):
+    await self.app._async_shutdown()
+
+# CORRECT (fire-and-forget):
+def action_quit(self):
+    asyncio.create_task(self.app._async_shutdown())
+```
+
+The design doc (line 164) specified `asyncio.create_task()`, but the implementation used `await`.
+
+### Why `await` Freezes the UI
+
+1. Textual's `_dispatch_action()` awaits the action handler to complete before returning
+2. With `await self.app._async_shutdown()`, the action handler doesn't return until shutdown finishes
+3. Even though `asyncio.to_thread()` runs blocking work in a thread, Textual doesn't process renders until the action dispatch completes
+4. The notification is queued via `post_message()` but never rendered
+
+### The Paradox
+
+The implementation *looks* correct at first glance:
+- `asyncio.to_thread()` runs blocking work off the event loop
+- The event loop is technically "free" during the thread wait
+- But Textual batches message processing and won't render until the action completes
+
+### Fix
+
+1. **Changed `action_quit()` to fire-and-forget** (`frontend/screens/home_screen.py:176-178`):
+   ```python
+   def action_quit(self):
+       asyncio.create_task(self.app._async_shutdown())
+   ```
+
+2. **Added yield point after notify** (`charlie.py:191-192`):
+   ```python
+   self.notify("Just a sec! (closing up shop)", timeout=10)
+   await asyncio.sleep(0)  # Yield to allow notification to render
+   ```
+
+3. **Updated test to verify fire-and-forget** (`tests/test_frontend/test_charlie.py:1398-1435`):
+   - Test now asserts shutdown is NOT finished immediately after press (proving non-blocking)
+   - Then waits and asserts shutdown completes
+
+### Key Lesson
+
+In Textual, async action handlers that `await` long operations will freeze the UI even if the work runs in a thread. Use `asyncio.create_task()` for fire-and-forget patterns where UI responsiveness is critical.
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `frontend/screens/home_screen.py` | `action_quit()`: `await` → `asyncio.create_task()` |
+| `charlie.py` | `_async_shutdown()`: added `await asyncio.sleep(0)` after notify |
+| `tests/test_frontend/test_charlie.py` | Updated `test_quit_ui_responsive_during_shutdown` with proper assertions |

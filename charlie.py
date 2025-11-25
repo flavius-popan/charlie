@@ -133,7 +133,19 @@ class CharlieApp(App):
         # (e.g., kill -INT, terminal close). Keyboard Ctrl+C in Textual is a
         # key binding, not SIGINT.
         loop = asyncio.get_running_loop()
-        shutdown_handler = lambda: asyncio.create_task(self._async_shutdown())
+
+        def shutdown_handler():
+            def handle_shutdown_done(task):
+                try:
+                    exc = task.exception()
+                    if exc is not None:
+                        logger.error(f"Signal shutdown failed: {exc}", exc_info=exc)
+                except asyncio.CancelledError:
+                    pass
+
+            task = asyncio.create_task(self._async_shutdown())
+            task.add_done_callback(handle_shutdown_done)
+
         for sig in (signal.SIGINT, signal.SIGTERM):
             loop.add_signal_handler(sig, shutdown_handler)
 
@@ -187,6 +199,9 @@ class CharlieApp(App):
 
         request_shutdown()  # Set flag FIRST so tasks see it
         self.notify("Just a sec! (closing up shop)", timeout=10)
+
+        # Yield to allow notification to render before blocking work
+        await asyncio.sleep(0)
 
         # Run blocking teardown off the event loop
         await asyncio.to_thread(self._blocking_shutdown)

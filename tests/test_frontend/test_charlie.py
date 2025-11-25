@@ -42,6 +42,26 @@ from frontend.screens.settings_screen import SettingsScreen
 from frontend.widgets.entity_sidebar import EntitySidebar, DeleteEntityModal
 
 
+async def wait_for_condition(predicate, timeout=1.0, check_interval=0.01):
+    """Wait for predicate to become True, polling at intervals.
+
+    Args:
+        predicate: Callable that returns bool
+        timeout: Maximum time to wait in seconds
+        check_interval: How often to check condition
+
+    Returns:
+        True if condition met within timeout, False otherwise
+    """
+    import time
+    start = time.monotonic()
+    while time.monotonic() - start < timeout:
+        if predicate():
+            return True
+        await asyncio.sleep(check_interval)
+    return False
+
+
 @asynccontextmanager
 async def app_test_context(app):
     """Context manager that wraps app.run_test() and suppresses shutdown CancelledError.
@@ -1397,7 +1417,11 @@ class TestGracefulShutdown:
 
     @pytest.mark.asyncio
     async def test_quit_ui_responsive_during_shutdown(self, mock_database):
-        """UI should remain responsive while shutdown runs in background thread."""
+        """UI should remain responsive while shutdown runs in background thread.
+
+        The action_quit() handler uses asyncio.create_task() (fire-and-forget),
+        so pressing 'q' returns immediately while shutdown runs in background.
+        """
         import time
 
         shutdown_started = False
@@ -1408,7 +1432,7 @@ class TestGracefulShutdown:
         def slow_shutdown(self):
             nonlocal shutdown_started, shutdown_finished
             shutdown_started = True
-            time.sleep(0.1)  # Simulate worker drain
+            time.sleep(0.2)  # Simulate worker drain
             original_blocking(self)
             shutdown_finished = True
 
@@ -1417,15 +1441,19 @@ class TestGracefulShutdown:
             async with app_test_context(app) as pilot:
                 await pilot.pause()
 
-                # Initiate shutdown (runs in background thread via asyncio.to_thread)
+                # Press 'q' - should return immediately (fire-and-forget)
                 await pilot.press("q")
 
-                # Give a moment for async shutdown to start the thread
-                await pilot.pause()
+                # Poll for shutdown start (should be nearly immediate)
+                started = await wait_for_condition(lambda: shutdown_started, timeout=0.5)
+                assert started, "Shutdown should have started within 0.5s"
 
-                # If we can still interact with pilot, UI is responsive
-                # (the blocking work is happening in a thread)
-                assert True  # Reaching here means UI thread wasn't blocked
+                # Shutdown started but should still be running (blocking sleep not done)
+                assert not shutdown_finished, "Shutdown should still be running (action_quit is fire-and-forget)"
+
+                # Poll for shutdown completion
+                finished = await wait_for_condition(lambda: shutdown_finished, timeout=1.0)
+                assert finished, "Shutdown should have completed within 1.0s"
 
     @pytest.mark.asyncio
     async def test_double_quit_idempotent(self, mock_database):
