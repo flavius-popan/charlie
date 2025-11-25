@@ -17,13 +17,9 @@ def _decode(value):
 
 
 def _query_rows(graph, query: str) -> list[list[object]]:
-    """Execute a query and return decoded raw response rows."""
+    """Execute a query and return decoded result rows."""
     result = graph.query(query)
-    raw = getattr(result, "_raw_response", None)
-    if not raw or len(raw) < 2:
-        return []
-    rows = raw[1]
-    return [[_decode(col[1]) if isinstance(col, (list, tuple)) and len(col) > 1 else _decode(col[0]) for col in row] for row in rows]
+    return [[_decode(col) for col in row] for row in (result.result_set or [])]
 
 
 @pytest.fixture
@@ -469,17 +465,16 @@ def test_native_array_storage_and_retrieval(isolated_graph):
         RETURN n.edges AS edges, n.labels AS labels, n.empty AS empty
     """)
 
-    raw = getattr(result, "_raw_response", None)
-    assert raw is not None
+    assert result.result_set and len(result.result_set) == 1
 
-    # Parse the results using our decode logic
+    # Parse the results using new API
     from backend.database.utils import _decode_value
-    header = [_decode_value(col[1]) for col in raw[0]]
-    row = raw[1][0]
+    header = [_decode_value(col[1]) for col in result.header]
+    row = result.result_set[0]
 
     retrieved = {}
     for idx, field_name in enumerate(header):
-        value = row[idx][1] if idx < len(row) else None
+        value = row[idx] if idx < len(row) else None
         retrieved[field_name] = _decode_value(value)
 
     # Verify arrays are properly decoded

@@ -214,18 +214,13 @@ async def delete_entity_mention(
     edge_uuid = None
 
     # Parse result from query 1 (MENTIONS edge deletion)
-    raw1 = getattr(result1, "_raw_response", None)
-    if raw1 and len(raw1) >= 2:
-        rows = raw1[1]
-        if rows and len(rows) > 0:
-            entity_name = _decode_value(rows[0][0])
-            edge_uuid = _decode_value(rows[0][1])
+    if result1.result_set and len(result1.result_set) > 0:
+        row = result1.result_set[0]
+        entity_name = _decode_value(row[0]) if len(row) > 0 else None
+        edge_uuid = _decode_value(row[1]) if len(row) > 1 else None
 
     # Parse result from query 2 (entity deletion if orphaned)
-    raw2 = getattr(result2, "_raw_response", None)
-    was_deleted = False
-    if raw2 and len(raw2) >= 2 and raw2[1] and len(raw2[1]) > 0:
-        was_deleted = True
+    was_deleted = bool(result2.result_set and len(result2.result_set) > 0)
 
     def _update_redis_caches():
         """Update Redis caches after entity deletion (synchronous helper for thread offloading)."""

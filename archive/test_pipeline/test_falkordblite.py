@@ -31,11 +31,11 @@ def _decode(value):
 def _query_rows(graph, query: str) -> list[list[object]]:
     """Execute a query and return decoded statistics rows."""
     result = graph.query(query)
-    return list(db_utils._iter_statistics_rows(result))
+    return list(db_utils._iter_result_rows(result))
 
 
 def _rows_from_result(result) -> list[list[object]]:
-    return list(db_utils._iter_statistics_rows(result))
+    return list(db_utils._iter_result_rows(result))
 
 
 @pytest.fixture
