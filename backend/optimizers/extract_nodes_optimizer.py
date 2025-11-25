@@ -3,6 +3,8 @@
 Usage:
     python -m backend.optimizers.extract_nodes_optimizer
     python -m backend.optimizers.extract_nodes_optimizer --no-cache
+    python -m backend.optimizers.extract_nodes_optimizer --remote
+    python -m backend.optimizers.extract_nodes_optimizer --remote --no-cache
 """
 from __future__ import annotations
 
@@ -20,7 +22,8 @@ from backend.optimizers import (
     DATA_DIR,
     PROMPTS_DIR,
     GEPA_AUTO_MODE,
-    GEPA_NUM_THREADS,
+    GEPA_NUM_THREADS_LOCAL,
+    GEPA_NUM_THREADS_REMOTE,
 )
 from backend.graph.extract_nodes import (
     EntityExtractor,
@@ -140,6 +143,11 @@ def main():
         action="store_true",
         help="Disable DSPy caching for a clean run (use when iterating on examples/metric)",
     )
+    parser.add_argument(
+        "--remote",
+        action="store_true",
+        help="Use HuggingFace endpoint instead of local model (faster, requires HUGGINGFACE_API_KEY)",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(message)s")
@@ -148,7 +156,7 @@ def main():
         dspy.configure_cache(enable_disk_cache=False, enable_memory_cache=False)
         logger.info("Caching disabled for clean run")
 
-    configure_dspy()
+    configure_dspy(remote=args.remote)
     reflection_lm = get_reflection_lm()
 
     trainset, valset = load_examples()
@@ -159,12 +167,14 @@ def main():
     baseline_score = evaluate_module(baseline, valset, metric)
     logger.info("Baseline: %.3f", baseline_score)
 
+    num_threads = GEPA_NUM_THREADS_REMOTE if args.remote else GEPA_NUM_THREADS_LOCAL
     gepa = GEPA(
         metric=metric,
         reflection_lm=reflection_lm,
         auto=GEPA_AUTO_MODE,  # "light", "medium", or "heavy"
-        num_threads=GEPA_NUM_THREADS,
+        num_threads=num_threads,
     )
+    logger.info("GEPA configured with num_threads=%d", num_threads)
 
     optimized = gepa.compile(student=baseline, trainset=trainset, valset=valset)
 

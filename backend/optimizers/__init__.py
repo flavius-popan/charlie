@@ -50,13 +50,41 @@ REFLECTION_MAX_TOKENS = int(os.getenv("REFLECTION_MAX_TOKENS", "2048"))
 
 # auto mode: "light" (quick), "medium" (balanced), "heavy" (production)
 GEPA_AUTO_MODE = os.getenv("GEPA_AUTO_MODE", "light")
-GEPA_NUM_THREADS = 1  # llama.cpp cannot be safely forked
+
+# Thread counts: local llama.cpp can't fork safely, remote can burst
+GEPA_NUM_THREADS_LOCAL = 1
+GEPA_NUM_THREADS_REMOTE = 40
+
+# =============================================================================
+# Remote (HuggingFace) Configuration
+# =============================================================================
+HF_ENDPOINT_URL = os.getenv(
+    "HF_ENDPOINT_URL",
+    "https://vvs4tdjjoe8k1101.us-east-1.aws.endpoints.huggingface.cloud",
+)
 
 
-def get_task_lm() -> dspy.LM:
-    """Get local task LM for optimization."""
-    from backend.inference.dspy_lm import DspyLM
-    return DspyLM(repo_id=MODEL_REPO_ID, generation_config=MODEL_CONFIG)
+def get_task_lm(*, remote: bool = False) -> dspy.LM:
+    """Get task LM for optimization.
+
+    Args:
+        remote: If True, use HuggingFace endpoint. If False, use local llama.cpp.
+    """
+    if remote:
+        # litellm uses HUGGINGFACE_API_KEY env var by convention
+        api_key = os.getenv("HUGGINGFACE_API_KEY") or os.getenv("HF_TOKEN")
+        if not api_key:
+            raise ValueError("HUGGINGFACE_API_KEY (or HF_TOKEN) required for remote optimization")
+        return dspy.LM(
+            model="huggingface/tgi",
+            api_key=api_key,
+            api_base=HF_ENDPOINT_URL,
+            temperature=MODEL_CONFIG["temp"],
+            max_tokens=MODEL_CONFIG["max_tokens"],
+        )
+    else:
+        from backend.inference.dspy_lm import DspyLM
+        return DspyLM(repo_id=MODEL_REPO_ID, generation_config=MODEL_CONFIG)
 
 
 def get_reflection_lm() -> dspy.LM:
@@ -72,11 +100,14 @@ def get_reflection_lm() -> dspy.LM:
     )
 
 
-def configure_dspy():
+def configure_dspy(*, remote: bool = False):
     """Configure DSPy with task LM and chat adapter."""
-    lm = get_task_lm()
+    lm = get_task_lm(remote=remote)
     dspy.configure(lm=lm, adapter=dspy.ChatAdapter())
-    logger.info("Configured DSPy with %s", MODEL_REPO_ID)
+    if remote:
+        logger.info("Configured DSPy with remote HF endpoint: %s", HF_ENDPOINT_URL)
+    else:
+        logger.info("Configured DSPy with local model: %s", MODEL_REPO_ID)
 
 
 def evaluate_module(module, dataset: list, metric_fn) -> float:
