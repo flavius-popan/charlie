@@ -1,78 +1,233 @@
-# Plan: Cache-First Home Screen (v2)
+# Plan: Fast Home Screen (v3)
 
-## Problems to fix
-- UI stutter from on-thread title/preview parsing (`extract_title` in `frontend/utils.py:4-52`).
-- Home load hits DB for full content (`get_all_episodes`) even though only name/date/preview are displayed.
-- Cache is key-scanned per load; no ordering structure for fast slices.
-- `_enqueue_extraction_task` does synchronous Redis check on the UI thread.
+## Problem
+Home screen is slow because `get_all_episodes()` fetches full content for every episode when only name/date are displayed.
 
-## Current journal hash schema (works with this plan)
-- Stored in `journal:{journal}:{uuid}` hashes:
-  - `status`, `journal`, `uuid_map` (set in `backend/database/redis_ops.py:128-148`).
-  - `nodes` JSON + `mentions_edges` JSON (set in `backend/graph/extract_nodes.py:461-474`).
-- No conflicts with adding `preview`, `valid_at`, and cached `name`. Consumers ignore unknown fields, so additive fields are safe.
+## Solution Overview
+1. **Hybrid query** - FalkorDB for metadata + Redis batch fetch for previews
+2. **Textual messages for reactivity** - No polling; screens post messages when data changes
+3. **Preview in existing Redis hash** - Smart preview generation, stored alongside status/nodes
+4. **Auto-title setting** - Toggle between smart previews and classic date-based names
 
-## Decisions
-- Preview length 80 chars; whitespace/newlines collapsed (`content.replace("\n", " ")[:80]`).
-- Use a single sorted set `journal:{journal}:by_valid_at` (member=uuid, score=epoch seconds). No secondary zsets.
-- Always prefer episode `name` (title) for display; no `"Untitled"` fallback.
-- Cache writes are best-effort (log+continue); never fail saves on Redis errors.
-- Startup still calls `ensure_database_ready(DEFAULT_JOURNAL)`; Falkor and Redis share the same process.
-- Home screen reactivity: 3s poller worker checks zset cardinality/top score; refreshes list on change.
+---
 
-## Part 1: Remove title extraction
-- `frontend/utils.py`
-  - Delete `extract_title`.
-  - Simplify `get_display_title` to: prefer `episode["name"]`, else `episode.get("preview", "")[:80]`.
-- `frontend/__init__.py`
-  - Drop `extract_title` import/export.
-- `frontend/screens/edit_screen.py`
-  - Remove all uses of `extract_title`; call `update_episode` without name overrides.
-  - Keep `_enqueue_extraction_task` but add internal `get_inference_enabled()` guard (cheap) so callers can’t forget.
-- Tests: remove `tests/test_frontend/test_charlie_utils.py`; drop title-extraction test in `tests/test_frontend/test_charlie.py` (around lines 1301-1340).
+## Part 1: Preview Generation Utility
 
-## Part 2: Cache write-through helpers
-- `backend/database/redis_ops.py`
-  - Add `cache_episode_display_data(episode_uuid, content, valid_at, name, journal)`:
-    - Build preview (80 chars), ISO `valid_at`, HSET `preview`, `valid_at`, `name`.
-    - ZADD `journal:{journal}:by_valid_at` with score = `valid_at.timestamp()`.
-    - Wrap in try/except; log at debug, never raise.
-  - Add `delete_episode_display_cache(episode_uuid, journal)`:
-    - DEL hash, ZREM from zset; best-effort.
-  - Add `get_episode_display_batch(journal, limit=400)`:
-    - ZREVRANGE by_valid_at 0 limit-1 WITHSCORES.
-    - Pipeline HMGET `name`, `preview`, `valid_at`.
-    - Return list of dicts sorted by zset order; parse `valid_at` to datetime.
-- `backend/__init__.py:add_journal_entry` (after `set_episode_status`, ~line 170s)
-  - Fire-and-forget `asyncio.to_thread(cache_episode_display_data, episode_uuid, content, reference_time, title, journal)`.
-- `backend/database/persistence.py:update_episode` (around line 299+)
-  - After save: if `content_changed` or `valid_at` changed, fire-and-forget `cache_episode_display_data(..., episode.content, episode.valid_at, episode.name, journal)`.
-  - Keep cache update best-effort; do not block return.
-- `backend/database/persistence.py:delete_episode` (after graph delete)
-  - Call `delete_episode_display_cache` best-effort.
+**File:** `backend/utils.py` (new file, shared by app and importers)
 
-## Part 3: Home screen cache-first load
-- `backend/database/queries.py`
-  - Add `get_all_episodes_recent(days=30, journal=DEFAULT_JOURNAL)` to limit DB fallback.
-- `frontend/screens/home_screen.py`
-  - Imports: `get_episode_display_batch`, `cache_episode_display_data`, `delete_episode_display_cache` as needed.
-  - `load_episodes(cache_only: bool = False)`:
-    - Try cache: `episodes = await asyncio.to_thread(get_episode_display_batch, DEFAULT_JOURNAL)`.
-    - If cache empty and not `cache_only`: fetch recent via `get_all_episodes_recent(30)`, hydrate cache with `cache_episode_display_data` (to_thread), then render.
-    - Render label as `f"{valid_at:%Y-%m-%d} - {episode['name']}"`; preview can be shown in secondary UI later.
-    - Keep current focus/empty-state recomposition logic (lines 53-142).
-  - Reactivity: start a 3s worker on `on_mount` that reads `ZCARD` and top score; if either changes since last check, call `load_episodes(cache_only=True)`. Stop worker on screen exit. Add a short comment explaining *why* (keeps list in sync with background imports/inference).
+```python
+def generate_preview(content: str, max_len: int = 80) -> str:
+    """Generate preview: markdown header if at top, else first sentence, else truncated."""
+    head = content[:200].lstrip()
 
-## Part 4: Tests (targeted)
-- Cache hit: seeded zset+hash returns ordered list, no DB call.
-- Cache miss: empty zset triggers recent-DB fetch, hydrates cache, returns results.
-- Save/update: Redis error is swallowed (mock) and save still returns success.
-- Poller: changing zset top score triggers a refresh (can mock worker loop once).
+    # Markdown header at very top?
+    if head.startswith("# "):
+        newline = head.find("\n")
+        end = newline if newline != -1 else len(head)
+        return head[2:end].strip()[:max_len]
 
-## Verification checklist
-- Run full pytest suite.
-- Manual: launch app → list populates instantly from cache; after import/inference, entries appear within 3s without restart.
-- Manual: delete entry → disappears from home within 3s, no errors.
+    # First sentence
+    text = head.replace("\n", " ").strip()
+    for punct in ".!?":
+        pos = text.find(punct)
+        if 0 < pos < max_len:
+            return text[:pos + 1]
 
-## Commenting note (per AGENTS.md)
-- Add only high-value “why” comments, e.g., a one-liner above the home poller explaining it refreshes the list as background work completes. Avoid noisy or “what” comments elsewhere.
+    # Fallback: truncate
+    return text[:max_len]
+```
+
+O(1) regardless of content size - only processes first 200 chars.
+
+---
+
+## Part 2: Store Preview in Redis Hash
+
+**File:** `backend/database/redis_ops.py`
+
+```python
+def set_episode_preview(episode_uuid: str, preview: str, journal: str = DEFAULT_JOURNAL):
+    """Store preview in episode's Redis hash (synchronous, call via asyncio.to_thread)."""
+    cache_key = f"journal:{journal}:{episode_uuid}"
+    with redis_ops() as r:
+        r.hset(cache_key, "preview", preview)
+
+
+def get_auto_title_enabled() -> bool:
+    """Check if auto-title is enabled. Default: True (key absence = enabled)."""
+    with redis_ops() as r:
+        return not r.exists("app:no_auto_title")
+
+
+def batch_get_previews(uuids: list[str], journal: str = DEFAULT_JOURNAL) -> list[str | None]:
+    """Batch fetch previews from Redis hashes. Returns list parallel to input uuids."""
+    if not uuids:
+        return []
+    with redis_ops() as r:
+        pipe = r.pipeline()
+        for uuid in uuids:
+            cache_key = f"journal:{journal}:{uuid}"
+            pipe.hget(cache_key, "preview")
+        results = pipe.execute()
+    return [r.decode() if r else None for r in results]
+```
+
+**File:** `backend/__init__.py` (in `add_journal_entry`, after `set_episode_status` call at line 178)
+
+```python
+preview = generate_preview(content)
+await asyncio.to_thread(set_episode_preview, episode_uuid, preview, journal)
+```
+
+**File:** `backend/database/persistence.py` (in `update_episode`, after the existing `_invalidate_cache` block around line 371)
+
+```python
+if content_changed:
+    preview = generate_preview(new_content)
+    await asyncio.to_thread(set_episode_preview, episode_uuid, preview, journal)
+```
+
+Note: All Redis calls use `asyncio.to_thread()` to avoid blocking the UI thread.
+
+---
+
+## Part 3: Hybrid Query (FalkorDB + Redis)
+
+**File:** `backend/database/queries.py`
+
+```python
+async def get_episodes_for_list(journal: str = DEFAULT_JOURNAL, limit: int = 100) -> list[dict]:
+    """Lightweight query for home screen - metadata from FalkorDB, previews from Redis."""
+    driver = get_driver(journal)
+    records, _, _ = await driver.execute_query(
+        """
+        MATCH (e:Episodic)
+        WHERE e.group_id = $group_id
+        RETURN e.uuid AS uuid, e.name AS name, e.valid_at AS valid_at
+        ORDER BY e.valid_at DESC
+        LIMIT $limit
+        """,
+        group_id=journal,
+        limit=limit,
+    )
+    episodes = [dict(r) for r in records]
+
+    # Batch fetch previews from Redis (single pipeline call)
+    if get_auto_title_enabled():
+        previews = await asyncio.to_thread(
+            batch_get_previews, [ep["uuid"] for ep in episodes], journal
+        )
+        for ep, preview in zip(episodes, previews):
+            ep["preview"] = preview
+
+    return episodes
+```
+
+---
+
+## Part 4: Home Screen Display Logic
+
+**File:** `frontend/screens/home_screen.py`
+
+Change `load_episodes` to use `get_episodes_for_list` instead of `get_all_episodes`.
+
+Display format respects auto-title setting:
+```python
+def get_display_title(episode: dict) -> str:
+    """Return preview if available and auto-title enabled, else name."""
+    return episode.get("preview") or episode["name"]
+
+# In list rendering:
+f"{valid_at:%Y-%m-%d} - {get_display_title(episode)}"
+```
+
+**Behavior:**
+- `app:no_auto_title` key absent (default): shows smart preview, falls back to name
+- `app:no_auto_title` key present: shows classic date-based name
+- Old entries without cached preview: gracefully falls back to name
+
+---
+
+## Part 5: Textual Messages for Reactivity
+
+**File:** `frontend/messages.py` (new or add to existing)
+
+```python
+from textual.message import Message
+
+class EpisodeListChanged(Message):
+    """Posted when episode list should refresh."""
+    pass
+```
+
+**File:** `frontend/screens/edit_screen.py` (after successful save)
+
+```python
+self.app.post_message(EpisodeListChanged())
+```
+
+**File:** `frontend/screens/home_screen.py`
+
+```python
+def on_episode_list_changed(self, event: EpisodeListChanged) -> None:
+    self.load_episodes()
+```
+
+---
+
+## Part 6: Remove extract_title
+
+**File:** `frontend/utils.py`
+- Delete `extract_title` function
+- Update `get_display_title` to use preview-or-name pattern (or remove if inlined)
+
+**File:** `frontend/__init__.py`
+- Remove `extract_title` from exports
+
+**File:** `frontend/screens/edit_screen.py`
+- Remove `extract_title` import and usage
+
+**Tests:** Remove extract_title tests from `test_charlie_utils.py` and `test_charlie.py`
+
+---
+
+## Blocking Call Analysis
+
+| Operation | Location | Blocking? | Mitigation |
+|-----------|----------|-----------|------------|
+| `generate_preview` | backend/utils | No | Pure string ops, microseconds |
+| `set_episode_preview` | redis_ops | Yes (sync) | Wrapped with `asyncio.to_thread()` |
+| `get_auto_title_enabled` | redis_ops | Yes (sync) | Called inside `asyncio.to_thread()` block |
+| `batch_get_previews` | redis_ops | Yes (sync) | Wrapped with `asyncio.to_thread()` |
+| FalkorDB query | queries | No | Native async via `driver.execute_query` |
+| `EpisodeListChanged` | frontend | No | Textual message system |
+
+All blocking operations are offloaded to thread pool, matching existing codebase patterns.
+
+---
+
+## Files to Modify
+
+| File | Change |
+|------|--------|
+| `backend/utils.py` | New file with `generate_preview` |
+| `backend/__init__.py` | Call `generate_preview` + `set_episode_preview` on save |
+| `backend/database/redis_ops.py` | Add `set_episode_preview`, `get_auto_title_enabled`, `batch_get_previews` |
+| `backend/database/persistence.py` | Call preview update on content change |
+| `backend/database/queries.py` | Add `get_episodes_for_list` (hybrid FalkorDB + Redis) |
+| `frontend/screens/home_screen.py` | Use new query, handle `EpisodeListChanged`, update display logic |
+| `frontend/screens/edit_screen.py` | Post `EpisodeListChanged` after save, remove extract_title |
+| `frontend/utils.py` | Remove `extract_title`, update/remove `get_display_title` |
+| `frontend/messages.py` | Add `EpisodeListChanged` message class |
+
+## Implementation Order
+
+1. `backend/utils.py` - preview generation (no dependencies)
+2. `backend/database/redis_ops.py` - add all three helpers
+3. `backend/database/queries.py` - hybrid query
+4. `backend/__init__.py` + `persistence.py` - wire up preview on save
+5. `frontend/messages.py` - message class
+6. `frontend/screens/home_screen.py` - use new query + message handler + display logic
+7. `frontend/screens/edit_screen.py` - post message, remove extract_title
+8. `frontend/utils.py` - cleanup
+9. Tests - remove old, add new for preview generation and hybrid query
