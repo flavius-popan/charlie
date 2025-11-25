@@ -10,7 +10,7 @@
 - Properly resolve Huey `_tasks_in_flight` race condition (not just patch/ignore).
 - Graceful shutdown must also trigger on SIGINT/SIGTERM (terminal Ctrl+C, kill, window close).
 
-> **Note:** Textual's built-in Ctrl+C binding shows a help notification ("Press q to quit"), it does NOT quit. True Ctrl+C sends SIGINT to the process, bypassing Textual's key handling.
+> **Note:** Textual 6.6.0 captures keyboard Ctrl+C as the `help_quit` binding (shows the help notification) and does **not** raise SIGINT. External signals (e.g., `kill -INT`, terminal window close) still reach the Python signal handler.
 
 ---
 
@@ -18,15 +18,15 @@
 
 ### Current State Analysis
 
-1. **Shutdown flag immediately reset (BUG):** `shutdown_database()` in `backend/database/__init__.py:36-45` calls `_close_db()` (sets `_shutdown_requested=True`) then immediately calls `reset_lifecycle_state()` (resets to `False`). The flag is useless.
+1. **Shutdown flag reset by test helper:** `shutdown_database()` in `backend/database/__init__.py:36-45` calls `_close_db()` (sets `_shutdown_requested=True`) then immediately calls `reset_lifecycle_state()` (resets to `False`). This is handy for test re-init but prevents the flag from persisting during production shutdown; it should be treated as a test-only helper, not a runtime shutdown path.
 
 2. **Flag set too late:** Current flow sets the flag AFTER `stop_huey_consumer()` returns. Workers never see it.
 
 3. **No task cancellation infrastructure:** `tasks.py` has no `TaskCancelled` exception or `check_cancellation()`. Generic `except Exception` marks episodes as "dead".
 
-4. **Huey `_tasks_in_flight` location:** The set is on the `Huey` class (`api.py:131`), not `Consumer`. Race between `execute()`'s `.remove()` and `notify_interrupted_tasks()`'s `.pop()` only occurs on non-graceful shutdown.
+4. **Huey `_tasks_in_flight` scope:** In Huey 2.5.4 the set is an instance attribute initialized in `Huey.__init__` (`api.py:131`). The pop/remove race appears only on non-graceful shutdown when workers aren't joined before `notify_interrupted_tasks()` runs.
 
-5. **`InProcessConsumer` signal safety:** Our consumer subclass skips `_set_signal_handlers()`, so SIGTERM won't trigger non-graceful mode internally. But SIGINT/SIGTERM to the main process still needs handling.
+5. **`InProcessConsumer` signal safety:** Our consumer subclass skips `_set_signal_handlers()`, so consumer threads never receive SIGTERM directly. External signals to the main process still need handling, but in-app Ctrl+C is just a key binding (see note above).
 
 6. **Orchestrator always reschedules:** `orchestrate_inference_work` reschedules itself in `finally` block with no shutdown check.
 
@@ -42,6 +42,7 @@
 - Add `request_shutdown()` in `backend/database/lifecycle.py` to set `_shutdown_requested` from any thread (no teardown, just flag).
 - Remove `reset_lifecycle_state()` call from `shutdown_database()`. The flag should remain `True` after shutdown.
 - `reset_lifecycle_state()` should only be called in test fixtures, never in production shutdown path.
+- Treat `shutdown_database()` as a test helper for re-initialization; production code should use the async shutdown path (`request_shutdown()` + Huey stop + DB teardown) rather than calling `shutdown_database()` directly.
 - Add `is_shutdown_requested()` checks in tasks before starting new work.
 
 ### Layer 2: Non-blocking, UI-first quit pipeline + signal handling
@@ -63,7 +64,7 @@
   for sig in (signal.SIGINT, signal.SIGTERM):
       loop.add_signal_handler(sig, lambda: asyncio.create_task(self._async_shutdown()))
   ```
-- This intercepts terminal Ctrl+C and `kill` commands, routing them through the same graceful shutdown path.
+- This intercepts external signals (`kill -INT`, terminal close). Keyboard Ctrl+C inside the Textual app remains a key binding and does **not** raise SIGINT.
 - Textual's built-in Ctrl+C key binding (`action_help_quit`) remains unchanged (shows help notification).
 
 **`on_unmount` handler:**
@@ -118,24 +119,15 @@ except Exception:
 ### Layer 4: Huey shutdown race fix (retain cleanup without KeyError)
 
 **Investigation findings:**
-- `_tasks_in_flight` is a `set` on the `Huey` class (`huey/api.py:131`), NOT on `Consumer`.
-- `execute()` does `.add(task)` before execution, `.remove(task)` in `finally`.
-- `notify_interrupted_tasks()` loops with `.pop()` after consumer exits.
-- Race: if `notify_interrupted_tasks()` pops a task, then worker's `finally` calls `.remove()` → KeyError.
-- **BUT:** Our `InProcessConsumer` uses `stop(graceful=True)`, which joins workers BEFORE `notify_interrupted_tasks()` runs.
-- The race only occurs on non-graceful shutdown (SIGTERM sets `_graceful=False` in base Consumer).
-- Since our `InProcessConsumer._set_signal_handlers()` is a no-op, the consumer won't receive SIGTERM directly.
+- `_tasks_in_flight` is an instance set initialized in `Huey.__init__` (`huey/api.py:131`).
+- `execute()` does `.add(task)` before execution, `.remove(task)` in `finally`; `notify_interrupted_tasks()` pops remaining tasks after the consumer loop ends.
+- Race to KeyError only happens on **non-graceful** shutdown when workers are not joined before `notify_interrupted_tasks()` iterates.
+- Our `stop_huey_consumer()` already calls `consumer.stop(graceful=True)`, so workers are joined before `notify_interrupted_tasks()` runs; the race is currently unreachable.
+- `InProcessConsumer._set_signal_handlers()` is a no-op, so the consumer itself won't be flipped to non-graceful by SIGTERM; only the main process handles signals.
 
 **Mitigation strategy:**
-1. **Primary defense:** Always use graceful shutdown. Our signal handlers (Layer 2) call `_async_shutdown()` which calls `stop_huey_consumer()` with `graceful=True`.
-2. **Backup defense (optional):** Subclass `Huey` to override `notify_interrupted_tasks()` with safer iteration:
-   ```python
-   def notify_interrupted_tasks(self):
-       for task in list(self._tasks_in_flight):  # snapshot
-           self._tasks_in_flight.discard(task)   # idempotent
-           self._emit(S.SIGNAL_INTERRUPTED, task)
-   ```
-   Only needed if we later support non-graceful shutdown paths.
+1. **Primary defense (sufficient now):** Keep all shutdown paths graceful so workers drain before `notify_interrupted_tasks()` runs.
+2. **Optional future guard:** If we ever introduce non-graceful exits, override `notify_interrupted_tasks()` to snapshot + `discard` to avoid KeyError without losing interrupted signals.
 
 **Consumer stop behavior:**
 - `stop_huey_consumer()` already uses `graceful=True` with 3s timeout.
@@ -187,7 +179,7 @@ def _blocking_shutdown(self):
 - `test_double_quit_idempotent`: Press `q` twice, assert no errors, single shutdown sequence.
 - `test_shutdown_flag_set_before_teardown`: Mock `request_shutdown()`, verify called before `stop_huey_consumer()`.
 
-**Task tests (`tests/test_backend/test_tasks.py`):**
+**Task tests (`tests/test_backend/test_services_tasks.py`):**
 - `test_task_cancelled_not_marked_dead`: Trigger `TaskCancelled`, verify episode status is NOT "dead".
 - `test_orchestrator_stops_rescheduling_on_shutdown`: Set shutdown flag, verify no new schedule call.
 - `test_check_cancellation_raises_when_shutdown`: Set flag, call `check_cancellation()`, expect `TaskCancelled`.
@@ -209,7 +201,7 @@ def _blocking_shutdown(self):
 | `frontend/screens/home_screen.py` | Change `action_quit()` to async, delegate to `app._async_shutdown()` |
 | `charlie.py` | Add `_async_shutdown()`, `_blocking_shutdown()` methods; register signal handlers in `on_mount()`; update `_graceful_shutdown()` to use new flag |
 | `tests/test_frontend/test_charlie.py` | Add headless shutdown tests |
-| `tests/test_backend/test_tasks.py` | Add task cancellation tests |
+| `tests/test_backend/test_services_tasks.py` | Add task cancellation tests (aligns with existing suite location) |
 
 ---
 
@@ -233,7 +225,7 @@ def _blocking_shutdown(self):
 | Multiple queued tasks | Current finishes; orchestrator halts; remaining tasks stay pending in Redis (resume on next app start). |
 | Quit during model load | `check_cancellation()` before model load raises `TaskCancelled`; fast exit. |
 | Double-quit (q pressed twice) | Second press detected via `is_shutdown_requested()`, returns early. No duplicate teardown. |
-| SIGINT (terminal Ctrl+C) | Signal handler calls `_async_shutdown()`, same flow as q key. |
+| External SIGINT (e.g., `kill -INT`) | Signal handler calls `_async_shutdown()`, same flow as q key. |
 | SIGTERM (kill command) | Signal handler calls `_async_shutdown()`, graceful shutdown. |
 | Consumer timeout exceeded | Warning logged, shutdown continues. Task may be orphaned but app exits cleanly. |
 | Model in memory at exit | Process termination frees all memory. No temp file leaks (llama-cpp uses in-memory buffers). |
@@ -251,5 +243,5 @@ def _blocking_shutdown(self):
 - [ ] **Layer 3:** Add shutdown check to `orchestrate_inference_work`
 - [ ] **Layer 5:** Update `HomeScreen.action_quit()` to call `_async_shutdown()`
 - [ ] **Layer 6:** Write headless shutdown tests
-- [ ] **Layer 6:** Write task cancellation tests
+- [ ] **Layer 6:** Write task cancellation tests (in `tests/test_backend/test_services_tasks.py`)
 - [ ] **Verification:** Manual test: quit during inference, verify task completes
