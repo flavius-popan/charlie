@@ -1,0 +1,41 @@
+{
+  "_comment": [
+    "Entity type IDs must match backend/graph/entities_edges.py:",
+    "  0 = Entity (fallback)",
+    "  1 = Person",
+    "  2 = Place",
+    "  3 = Organization",
+    "  4 = Activity",
+    "Update this comment block when entity types change."
+  ],
+  "examples": [
+    {
+      "episode_content": "Today was one of those days where everything felt heavier than usual. I woke up late, which threw off my whole morning routine. By the time I got to Philz Coffee to meet Marcus, I was already in a weird headspace.\n\nMarcus could tell something was off. We sat in our usual spot by the window and he just listened while I vented about work stuff - the pressure at Stripe has been intense lately with the new payments integration launch. My manager Elena keeps saying I'm doing great but I can't shake the feeling I'm falling behind.\n\nAfter coffee, I walked through Dolores Park alone. The sun was out and families were having picnics. I did my breathing exercises on a bench near the tennis courts - the ones Dr. Patel taught me. Four counts in, hold for seven, out for eight. It helped a little.",
+      "expected_entities": [
+        {"name": "Philz Coffee", "entity_type_id": 2},
+        {"name": "Marcus", "entity_type_id": 1},
+        {"name": "Stripe", "entity_type_id": 3},
+        {"name": "Elena", "entity_type_id": 1},
+        {"name": "Dolores Park", "entity_type_id": 2},
+        {"name": "Dr. Patel", "entity_type_id": 1},
+        {"name": "breathing exercises", "entity_type_id": 4}
+      ]
+    },
+    {
+      "episode_content": "Had my weekly check-in with the Bay Area Runners Club this morning. We met at Crissy Field at 6am - way too early but the sunrise over the Golden Gate Bridge made it worth it. Sarah led the warm-up today since Coach Martinez was out sick.\n\nAfterward, a few of us grabbed breakfast at Mama's on Washington Square. I sat with Tom and his girlfriend Jessica. They're planning a trip to Japan next spring and couldn't stop talking about it. Tom works at Salesforce and apparently they have amazing travel benefits.\n\nSpent the afternoon at the SF Public Library working on my photography portfolio. I'm trying to get into the Adobe Creative Residency program - the deadline is next month and I still need to finish my artist statement.",
+      "expected_entities": [
+        {"name": "Bay Area Runners Club", "entity_type_id": 3},
+        {"name": "Crissy Field", "entity_type_id": 2},
+        {"name": "Golden Gate Bridge", "entity_type_id": 2},
+        {"name": "Sarah", "entity_type_id": 1},
+        {"name": "Coach Martinez", "entity_type_id": 1},
+        {"name": "Mama's on Washington Square", "entity_type_id": 2},
+        {"name": "Tom", "entity_type_id": 1},
+        {"name": "Jessica", "entity_type_id": 1},
+        {"name": "Salesforce", "entity_type_id": 3},
+        {"name": "SF Public Library", "entity_type_id": 2},
+        {"name": "Adobe Creative Residency", "entity_type_id": 3}
+      ]
+    }
+  ]
+}
