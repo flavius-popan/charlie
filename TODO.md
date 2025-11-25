@@ -1,5 +1,7 @@
 # Stability Fixes
-
+- Opening/closing connections pane during inference is really buggy,
+  only re-opens after finishing inference.
+- Deleting a journal while inference running causes cache destruction
 - Any other systems in need of an FSM for safety?
 - BACKUPS! Need to think of ways to always have backups.
 
