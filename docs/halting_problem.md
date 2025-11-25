@@ -2,214 +2,66 @@
 
 ## User Requirements
 
-- No modal, no force quit option
-- Quick message: "Just a sec! (closing up shop)" then exit
-- Current inference task MUST finish (can't interrupt llama-cpp mid-generation)
-- Before NEXT task starts, check shutdown flag and abort
-- Exit as fast as possible without killing inference
-- Properly resolve huey `_tasks_in_flight` race condition (not just patch/ignore)
+- UI responsiveness is priority #1: quitting must not freeze the Textual event loop; the user should see "Just a sec! (closing up shop)" immediately.
+- No modal, no force quit option.
+- Current inference task MUST finish (can't interrupt llama-cpp mid-generation).
+- After shutdown is requested, no NEW task should start.
+- Exit as fast as possible without killing in-flight inference; keep any finished work if possible.
+- Properly resolve Huey `_tasks_in_flight` race condition (not just patch/ignore).
+- Graceful shutdown must also trigger when the user presses Textual’s built-in Ctrl+C.
 
 ---
 
 ## Solution Architecture
 
-### Layer 1: Reuse Existing Shutdown Signal
+### Layer 1: Single shutdown flag, never reset early
 
-**IMPORTANT**: There's already a `_shutdown_requested` flag in `backend/database/lifecycle.py`. We add a `request_shutdown()` function to set it from anywhere, avoiding duplicate flags.
+- Add `request_shutdown()` in `backend/database/lifecycle.py` to set `_shutdown_requested` from any thread.  
+- Guard against premature flag reset: defer `reset_lifecycle_state()` until **after** worker/consumer teardown has fully completed (no active worker threads). Avoid clearing the flag inside `shutdown_database()` while background tasks may still be running.
+- Add a helper `shutdown_in_progress()` if needed for clarity, but keep one source of truth: `_shutdown_requested`.
 
-**File**: `backend/database/lifecycle.py` (add to existing file)
+### Layer 2: Non-blocking, UI-first quit pipeline (covers Ctrl+C)
 
-```python
-# Add after line 36 (after _shutdown_requested = False)
-def request_shutdown():
-    """Request graceful shutdown. Safe to call from any thread."""
-    global _shutdown_requested
-    _shutdown_requested = True
-```
+- Convert quit handling to an async, non-blocking flow so Textual’s event loop stays responsive:
+  - Immediately call `request_shutdown()` and show `notify("Just a sec! (closing up shop)", timeout=10)`; do this on the UI thread so the message renders.
+  - Schedule a background coroutine (`asyncio.create_task` or `call_later`) that performs the heavy parts off the UI thread:
+    1) stop Huey consumer (see Layer 3) in a thread or `to_thread`,  
+    2) then shut down the database,  
+    3) finally call `app.exit()` once teardown completes.  
+  - Provide a short progress pulse/spinner message if shutdown exceeds a few seconds; keep the UI alive while waiting.
+- Wire Textual’s Ctrl+C path to the same pipeline (e.g., override `on_shutdown_request` / `on_key` for ctrl+c, or ensure `on_unmount` delegates to the shared async shutdown function so signal-based exits also set the shutdown flag before teardown).
 
-Update `__all__` (at line 358) to include it:
-```python
-__all__ = [
-    "_ensure_graph",
-    "get_falkordb_graph",
-    "enable_tcp_server",
-    "disable_tcp_server",
-    "get_tcp_server_endpoint",
-    "get_tcp_server_password",
-    "is_shutdown_requested",
-    "request_shutdown",  # ADD THIS
-    "reset_lifecycle_state",
-]
-```
+### Layer 3: Task cancellation without losing finished inference
 
-### Layer 2: Task Cancellation at Safe Points
+- Add `TaskCancelled` + `check_cancellation()` in `backend/services/tasks.py`.
+- Checkpoints:
+  1) before any work,  
+  2) before model load,  
+  3) before enqueueing/rescheduling,  
+  4) **after persistence**, not between inference and persistence—so completed generations are saved.  
+- Catch `TaskCancelled` before generic `Exception` to avoid marking tasks dead.
+- Orchestrator should check the flag at entry and skip rescheduling when shutdown is requested.
 
-Tasks check shutdown flag at multiple checkpoints. **Critical**: Catch `TaskCancelled` BEFORE generic `Exception` to prevent cancelled tasks from being marked "dead".
+### Layer 4: Huey shutdown race fix (retain cleanup without KeyError)
 
-**File**: `backend/services/tasks.py` (modified)
+- Keep consumer logic but make `_tasks_in_flight` cleanup race-free instead of removing it entirely:
+  - Override `notify_interrupted_tasks()` to iterate over a snapshot and use `discard` (idempotent) instead of `pop` to avoid KeyError when worker finally blocks also remove tasks.
+  - Call `notify_interrupted_tasks()` only when shutdown is non-graceful; graceful path should allow worker threads to drain naturally after `stop(graceful=True)`.
+- Ensure `stop_huey_consumer` blocks only the background shutdown coroutine, not the UI thread (see Layer 2). Use a generous but finite wait and surface a warning in the UI if the worker exceeds it while still keeping the interface responsive.
 
-```python
-from backend.database.lifecycle import is_shutdown_requested
+### Layer 5: Consistent shutdown paths
 
-class TaskCancelled(Exception):
-    """Raised when task detects shutdown request."""
-    pass
+- Make `CharlieApp._graceful_shutdown`, `HomeScreen.action_quit`, `on_unmount`, and ctrl+c all delegate to the same async shutdown helper so the flag is set and respected everywhere.
+- Ensure Redis/DB teardown only runs after the consumer/worker confirms exit or times out; do not tear down the DB with the flag cleared while tasks may still be alive.
 
-def check_cancellation():
-    """Call at safe checkpoints (NOT during inference)."""
-    if is_shutdown_requested():
-        raise TaskCancelled("Shutdown requested")
+### Layer 6: Testing & verification (headless)
 
-@huey.task()
-def extract_nodes_task(episode_uuid: str, journal: str):
-    try:
-        # Checkpoint 1: Before starting any work
-        check_cancellation()
-
-        current_status = get_episode_status(episode_uuid, journal)
-        if current_status != "pending_nodes":
-            return {"already_processed": True}
-
-        if not get_inference_enabled():
-            return {"inference_disabled": True}
-
-        # Checkpoint 2: Before model load (avoid wait if shutting down)
-        check_cancellation()
-
-        lm = get_model("llm")
-
-        # NO checkpoint here - let inference run to completion
-        with dspy.context(lm=lm):
-            result = extract_nodes(episode_uuid, journal)
-
-        # Checkpoint 3: AFTER inference completes, before persisting
-        check_cancellation()
-
-        set_episode_status(episode_uuid, "pending_edges", journal, uuid_map=result.uuid_map)
-        return {...}
-
-    except TaskCancelled:
-        # MUST be caught BEFORE generic Exception handler
-        logger.info("Task cancelled for episode %s (shutdown)", episode_uuid)
-        return {"cancelled": True}
-    except Exception:
-        # Existing error handling - only for real errors, not cancellation
-        set_episode_status(episode_uuid, "dead", journal)
-        raise
-    finally:
-        cleanup_if_no_work()
-
-
-@huey.task()
-def orchestrate_inference_work(reschedule: bool = True):
-    """Maintenance loop - must also respect shutdown."""
-    try:
-        # Checkpoint: Don't work or reschedule if shutdown requested
-        check_cancellation()
-
-        # ... existing work ...
-
-    except TaskCancelled:
-        logger.info("Orchestrator stopped (shutdown requested)")
-        return {"cancelled": True}
-    except Exception:
-        logger.exception("orchestrate_inference_work failed")
-    finally:
-        if reschedule:
-            try:
-                # Only reschedule if NOT shutting down
-                if not is_shutdown_requested():
-                    orchestrate_inference_work.schedule(delay=3)
-            except Exception:
-                logger.exception("Failed to reschedule orchestrate_inference_work")
-```
-
-### Layer 3: Fix Huey Race Condition
-
-Override `run()` in `InProcessConsumer` to skip `notify_interrupted_tasks()`. With graceful shutdown, tasks complete and clean themselves up in their finally blocks - calling `notify_interrupted_tasks()` races with those finally blocks.
-
-**File**: `backend/services/queue.py` (modified InProcessConsumer)
-
-```python
-# Add required imports at top
-import os
-import sys
-import time
-from huey.consumer import Consumer, ConsumerStopped
-
-class InProcessConsumer(Consumer):
-    """Consumer variant for in-process use with TUI."""
-
-    def _set_signal_handlers(self):
-        # Signals cannot be installed from non-main threads
-        return
-
-    def run(self):
-        """Run consumer without notify_interrupted_tasks race condition.
-
-        With graceful shutdown, tasks complete and clean themselves up in
-        their finally blocks. Calling notify_interrupted_tasks() after the
-        loop exits races with worker threads still in their finally blocks,
-        causing KeyError when workers try to remove tasks that were already
-        popped by notify_interrupted_tasks().
-        """
-        self.start()
-        health_check_ts = time.time()
-
-        while True:
-            try:
-                health_check_ts = self.loop(health_check_ts)
-            except ConsumerStopped:
-                break
-
-        # REMOVED: self.huey.notify_interrupted_tasks()
-        # Tasks clean up via worker finally blocks - no race condition
-
-        if self._restart:
-            self._logger.info('Consumer will restart.')
-            python = sys.executable
-            os.execl(python, python, *sys.argv)
-        else:
-            self._logger.info('Consumer exiting.')
-```
-
-### Layer 4: Quick Exit Flow with Notification
-
-**File**: `frontend/screens/home_screen.py` (modified)
-
-```python
-def action_quit(self):
-    """Quick graceful shutdown with user feedback."""
-    from backend.database.lifecycle import request_shutdown
-
-    # Signal shutdown immediately
-    request_shutdown()
-
-    # Show message with longer timeout (inference can take 30-90s)
-    self.notify("Just a sec! (closing up shop)", timeout=10)
-
-    # Graceful shutdown (current task will complete, next task will abort)
-    self._graceful_shutdown()
-    self.app.exit()
-```
-
-### Layer 5: Consumer Timeout Clarification
-
-The timeout in `stop_huey_consumer` is for the **thread join**, not inference. Inference runs to completion regardless.
-
-**File**: `backend/services/queue.py` (update docstring only)
-
-```python
-def stop_huey_consumer(timeout: float = 5.0) -> None:
-    """Stop the in-process Huey consumer (best-effort, bounded wait).
-
-    Note: This timeout bounds the wait for the consumer thread to join after
-    stop() is called. It does NOT bound LLM inference time. If a task is
-    mid-inference when shutdown is requested, inference completes first,
-    then the task checks the cancellation flag and exits.
-    """
-    ...
-```
+- Textual headless tests:
+  - Quit while a fake long-running task is active; assert notify is visible, UI remains responsive (e.g., another widget can be focused), and shutdown coroutine completes without blocking the pilot.
+  - Ctrl+C path triggers the same shutdown helper and sets the flag.
+- Huey tests:
+  - Simulate non-graceful stop to ensure overridden `notify_interrupted_tasks` does not raise and leaves no leaked locks/keys.
+- DB isolation check: after tests, verify `data/charlie.db` unchanged; work should target `tests/data/charlie-test.db`.
 
 ---
 
@@ -217,32 +69,32 @@ def stop_huey_consumer(timeout: float = 5.0) -> None:
 
 | File | Change |
 |------|--------|
-| `backend/database/lifecycle.py` | Add `request_shutdown()` function, update `__all__` |
-| `backend/services/tasks.py` | Add `TaskCancelled`, `check_cancellation()`, checkpoints in both tasks |
-| `backend/services/queue.py` | Add imports, override `run()` in InProcessConsumer, update docstring |
-| `frontend/screens/home_screen.py` | Call `request_shutdown()`, increase notify timeout to 10s |
+| `backend/database/lifecycle.py` | Add `request_shutdown()`, delay lifecycle reset until worker teardown completes |
+| `backend/services/tasks.py` | Add `TaskCancelled`/`check_cancellation()`, move checkpoints to avoid dropping post-inference results |
+| `backend/services/queue.py` | Make `notify_interrupted_tasks` idempotent/safer; ensure stop is invoked off the UI thread |
+| `frontend/screens/home_screen.py` | Convert quit to non-blocking async flow with immediate notify |
+| `charlie.py` (app) | Route ctrl+c/on_unmount through the shared async shutdown helper |
+| `tests/test_frontend/test_charlie.py` + new Huey test | Add headless shutdown responsiveness + race regression coverage |
 
 ---
 
 ## What This Achieves
 
-1. **Current task completes** - LLM inference runs to finish (unavoidable)
-2. **Next task aborts** - Checks flag at start, never begins
-3. **Orchestrator stops** - Won't reschedule itself during shutdown
-4. **No race condition** - `notify_interrupted_tasks()` removed; tasks clean up in finally blocks
-5. **No duplicate flags** - Reuses existing `_shutdown_requested` in lifecycle.py
-6. **Proper exception order** - `TaskCancelled` caught before `Exception`, so cancelled tasks don't get marked "dead"
-7. **User feedback** - 10s notification covers most inference durations
+1. **UI stays responsive**: quit notification renders immediately; shutdown runs in background.  
+2. **Current task completes & persists**: inference finishes and writes results before exit.  
+3. **No new work starts**: flag checked before scheduling/starting tasks.  
+4. **Race-free cleanup**: Huey interruption handling avoids `_tasks_in_flight` KeyError without losing cleanup.  
+5. **Single shutdown path**: keyboard quit, ctrl+c, and window close share the same logic.  
+6. **Documented, test-backed behavior**: headless tests guard against regressions.
 
 ---
 
 ## Edge Cases
 
-| Scenario | Behavior |
-|----------|----------|
-| No tasks running | Exits in <1 second |
-| Task in LLM inference | Waits for inference, then exits |
-| Multiple queued tasks | Current finishes, orchestrator stops, others stay pending |
-| Task between phases | Aborts immediately at next checkpoint |
-| User quits during model load | Checkpoint before load, exits quickly |
-| Orchestrator mid-work | Catches TaskCancelled, doesn't reschedule |
+| Scenario | Expected Behavior |
+|----------|-------------------|
+| No tasks running | Immediate notify; fast exit (<1s). |
+| Task mid-inference | UI stays responsive; task completes & persists; exit after worker drains. |
+| Multiple queued tasks | Current finishes; orchestrator halts; remaining tasks stay pending. |
+| Quit during model load | Cancellation before load; fast exit. |
+| Non-graceful stop (e.g., abrupt signal) | Safe `notify_interrupted_tasks` prevents KeyError/lock leaks; flag remains set. |
