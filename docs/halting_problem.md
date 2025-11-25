@@ -368,30 +368,49 @@ The implementation *looks* correct at first glance:
 
 ### Fix
 
-1. **Changed `action_quit()` to fire-and-forget** (`frontend/screens/home_screen.py:176-178`):
+1. **Changed `action_quit()` to fire-and-forget with exception logging** (`frontend/screens/home_screen.py:176-187`):
    ```python
    def action_quit(self):
-       asyncio.create_task(self.app._async_shutdown())
+       def handle_shutdown_done(task):
+           try:
+               exc = task.exception()
+               if exc is not None:
+                   logger.error(f"Shutdown failed: {exc}", exc_info=exc)
+           except asyncio.CancelledError:
+               pass
+
+       task = asyncio.create_task(self.app._async_shutdown())
+       task.add_done_callback(handle_shutdown_done)
    ```
 
-2. **Added yield point after notify** (`charlie.py:191-192`):
+2. **Same pattern for signal handler** (`charlie.py:137-150`):
+   - Store task reference to avoid "Task was destroyed" warnings
+   - Done callback logs exceptions with full traceback
+   - CancelledError is expected during shutdown and ignored
+
+3. **Added yield point after notify** (`charlie.py:199-200`):
    ```python
    self.notify("Just a sec! (closing up shop)", timeout=10)
    await asyncio.sleep(0)  # Yield to allow notification to render
    ```
 
-3. **Updated test to verify fire-and-forget** (`tests/test_frontend/test_charlie.py:1398-1435`):
-   - Test now asserts shutdown is NOT finished immediately after press (proving non-blocking)
-   - Then waits and asserts shutdown completes
+4. **Updated test with condition polling** (`tests/test_frontend/test_charlie.py`):
+   - Added `wait_for_condition()` helper to replace brittle hardcoded sleeps
+   - Test verifies shutdown is NOT finished immediately (proving fire-and-forget)
+   - Polls for conditions with timeout instead of racing against timers
 
-### Key Lesson
+### Key Lessons
 
-In Textual, async action handlers that `await` long operations will freeze the UI even if the work runs in a thread. Use `asyncio.create_task()` for fire-and-forget patterns where UI responsiveness is critical.
+1. In Textual, async action handlers that `await` long operations will freeze the UI even if the work runs in a thread. Use `asyncio.create_task()` for fire-and-forget patterns where UI responsiveness is critical.
+
+2. Fire-and-forget tasks need done callbacks to surface exceptions - otherwise failures are silently lost.
+
+3. Test timing should use condition polling, not hardcoded sleeps, to avoid flaky tests.
 
 ### Files Changed
 
 | File | Change |
 |------|--------|
-| `frontend/screens/home_screen.py` | `action_quit()`: `await` → `asyncio.create_task()` |
-| `charlie.py` | `_async_shutdown()`: added `await asyncio.sleep(0)` after notify |
-| `tests/test_frontend/test_charlie.py` | Updated `test_quit_ui_responsive_during_shutdown` with proper assertions |
+| `frontend/screens/home_screen.py` | `action_quit()`: fire-and-forget with exception logging |
+| `charlie.py` | Signal handler: same pattern; `_async_shutdown()`: yield after notify |
+| `tests/test_frontend/test_charlie.py` | Added `wait_for_condition()` helper; updated test to use polling |
