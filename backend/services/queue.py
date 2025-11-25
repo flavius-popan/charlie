@@ -131,6 +131,18 @@ def _start_huey_consumer_unlocked() -> None:
                 raise RuntimeError("Embedded Redis not ready for Huey consumer startup")
             time.sleep(0.05)
 
+    # Clear stale editing key from prior crash and mark startup time
+    from backend.database.redis_ops import redis_ops
+    from backend.inference.manager import mark_app_started
+
+    try:
+        with redis_ops() as r:
+            r.delete("editing:active")
+    except Exception:
+        pass
+
+    mark_app_started()
+
     _consumer = InProcessConsumer(
         huey,
         workers=HUEY_WORKERS,

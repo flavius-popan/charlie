@@ -35,8 +35,11 @@ MODEL_CONFIG = {
     "max_tokens": 2048,
 }
 
-# Auto-unload timeout to avoid model thrashing when entering/exiting edit mode
-EDIT_IDLE_GRACE_SECONDS = 10
+# Startup delay before model loading allowed (lets app initialize first)
+MODEL_LOAD_GRACE_SECONDS = 10
+
+# Orchestrator maintenance loop interval (1s for responsiveness)
+ORCHESTRATOR_INTERVAL_SECONDS = 1
 
 # Huey task queue configuration
 HUEY_WORKER_TYPE = "thread"

@@ -5,9 +5,11 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+import time
 
 import backend.dspy_cache  # noqa: F401
 import dspy
+from backend.settings import ORCHESTRATOR_INTERVAL_SECONDS
 from .queue import huey
 
 logger = logging.getLogger(__name__)
@@ -57,7 +59,7 @@ def extract_nodes_task(episode_uuid: str, journal: str):
         set_episode_status,
     )
     from backend.graph.extract_nodes import extract_nodes
-    from backend.inference.manager import cleanup_if_no_work, get_model
+    from backend.inference.manager import cleanup_if_no_work, get_model, is_model_loading_blocked
 
     logger.info("extract_nodes_task started for episode %s", episode_uuid)
 
@@ -78,6 +80,16 @@ def extract_nodes_task(episode_uuid: str, journal: str):
             return {"inference_disabled": True}
 
         check_cancellation()  # Before expensive model load
+
+        # Wait for editing to end before loading model
+        wait_logged = False
+        while is_model_loading_blocked():
+            check_cancellation()  # Allow graceful shutdown
+            if not wait_logged:
+                logger.info("Waiting for editing to end before loading model for episode %s", episode_uuid)
+                wait_logged = True
+            time.sleep(1)
+
         lm = get_model("llm")
         with dspy.context(lm=lm):
             extraction = extract_nodes(episode_uuid, journal)
@@ -144,7 +156,7 @@ def extract_nodes_task(episode_uuid: str, journal: str):
 
 @huey.task()
 def orchestrate_inference_work(reschedule: bool = True):
-    """Maintenance loop: enqueue pending nodes and unload when idle/disabled."""
+    """Maintenance loop: enqueue pending episodes and manage model lifecycle."""
     from backend.database.lifecycle import is_shutdown_requested
 
     if is_shutdown_requested():
@@ -152,32 +164,16 @@ def orchestrate_inference_work(reschedule: bool = True):
         return
 
     try:
-        from backend.database.redis_ops import enqueue_pending_episodes, redis_ops, get_inference_enabled
-        from backend.inference.manager import cleanup_if_no_work, get_model
+        from backend.database.redis_ops import enqueue_pending_episodes
+        from backend.inference.manager import cleanup_if_no_work
 
         enqueue_pending_episodes()
-
-        # Pre-load models when user is actively editing (only if inference is enabled).
-        if get_inference_enabled():
-            try:
-                with redis_ops() as r:
-                    user_is_editing = r.exists("editing:active")
-            except Exception as e:
-                logger.debug("Failed to check editing presence: %s", e)
-                user_is_editing = False
-
-            if user_is_editing:
-                try:
-                    get_model("llm")
-                except Exception as e:
-                    logger.warning("Failed to pre-load model during editing: %s", e, exc_info=True)
-
-        cleanup_if_no_work()
+        cleanup_if_no_work()  # Now handles unload during editing
     except Exception:
         logger.exception("orchestrate_inference_work failed")
     finally:
         if reschedule and not is_shutdown_requested():
             try:
-                orchestrate_inference_work.schedule(delay=3)
+                orchestrate_inference_work.schedule(delay=ORCHESTRATOR_INTERVAL_SECONDS)
             except Exception:
                 logger.exception("Failed to reschedule orchestrate_inference_work")

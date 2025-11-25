@@ -7,7 +7,7 @@ import logging
 import time
 from typing import Literal
 from .dspy_lm import DspyLM
-from backend.settings import EDIT_IDLE_GRACE_SECONDS
+from backend.settings import MODEL_LOAD_GRACE_SECONDS
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +16,41 @@ MODELS: dict[str, DspyLM | None] = {
     "llm": None,
 }
 
-_last_edit_seen: float | None = None
+_app_startup_time: float | None = None
+
+
+def mark_app_started() -> None:
+    """Mark app startup time for grace period."""
+    global _app_startup_time
+    _app_startup_time = time.monotonic()
+
+
+def is_model_loading_blocked() -> bool:
+    """Returns True if model loading should be blocked.
+
+    Blocked when:
+    - Within startup grace period
+    - User is actively editing
+    """
+    from backend.database.redis_ops import redis_ops
+
+    # Check startup grace
+    if _app_startup_time is not None:
+        elapsed = time.monotonic() - _app_startup_time
+        if elapsed < MODEL_LOAD_GRACE_SECONDS:
+            logger.debug("Model loading blocked: startup grace (%.1fs elapsed)", elapsed)
+            return True
+
+    # Check editing active
+    try:
+        with redis_ops() as r:
+            if r.exists("editing:active"):
+                logger.debug("Model loading blocked: user is editing")
+                return True
+    except Exception:
+        logger.warning("Failed to check editing presence, allowing model loading", exc_info=True)
+
+    return False
 
 
 def get_model(model_type: Literal["llm"] = "llm") -> DspyLM:
@@ -50,59 +84,27 @@ def unload_all_models() -> None:
 
 
 def cleanup_if_no_work() -> None:
-    """Unload models when no active work remains (event-driven cleanup)."""
+    """Unload models when editing (for UI responsiveness) OR when no work remains."""
     from backend.database.redis_ops import get_episodes_by_status, get_inference_enabled, redis_ops
 
-    # If inference is disabled, pending work is blocked; unload immediately (once)
-    models_loaded = any(model is not None for model in MODELS.values())
     if not get_inference_enabled():
-        # Always call unload to ensure any loaded model is freed; log only on actual unload.
         unload_all_models()
         return
 
-    # Check if user is actively editing (keeps models warm)
+    # INVERTED: Unload when editing to keep UI snappy
     try:
         with redis_ops() as r:
-            user_is_editing = r.exists("editing:active")
-    except Exception as e:
-        logger.debug("Failed to check editing presence: %s", e)
-        user_is_editing = False
+            if r.exists("editing:active"):
+                if any(model is not None for model in MODELS.values()):
+                    logger.info("User editing, unloading models for UI responsiveness")
+                unload_all_models()
+                return
+    except Exception:
+        pass
 
-    if user_is_editing:
-        global _last_edit_seen
-        _last_edit_seen = time.monotonic()
-        logger.debug("User is actively editing, keeping models loaded")
-        return
-
+    # No editing - check for pending work
     pending_nodes = get_episodes_by_status("pending_nodes")
-    pending_edges = get_episodes_by_status("pending_edges")
-
-    # Apply grace window to avoid thrashing when user just exited editing
-    if _last_edit_seen is not None:
-        idle_seconds = time.monotonic() - _last_edit_seen
-        if idle_seconds < EDIT_IDLE_GRACE_SECONDS:
-            logger.debug(
-                "Within edit idle grace (%.1fs < %.1fs); keeping models loaded",
-                idle_seconds,
-                EDIT_IDLE_GRACE_SECONDS,
-            )
-            return
-        _last_edit_seen = None
-
     if len(pending_nodes) == 0:
-        if models_loaded:
-            logger.info(
-                "No pending node work; unloading models (pending_edges=%d)", len(pending_edges)
-            )
-        else:
-            logger.debug(
-                "No pending node work; models already unloaded (pending_edges=%d)",
-                len(pending_edges),
-            )
+        if any(model is not None for model in MODELS.values()):
+            logger.info("No pending node work; unloading models")
         unload_all_models()
-    else:
-        logger.debug(
-            "Active work remains (%d pending_nodes, %d pending_edges), keeping models loaded",
-            len(pending_nodes),
-            len(pending_edges),
-        )

@@ -320,8 +320,9 @@ def test_extract_nodes_task_sets_dead_on_missing_episode(isolated_graph, cleanup
 
 
 def test_orchestrate_inference_work_reschedules_and_runs_once():
-    """orchestrate_inference_work should enqueue and cleanup, then reschedule in 3s."""
+    """orchestrate_inference_work should enqueue and cleanup, then reschedule in 1s."""
     from backend.services.tasks import orchestrate_inference_work
+    from backend.settings import ORCHESTRATOR_INTERVAL_SECONDS
 
     with patch("backend.database.redis_ops.enqueue_pending_episodes") as mock_enqueue, \
          patch("backend.inference.manager.cleanup_if_no_work") as mock_cleanup, \
@@ -333,7 +334,7 @@ def test_orchestrate_inference_work_reschedules_and_runs_once():
         mock_cleanup.assert_called_once()
         mock_schedule.assert_called_once()
         args, kwargs = mock_schedule.call_args
-        assert kwargs.get("delay") == 3
+        assert kwargs.get("delay") == ORCHESTRATOR_INTERVAL_SECONDS
 
 
 def test_orchestrate_inference_work_reschedule_disabled():

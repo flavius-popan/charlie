@@ -19,55 +19,25 @@ def test_cleanup_unloads_when_inference_disabled():
 
 
 def test_cleanup_keeps_models_when_active_work():
-    """Keep models loaded when pending node work exists."""
+    """Keep models loaded when pending node work exists (and not editing)."""
     with patch("backend.database.redis_ops.get_inference_enabled", return_value=True):
         with patch(
             "backend.database.redis_ops.get_episodes_by_status",
-            side_effect=[["ep1"], ["edge-pending"]],
-        ) as mock_status:
-            with patch("backend.inference.manager.unload_all_models") as mock_unload:
-                manager.cleanup_if_no_work()
-
-                mock_status.assert_any_call("pending_nodes")
-                mock_unload.assert_not_called()
-
-
-def test_cleanup_unloads_when_pending_edges_only():
-    """pending_edges should not keep the model loaded (LLM used only for node extraction)."""
-    with patch("backend.database.redis_ops.get_inference_enabled", return_value=True):
-        with patch(
-            "backend.database.redis_ops.get_episodes_by_status",
-            side_effect=[[], ["edge-only"]],
-        ) as mock_status:
-            with patch("backend.inference.manager.unload_all_models") as mock_unload:
-                manager.cleanup_if_no_work()
-
-                mock_status.assert_any_call("pending_nodes")
-                mock_status.assert_any_call("pending_edges")
-                mock_unload.assert_called_once()
-
-
-def test_cleanup_unloads_when_no_active_work():
-    """Unload models when no pending_nodes or pending_edges remain."""
-    with patch("backend.database.redis_ops.get_inference_enabled", return_value=True):
-        with patch(
-            "backend.database.redis_ops.get_episodes_by_status",
-            side_effect=[[], []],
+            return_value=["ep1"],
         ) as mock_status:
             with patch("backend.inference.manager.unload_all_models") as mock_unload:
                 with patch("backend.database.redis_ops.redis_ops") as mock_redis_ops:
                     mock_redis = mock_redis_ops.return_value.__enter__.return_value
-                    mock_redis.exists.return_value = False
+                    mock_redis.exists.return_value = False  # Not editing
 
                     manager.cleanup_if_no_work()
 
-                    mock_status.assert_any_call("pending_nodes")
-                    mock_status.assert_any_call("pending_edges")
-                    mock_unload.assert_called_once()
+                    mock_status.assert_called_with("pending_nodes")
+                    mock_unload.assert_not_called()
 
 
-def test_cleanup_keeps_models_when_user_is_editing():
-    """Keep models loaded when editing:active key exists."""
+def test_cleanup_unloads_when_pending_edges_only():
+    """pending_edges should not keep the model loaded (LLM used only for node extraction)."""
     with patch("backend.database.redis_ops.get_inference_enabled", return_value=True):
         with patch(
             "backend.database.redis_ops.get_episodes_by_status",
@@ -76,175 +46,147 @@ def test_cleanup_keeps_models_when_user_is_editing():
             with patch("backend.inference.manager.unload_all_models") as mock_unload:
                 with patch("backend.database.redis_ops.redis_ops") as mock_redis_ops:
                     mock_redis = mock_redis_ops.return_value.__enter__.return_value
-                    mock_redis.exists.return_value = True
+                    mock_redis.exists.return_value = False
 
                     manager.cleanup_if_no_work()
 
-                    mock_redis.exists.assert_called_with("editing:active")
-                    mock_unload.assert_not_called()
+                    mock_status.assert_called_with("pending_nodes")
+                    mock_unload.assert_called_once()
 
 
-def test_orchestrator_loads_models_when_user_is_editing_and_enabled():
-    """Orchestrator should pre-load models when editing flag is set and inference enabled."""
+def test_cleanup_unloads_when_no_active_work():
+    """Unload models when no pending_nodes remain."""
+    with patch("backend.database.redis_ops.get_inference_enabled", return_value=True):
+        with patch(
+            "backend.database.redis_ops.get_episodes_by_status",
+            return_value=[],
+        ) as mock_status:
+            with patch("backend.inference.manager.unload_all_models") as mock_unload:
+                with patch("backend.database.redis_ops.redis_ops") as mock_redis_ops:
+                    mock_redis = mock_redis_ops.return_value.__enter__.return_value
+                    mock_redis.exists.return_value = False
+
+                    manager.cleanup_if_no_work()
+
+                    mock_status.assert_called_with("pending_nodes")
+                    mock_unload.assert_called_once()
+
+
+def test_cleanup_unloads_when_user_is_editing():
+    """Unload models when editing:active key exists (inverted for snappy UI)."""
+    with patch("backend.database.redis_ops.get_inference_enabled", return_value=True):
+        with patch("backend.inference.manager.unload_all_models") as mock_unload:
+            with patch("backend.database.redis_ops.redis_ops") as mock_redis_ops:
+                mock_redis = mock_redis_ops.return_value.__enter__.return_value
+                mock_redis.exists.return_value = True
+
+                manager.cleanup_if_no_work()
+
+                mock_redis.exists.assert_called_with("editing:active")
+                mock_unload.assert_called_once()
+
+
+def test_orchestrator_calls_cleanup():
+    """Orchestrator should call cleanup_if_no_work on each cycle."""
     from backend.services.tasks import orchestrate_inference_work
 
     with patch("backend.database.redis_ops.enqueue_pending_episodes") as mock_enqueue:
-        with patch("backend.database.redis_ops.redis_ops") as mock_redis_ops:
-            mock_redis = mock_redis_ops.return_value.__enter__.return_value
-            mock_redis.exists.return_value = True
+        with patch("backend.inference.manager.cleanup_if_no_work") as mock_cleanup:
+            orchestrate_inference_work.call_local(reschedule=False)
 
-            with patch("backend.database.redis_ops.get_inference_enabled", return_value=True):
-                with patch("backend.inference.manager.get_model") as mock_get_model:
-                    with patch("backend.inference.manager.cleanup_if_no_work") as mock_cleanup:
-                        orchestrate_inference_work.call_local(reschedule=False)
-
-                        mock_enqueue.assert_called_once()
-                        mock_redis.exists.assert_called_with("editing:active")
-                        mock_get_model.assert_called_once_with("llm")
-                        mock_cleanup.assert_called_once()
+            mock_enqueue.assert_called_once()
+            mock_cleanup.assert_called_once()
 
 
-def test_orchestrator_skips_preload_when_inference_disabled():
-    """Orchestrator should skip preloading when inference disabled."""
-    from backend.services.tasks import orchestrate_inference_work
+def test_is_model_loading_blocked_during_editing():
+    """Model loading should be blocked when editing:active key exists."""
+    with patch("backend.database.redis_ops.redis_ops") as mock_redis_ops:
+        mock_redis = mock_redis_ops.return_value.__enter__.return_value
+        mock_redis.exists.return_value = True
 
-    with patch("backend.database.redis_ops.enqueue_pending_episodes"):
-        with patch("backend.database.redis_ops.redis_ops") as mock_redis_ops:
-            mock_redis = mock_redis_ops.return_value.__enter__.return_value
-            mock_redis.exists.return_value = True
+        # Reset startup time so grace period doesn't interfere
+        manager._app_startup_time = None
 
-            with patch("backend.database.redis_ops.get_inference_enabled", return_value=False):
-                with patch("backend.inference.manager.get_model") as mock_get_model:
-                    with patch("backend.inference.manager.cleanup_if_no_work"):
-                        orchestrate_inference_work.call_local(reschedule=False)
+        result = manager.is_model_loading_blocked()
 
-                        mock_get_model.assert_not_called()
+        assert result is True
+        mock_redis.exists.assert_called_with("editing:active")
 
 
-def test_orchestrator_handles_redis_errors_gracefully():
-    """Orchestrator should continue working even if Redis check fails."""
-    from backend.services.tasks import orchestrate_inference_work
+def test_is_model_loading_blocked_during_startup_grace():
+    """Model loading should be blocked during startup grace period."""
+    import time
 
-    with patch("backend.database.redis_ops.enqueue_pending_episodes"):
-        with patch("backend.database.redis_ops.redis_ops") as mock_redis_ops:
-            mock_redis_ops.side_effect = Exception("Redis connection failed")
-
-            with patch("backend.inference.manager.get_model") as mock_get_model:
-                with patch("backend.inference.manager.cleanup_if_no_work"):
-                    # Should not raise exception
-                    orchestrate_inference_work.call_local(reschedule=False)
-
-                    # Model loading should be skipped due to error
-                    mock_get_model.assert_not_called()
-
-
-def test_orchestrator_leaves_cached_model_untouched():
-    """Orchestrator should not reload when model already cached."""
-    from backend.services.tasks import orchestrate_inference_work
-    from backend.inference.manager import MODELS
-    from unittest.mock import MagicMock
-
-    mock_model = MagicMock()
-    MODELS["llm"] = mock_model
+    # Set startup time to now
+    manager._app_startup_time = time.monotonic()
 
     try:
-        with patch("backend.database.redis_ops.enqueue_pending_episodes"):
-            with patch("backend.inference.manager.get_model") as mock_get_model:
-                with patch("backend.inference.manager.cleanup_if_no_work"):
-                    orchestrate_inference_work.call_local(reschedule=False)
-
-                    mock_get_model.assert_not_called()
-                    assert MODELS["llm"] is mock_model
-    finally:
-        MODELS["llm"] = None
-
-
-def test_cleanup_respects_edit_idle_grace_before_unload(monkeypatch):
-    """Models stay loaded for grace period after editing ends to avoid thrash."""
-    from backend.inference import manager as mgr
-
-    # Seed cached model
-    mgr.MODELS["llm"] = object()
-    monkeypatch.setattr(mgr, "_last_edit_seen", None)
-
-    with patch("backend.database.redis_ops.get_inference_enabled", return_value=True):
-        with patch("backend.database.redis_ops.get_episodes_by_status", return_value=[]):
-            with patch("backend.database.redis_ops.redis_ops") as mock_redis_ops:
-                mock_redis = mock_redis_ops.return_value.__enter__.return_value
-                # First call: editing present; second call: editing absent
-                mock_redis.exists.side_effect = [True, False]
-
-                # First invocation marks last_edit_seen
-                mgr.cleanup_if_no_work()
-
-                with patch("backend.inference.manager.unload_all_models") as mock_unload:
-                    with patch("backend.inference.manager.time.monotonic", return_value=(mgr._last_edit_seen or 0) + 5):
-                        mgr.cleanup_if_no_work()  # within grace
-                        mock_unload.assert_not_called()
-
-                    with patch("backend.inference.manager.time.monotonic", return_value=(mgr._last_edit_seen or 0) + mgr.EDIT_IDLE_GRACE_SECONDS + 1):
-                        mgr.cleanup_if_no_work()  # beyond grace
-                        mock_unload.assert_called_once()
-
-
-def test_orchestrator_handles_model_loading_errors_gracefully():
-    """Orchestrator should continue if model loading fails during editing."""
-    from backend.services.tasks import orchestrate_inference_work
-
-    with patch("backend.database.redis_ops.enqueue_pending_episodes"):
         with patch("backend.database.redis_ops.redis_ops") as mock_redis_ops:
             mock_redis = mock_redis_ops.return_value.__enter__.return_value
-            mock_redis.exists.return_value = True
+            mock_redis.exists.return_value = False
 
-            with patch("backend.inference.manager.get_model") as mock_get_model:
-                mock_get_model.side_effect = RuntimeError("CUDA out of memory")
+            result = manager.is_model_loading_blocked()
 
-                with patch("backend.inference.manager.cleanup_if_no_work") as mock_cleanup:
-                    # Should not raise exception, should log warning
-                    orchestrate_inference_work.call_local(reschedule=False)
-
-                    # cleanup should still be called despite model load failure
-                    mock_cleanup.assert_called_once()
+            assert result is True
+            # Redis should not be checked during startup grace
+            mock_redis.exists.assert_not_called()
+    finally:
+        manager._app_startup_time = None
 
 
-def test_editing_presence_keeps_models_warm_end_to_end():
-    """Integration test: editing flag prevents unload; no auto-preload."""
+def test_is_model_loading_not_blocked_after_grace():
+    """Model loading should NOT be blocked after startup grace expires."""
+    import time
+
+    # Set startup time to well in the past
+    manager._app_startup_time = time.monotonic() - 100
+
+    try:
+        with patch("backend.database.redis_ops.redis_ops") as mock_redis_ops:
+            mock_redis = mock_redis_ops.return_value.__enter__.return_value
+            mock_redis.exists.return_value = False
+
+            result = manager.is_model_loading_blocked()
+
+            assert result is False
+            mock_redis.exists.assert_called_with("editing:active")
+    finally:
+        manager._app_startup_time = None
+
+
+def test_editing_presence_unloads_models_end_to_end():
+    """Integration test: editing flag causes unload (inverted behavior for snappy UI)."""
     from backend.services.tasks import orchestrate_inference_work
     from backend.inference.manager import MODELS, cleanup_if_no_work
     from backend.database.redis_ops import redis_ops
     from unittest.mock import MagicMock
 
+    # Reset startup time so grace period doesn't interfere
+    manager._app_startup_time = None
+
     try:
-        # Step 1: Simulate user editing (set editing:active key)
+        # Step 1: Manually set a loaded model (simulating prior work)
+        MODELS["llm"] = MagicMock()
+
+        # Step 2: Simulate user editing (set editing:active key)
         with redis_ops() as r:
             r.set("editing:active", "active")
 
-        # Step 2: Manually set a loaded model (simulating prior work)
-        MODELS["llm"] = MagicMock()
+        # Step 3: Verify cleanup UNLOADS while editing (inverted behavior)
+        with patch("backend.database.redis_ops.get_inference_enabled", return_value=True):
+            cleanup_if_no_work()
+            assert MODELS["llm"] is None, "Model should be unloaded when user is editing"
 
-        # Step 3: Run orchestrator (should not preload/alter loaded model)
-        with patch("backend.database.redis_ops.enqueue_pending_episodes"):
-            with patch("backend.database.redis_ops.get_episodes_by_status", return_value=[]):
-                with patch("backend.database.redis_ops.get_inference_enabled", return_value=True):
-                    orchestrate_inference_work.call_local(reschedule=False)
-                    # Model remains loaded; no preload invoked
-                    assert MODELS["llm"] is not None, "Model should remain loaded"
-
-        # Step 4: Verify cleanup doesn't unload while editing:active exists
-        with patch("backend.database.redis_ops.get_episodes_by_status", return_value=[]):
-            with patch("backend.database.redis_ops.get_inference_enabled", return_value=True):
-                cleanup_if_no_work()
-                assert MODELS["llm"] is not None, "Model should stay loaded while editing"
-
-        # Step 5: Delete key and verify cleanup unloads
+        # Step 4: Delete key and set model again
         with redis_ops() as r:
             r.delete("editing:active")
+        MODELS["llm"] = MagicMock()
 
-        with patch("backend.database.redis_ops.get_episodes_by_status", return_value=[]):
+        # Step 5: Verify model stays loaded when not editing and work exists
+        with patch("backend.database.redis_ops.get_episodes_by_status", return_value=["ep1"]):
             with patch("backend.database.redis_ops.get_inference_enabled", return_value=True):
-                    with patch("backend.inference.manager.time.monotonic", return_value=(manager._last_edit_seen or 0) + manager.EDIT_IDLE_GRACE_SECONDS + 1):
-                        cleanup_if_no_work()
-                        assert MODELS["llm"] is None, "Model should be unloaded after grace window expires"
+                cleanup_if_no_work()
+                assert MODELS["llm"] is not None, "Model should stay loaded when work exists"
 
     finally:
         # Clean up: ensure model cache is reset and Redis key is deleted

@@ -125,10 +125,8 @@ class EditScreen(Screen):
             editor = self.query_one("#editor", TextArea)
             content = editor.text
 
-            # Clear editing presence as soon as a save is initiated (non-blocking).
-            self._schedule_clear_editing_presence()
-
             if not content.strip():
+                self._schedule_clear_editing_presence()
                 self.app.pop_screen()
                 return
 
@@ -154,6 +152,7 @@ class EditScreen(Screen):
                         active_processing=False,
                     )
                 )
+                self._schedule_clear_editing_presence()
                 # THEN enqueue extraction task in background
                 if inference_enabled:
                     self._enqueue_extraction_task(uuid, DEFAULT_JOURNAL)
@@ -196,6 +195,7 @@ class EditScreen(Screen):
                         active_processing=False,
                     )
                 )
+                self._schedule_clear_editing_presence()
 
                 # THEN enqueue extraction task in background if content changed
                 if content_changed and inference_enabled:
