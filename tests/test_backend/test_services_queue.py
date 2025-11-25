@@ -57,36 +57,47 @@ def test_huey_instance_created(falkordb_test_context):
     assert hasattr(huey, "task")
 
 
-def test_notify_interrupted_tasks_handles_concurrent_removal(falkordb_test_context):
-    """notify_interrupted_tasks() should handle KeyError when task already removed.
+def test_safe_task_set_remove_is_idempotent(falkordb_test_context):
+    """SafeTaskSet.remove() should not raise KeyError (uses discard internally).
 
-    This tests the monkey-patch applied in start_huey_consumer() that makes
-    notify_interrupted_tasks() thread-safe for concurrent task removal.
+    This tests that start_huey_consumer() replaces _tasks_in_flight with
+    SafeTaskSet, making remove() safe for concurrent access.
     """
-    from backend.services.queue import huey, start_huey_consumer, stop_huey_consumer
+    from backend.services.queue import huey, start_huey_consumer, stop_huey_consumer, SafeTaskSet
 
-    # Start consumer to apply the monkey-patch
+    # Start consumer to apply SafeTaskSet replacement
     start_huey_consumer()
 
     try:
+        # Verify _tasks_in_flight is a SafeTaskSet
+        assert isinstance(huey._tasks_in_flight, SafeTaskSet)
+
         # Simulate a task in _tasks_in_flight
         mock_task = Mock()
         mock_task.__str__ = Mock(return_value="test_task:123")
         huey._tasks_in_flight.add(mock_task)
 
-        # Remove task (simulates worker's finally block completing)
+        # Remove task twice - second remove should NOT raise KeyError
         huey._tasks_in_flight.remove(mock_task)
+        huey._tasks_in_flight.remove(mock_task)  # Would raise KeyError with regular set
 
-        # Add another task that will be in the set during iteration
-        mock_task2 = Mock()
-        mock_task2.__str__ = Mock(return_value="test_task:456")
-        huey._tasks_in_flight.add(mock_task2)
-
-        # Now call notify_interrupted_tasks - should NOT raise KeyError
-        # even though mock_task was already removed
-        huey.notify_interrupted_tasks()
-
-        # Set should be empty after notification
-        assert len(huey._tasks_in_flight) == 0
+        assert mock_task not in huey._tasks_in_flight
     finally:
         stop_huey_consumer()
+
+
+def test_start_huey_consumer_is_idempotent(falkordb_test_context):
+    """Calling start_huey_consumer() multiple times should only start one consumer."""
+    from backend.services import queue
+
+    queue.start_huey_consumer()
+    first_thread = queue._consumer_thread
+
+    queue.start_huey_consumer()  # Should be a no-op
+    second_thread = queue._consumer_thread
+
+    try:
+        assert first_thread is second_thread
+        assert first_thread.is_alive()
+    finally:
+        queue.stop_huey_consumer()

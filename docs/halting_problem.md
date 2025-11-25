@@ -438,26 +438,31 @@ Despite `graceful=True`, there's a race between:
 1. Worker thread's `finally: self._tasks_in_flight.remove(task)` in `_execute()`
 2. Consumer's `notify_interrupted_tasks()` calling `self._tasks_in_flight.pop()`
 
-The `join()` in graceful shutdown ensures workers *eventually* finish, but doesn't synchronize with `notify_interrupted_tasks()` being called from the consumer main thread.
+The KeyError happens in `_execute()`, not in `notify_interrupted_tasks()`. An earlier fix that monkey-patched `notify_interrupted_tasks()` was insufficient.
 
-**Fix:**
+**Fix (v2):**
 
-Monkey-patch `huey.notify_interrupted_tasks` in `start_huey_consumer()` to use a safer iteration pattern:
+Replace `_tasks_in_flight` with a `SafeTaskSet` that makes `remove()` use `discard()` internally:
 
 ```python
-def _safe_notify_interrupted_tasks(self):
-    while True:
-        try:
-            task = self._tasks_in_flight.pop()
-            self._emit(S.SIGNAL_INTERRUPTED, task)
-        except KeyError:
-            # Set is empty or task was removed by worker's finally block
-            break
+class SafeTaskSet(set):
+    """Set wrapper that makes remove() thread-safe by using discard()."""
+    def remove(self, item):
+        self.discard(item)
 
-huey.notify_interrupted_tasks = types.MethodType(_safe_notify_interrupted_tasks, huey)
+# In start_huey_consumer():
+huey._tasks_in_flight = SafeTaskSet(huey._tasks_in_flight)
 ```
 
-This handles both "set is empty" and "task already removed by worker" cases.
+This fixes the race at the data structure level - both `_execute()`'s `remove()` and `notify_interrupted_tasks()`'s `pop()` are now safe.
+
+### Fix 1b: Duplicate Consumer Starts
+
+**Symptom:** Log showed consumer started multiple times before any work.
+
+**Root Cause:** `start_huey_consumer()` had no lock protecting its idempotency check. Two calls could both see the thread not alive yet.
+
+**Fix:** Added `_consumer_lock = Lock()` around the check.
 
 ### Fix 2: Notification Timeout
 
@@ -485,7 +490,7 @@ This provides immediate feedback: quick "byeeeee" for no-work exits, patient "Ju
 
 | File | Change |
 |------|--------|
-| `backend/services/queue.py` | Monkey-patch `notify_interrupted_tasks()` for thread-safe cleanup |
+| `backend/services/queue.py` | `SafeTaskSet` for thread-safe task tracking; `_consumer_lock` for idempotent starts |
 | `charlie.py` | Import MODELS; conditional notification with 120s timeout |
-| `tests/test_backend/test_services_queue.py` | Test for KeyError handling in `notify_interrupted_tasks` |
+| `tests/test_backend/test_services_queue.py` | Tests for `SafeTaskSet` and consumer idempotency |
 | `tests/test_frontend/test_charlie.py` | Tests for conditional notification and timeout |

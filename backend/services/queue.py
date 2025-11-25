@@ -10,13 +10,23 @@ from __future__ import annotations
 
 import logging
 import time
-import types
-from threading import Thread
+from threading import Lock, Thread
 from typing import Optional
 
-from huey import PriorityRedisHuey, signals as S
+from huey import PriorityRedisHuey
 from huey.consumer import Consumer
 from redis import ConnectionPool
+
+
+class SafeTaskSet(set):
+    """Set wrapper that makes remove() thread-safe by using discard().
+
+    Huey's _execute() does remove(task) in its finally block while
+    notify_interrupted_tasks() does pop(). With threads, these race
+    even with graceful shutdown. This wrapper makes remove() safe.
+    """
+    def remove(self, item):
+        self.discard(item)
 
 from backend.settings import DEFAULT_JOURNAL, HUEY_WORKER_TYPE, HUEY_WORKERS
 
@@ -78,14 +88,23 @@ class InProcessConsumer(Consumer):
 
 _consumer: Optional[Consumer] = None
 _consumer_thread: Optional[Thread] = None
+_consumer_lock = Lock()
 
 
 def start_huey_consumer() -> None:
     """Start Huey consumer in a background thread (idempotent)."""
     global _consumer, _consumer_thread
 
-    if _consumer_thread and _consumer_thread.is_alive():
-        return
+    with _consumer_lock:
+        if _consumer_thread and _consumer_thread.is_alive():
+            return
+
+        _start_huey_consumer_unlocked()
+
+
+def _start_huey_consumer_unlocked() -> None:
+    """Internal: start consumer without lock (caller must hold _consumer_lock)."""
+    global _consumer, _consumer_thread
 
     # Ensure the embedded database/Redis is initialized before connecting.
     from backend.database import lifecycle
@@ -120,19 +139,9 @@ def start_huey_consumer() -> None:
         check_worker_health=False,
     )
 
-    # Patch notify_interrupted_tasks to handle race with worker's finally block.
-    # Huey's _execute() does remove(task) in finally, while notify_interrupted_tasks()
-    # does pop(). With threads, these race even with graceful shutdown.
-    def _safe_notify_interrupted_tasks(self):
-        while True:
-            try:
-                task = self._tasks_in_flight.pop()
-                self._emit(S.SIGNAL_INTERRUPTED, task)
-            except KeyError:
-                # Set is empty or task was removed by worker's finally block
-                break
-
-    huey.notify_interrupted_tasks = types.MethodType(_safe_notify_interrupted_tasks, huey)
+    # Replace _tasks_in_flight with SafeTaskSet to handle race between worker's
+    # finally block (remove) and notify_interrupted_tasks (pop).
+    huey._tasks_in_flight = SafeTaskSet(huey._tasks_in_flight)
 
     def _run():
         try:
