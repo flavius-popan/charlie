@@ -1393,8 +1393,8 @@ class TestGracefulShutdown:
     """Tests for graceful shutdown functionality."""
 
     @pytest.mark.asyncio
-    async def test_quit_shows_notification(self, mock_database):
-        """Pressing 'q' should show shutdown notification immediately."""
+    async def test_quit_shows_quick_bye_when_no_model_loaded(self, mock_database):
+        """Pressing 'q' with no model loaded should show quick 'byeeeee' message."""
         notify_calls = []
 
         original_notify = CharlieApp.notify
@@ -1403,7 +1403,9 @@ class TestGracefulShutdown:
             notify_calls.append(str(message))
             return original_notify(self, message, *args, **kwargs)
 
-        with patch.object(CharlieApp, 'notify', tracking_notify):
+        # Patch MODELS to simulate no models loaded
+        with patch('charlie.MODELS', {"llm": None}), \
+             patch.object(CharlieApp, 'notify', tracking_notify):
             app = CharlieApp()
             async with app_test_context(app) as pilot:
                 await pilot.pause()
@@ -1411,9 +1413,64 @@ class TestGracefulShutdown:
                 await pilot.press("q")
                 await pilot.pause()
 
-                # Verify shutdown notification was shown
+                # Verify quick bye notification shown (not "closing up shop")
+                assert any("byeeeee" in msg for msg in notify_calls), \
+                    f"Expected 'byeeeee' notification, got: {notify_calls}"
+                assert not any("closing up shop" in msg for msg in notify_calls), \
+                    f"Should NOT show 'closing up shop' when no model loaded"
+
+    @pytest.mark.asyncio
+    async def test_quit_shows_wait_message_when_model_loaded(self, mock_database):
+        """Pressing 'q' with model loaded should show 'Just a sec!' message."""
+        notify_calls = []
+
+        original_notify = CharlieApp.notify
+
+        def tracking_notify(self, message, *args, **kwargs):
+            notify_calls.append(str(message))
+            return original_notify(self, message, *args, **kwargs)
+
+        # Patch MODELS to simulate a loaded model
+        mock_model = Mock()
+        with patch('charlie.MODELS', {"llm": mock_model}), \
+             patch.object(CharlieApp, 'notify', tracking_notify):
+            app = CharlieApp()
+            async with app_test_context(app) as pilot:
+                await pilot.pause()
+
+                await pilot.press("q")
+                await pilot.pause()
+
+                # Verify wait message notification shown
                 assert any("closing up shop" in msg for msg in notify_calls), \
-                    f"Expected shutdown notification, got: {notify_calls}"
+                    f"Expected 'closing up shop' notification, got: {notify_calls}"
+                assert not any("byeeeee" in msg for msg in notify_calls), \
+                    f"Should NOT show 'byeeeee' when model is loaded"
+
+    @pytest.mark.asyncio
+    async def test_quit_notification_has_long_timeout(self, mock_database):
+        """Shutdown notification should have a long timeout (120s) to persist until exit."""
+        captured_timeout = None
+
+        original_notify = CharlieApp.notify
+
+        def tracking_notify(self, message, *args, timeout=None, **kwargs):
+            nonlocal captured_timeout
+            if "byeeeee" in str(message) or "closing up shop" in str(message):
+                captured_timeout = timeout
+            return original_notify(self, message, *args, timeout=timeout, **kwargs)
+
+        with patch('charlie.MODELS', {"llm": None}), \
+             patch.object(CharlieApp, 'notify', tracking_notify):
+            app = CharlieApp()
+            async with app_test_context(app) as pilot:
+                await pilot.pause()
+
+                await pilot.press("q")
+                await pilot.pause()
+
+                assert captured_timeout == 120, \
+                    f"Expected timeout=120, got {captured_timeout}"
 
     @pytest.mark.asyncio
     async def test_quit_ui_responsive_during_shutdown(self, mock_database):

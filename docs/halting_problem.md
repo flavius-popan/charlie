@@ -414,3 +414,78 @@ The implementation *looks* correct at first glance:
 | `frontend/screens/home_screen.py` | `action_quit()`: fire-and-forget with exception logging |
 | `charlie.py` | Signal handler: same pattern; `_async_shutdown()`: yield after notify |
 | `tests/test_frontend/test_charlie.py` | Added `wait_for_condition()` helper; updated test to use polling |
+
+---
+
+## Post-Implementation Polish (2025-11-24)
+
+Three refinements to the halting problem solution:
+
+### Fix 1: Huey `_tasks_in_flight` KeyError
+
+**Symptom:**
+
+```
+huey - ERROR - Unhandled exception in task ...
+KeyError: backend.services.tasks.extract_nodes_task: ...
+```
+
+at `huey/api.py:396` in `self._tasks_in_flight.remove(task)`.
+
+**Root Cause:**
+
+Despite `graceful=True`, there's a race between:
+1. Worker thread's `finally: self._tasks_in_flight.remove(task)` in `_execute()`
+2. Consumer's `notify_interrupted_tasks()` calling `self._tasks_in_flight.pop()`
+
+The `join()` in graceful shutdown ensures workers *eventually* finish, but doesn't synchronize with `notify_interrupted_tasks()` being called from the consumer main thread.
+
+**Fix:**
+
+Monkey-patch `huey.notify_interrupted_tasks` in `start_huey_consumer()` to use a safer iteration pattern:
+
+```python
+def _safe_notify_interrupted_tasks(self):
+    while True:
+        try:
+            task = self._tasks_in_flight.pop()
+            self._emit(S.SIGNAL_INTERRUPTED, task)
+        except KeyError:
+            # Set is empty or task was removed by worker's finally block
+            break
+
+huey.notify_interrupted_tasks = types.MethodType(_safe_notify_interrupted_tasks, huey)
+```
+
+This handles both "set is empty" and "task already removed by worker" cases.
+
+### Fix 2: Notification Timeout
+
+**Problem:** Shutdown notification disappeared after 10s even though shutdown could take longer.
+
+**Fix:** Increased timeout from 10s to 120s. The notification auto-dismisses when the app exits anyway.
+
+### Fix 3: Context-Aware Shutdown Message
+
+**Problem:** Same notification for all shutdowns regardless of whether inference was active.
+
+**Fix:** Check if any model is loaded to determine message:
+
+```python
+model_loaded = any(model is not None for model in MODELS.values())
+if model_loaded:
+    self.notify("Just a sec! (closing up shop)", timeout=120)
+else:
+    self.notify("byeeeee", timeout=120)
+```
+
+This provides immediate feedback: quick "byeeeee" for no-work exits, patient "Just a sec!" when inference needs to complete.
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `backend/services/queue.py` | Monkey-patch `notify_interrupted_tasks()` for thread-safe cleanup |
+| `charlie.py` | Import MODELS; conditional notification with 120s timeout |
+| `tests/test_backend/test_services_queue.py` | Test for KeyError handling in `notify_interrupted_tasks` |
+| `tests/test_frontend/test_charlie.py` | Tests for conditional notification and timeout |

@@ -10,10 +10,11 @@ from __future__ import annotations
 
 import logging
 import time
+import types
 from threading import Thread
 from typing import Optional
 
-from huey import PriorityRedisHuey
+from huey import PriorityRedisHuey, signals as S
 from huey.consumer import Consumer
 from redis import ConnectionPool
 
@@ -118,6 +119,20 @@ def start_huey_consumer() -> None:
         flush_locks=False,
         check_worker_health=False,
     )
+
+    # Patch notify_interrupted_tasks to handle race with worker's finally block.
+    # Huey's _execute() does remove(task) in finally, while notify_interrupted_tasks()
+    # does pop(). With threads, these race even with graceful shutdown.
+    def _safe_notify_interrupted_tasks(self):
+        while True:
+            try:
+                task = self._tasks_in_flight.pop()
+                self._emit(S.SIGNAL_INTERRUPTED, task)
+            except KeyError:
+                # Set is empty or task was removed by worker's finally block
+                break
+
+    huey.notify_interrupted_tasks = types.MethodType(_safe_notify_interrupted_tasks, huey)
 
     def _run():
         try:

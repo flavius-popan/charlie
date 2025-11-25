@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, patch, MagicMock
 
 import pytest
 
@@ -55,3 +55,38 @@ def test_huey_instance_created(falkordb_test_context):
     assert huey is not None
     assert huey.name == "charlie"
     assert hasattr(huey, "task")
+
+
+def test_notify_interrupted_tasks_handles_concurrent_removal(falkordb_test_context):
+    """notify_interrupted_tasks() should handle KeyError when task already removed.
+
+    This tests the monkey-patch applied in start_huey_consumer() that makes
+    notify_interrupted_tasks() thread-safe for concurrent task removal.
+    """
+    from backend.services.queue import huey, start_huey_consumer, stop_huey_consumer
+
+    # Start consumer to apply the monkey-patch
+    start_huey_consumer()
+
+    try:
+        # Simulate a task in _tasks_in_flight
+        mock_task = Mock()
+        mock_task.__str__ = Mock(return_value="test_task:123")
+        huey._tasks_in_flight.add(mock_task)
+
+        # Remove task (simulates worker's finally block completing)
+        huey._tasks_in_flight.remove(mock_task)
+
+        # Add another task that will be in the set during iteration
+        mock_task2 = Mock()
+        mock_task2.__str__ = Mock(return_value="test_task:456")
+        huey._tasks_in_flight.add(mock_task2)
+
+        # Now call notify_interrupted_tasks - should NOT raise KeyError
+        # even though mock_task was already removed
+        huey.notify_interrupted_tasks()
+
+        # Set should be empty after notification
+        assert len(huey._tasks_in_flight) == 0
+    finally:
+        stop_huey_consumer()

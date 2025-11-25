@@ -41,6 +41,7 @@ from backend.database import (
     update_episode,
 )
 from backend.database.lifecycle import is_shutdown_requested, request_shutdown
+from backend.inference.manager import MODELS
 from backend.database.queries import delete_entity_mention
 from backend.database.redis_ops import (
     get_episode_status,
@@ -198,7 +199,13 @@ class CharlieApp(App):
             return  # Already shutting down (double-quit)
 
         request_shutdown()  # Set flag FIRST so tasks see it
-        self.notify("Just a sec! (closing up shop)", timeout=10)
+
+        # Show context-aware message: "Just a sec!" if inference active, else quick bye
+        model_loaded = any(model is not None for model in MODELS.values())
+        if model_loaded:
+            self.notify("Just a sec! (closing up shop)", timeout=120)
+        else:
+            self.notify("byeeeee", timeout=120)
 
         # Yield to allow notification to render before blocking work
         await asyncio.sleep(0)
