@@ -343,3 +343,90 @@ def test_orchestrate_inference_work_reschedule_disabled():
     with patch.object(orchestrate_inference_work, "schedule") as mock_schedule:
         orchestrate_inference_work.call_local(reschedule=False)
         mock_schedule.assert_not_called()
+
+
+def test_check_cancellation_raises_when_shutdown():
+    """check_cancellation() raises TaskCancelled when shutdown is requested."""
+    from backend.services.tasks import TaskCancelled, check_cancellation
+    import backend.database.lifecycle as lifecycle
+
+    lifecycle._shutdown_requested = True
+    try:
+        with pytest.raises(TaskCancelled):
+            check_cancellation()
+    finally:
+        lifecycle._shutdown_requested = False
+
+
+def test_check_cancellation_does_not_raise_normally():
+    """check_cancellation() does not raise when shutdown is not requested."""
+    from backend.services.tasks import check_cancellation
+    import backend.database.lifecycle as lifecycle
+
+    lifecycle._shutdown_requested = False
+    check_cancellation()  # Should not raise
+
+
+def test_task_cancelled_not_marked_dead(episode_uuid):
+    """TaskCancelled exception should NOT mark episode as dead."""
+    from backend.services.tasks import extract_nodes_task, TaskCancelled
+    import backend.database.lifecycle as lifecycle
+
+    with patch("backend.database.redis_ops.get_episode_status") as mock_status:
+        with patch("backend.database.redis_ops.set_episode_status") as mock_set_status:
+            with patch("backend.inference.manager.cleanup_if_no_work"):
+                mock_status.return_value = "pending_nodes"
+
+                # Set shutdown flag so check_cancellation raises TaskCancelled
+                lifecycle._shutdown_requested = True
+                try:
+                    result = extract_nodes_task.call_local(episode_uuid, DEFAULT_JOURNAL)
+
+                    # Task should return cancelled status, not raise
+                    assert result == {"cancelled": True}
+
+                    # set_episode_status should NOT have been called with "dead"
+                    for call in mock_set_status.call_args_list:
+                        args, kwargs = call
+                        if len(args) >= 2:
+                            assert args[1] != "dead", "Episode should not be marked dead on cancellation"
+                finally:
+                    lifecycle._shutdown_requested = False
+
+
+def test_orchestrator_stops_rescheduling_on_shutdown():
+    """orchestrate_inference_work should not reschedule when shutdown is requested."""
+    from backend.services.tasks import orchestrate_inference_work
+    import backend.database.lifecycle as lifecycle
+
+    lifecycle._shutdown_requested = True
+    try:
+        with patch("backend.database.redis_ops.enqueue_pending_episodes"), \
+             patch("backend.inference.manager.cleanup_if_no_work"), \
+             patch.object(orchestrate_inference_work, "schedule") as mock_schedule:
+
+            orchestrate_inference_work.call_local(reschedule=True)
+
+            # Should skip reschedule due to shutdown flag
+            mock_schedule.assert_not_called()
+    finally:
+        lifecycle._shutdown_requested = False
+
+
+def test_orchestrator_skips_work_when_shutdown():
+    """orchestrate_inference_work should return early when shutdown is requested."""
+    from backend.services.tasks import orchestrate_inference_work
+    import backend.database.lifecycle as lifecycle
+
+    lifecycle._shutdown_requested = True
+    try:
+        with patch("backend.database.redis_ops.enqueue_pending_episodes") as mock_enqueue, \
+             patch("backend.inference.manager.cleanup_if_no_work") as mock_cleanup:
+
+            orchestrate_inference_work.call_local(reschedule=False)
+
+            # Should skip all work due to early return
+            mock_enqueue.assert_not_called()
+            mock_cleanup.assert_not_called()
+    finally:
+        lifecycle._shutdown_requested = False
