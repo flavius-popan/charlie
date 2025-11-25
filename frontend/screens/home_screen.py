@@ -10,10 +10,8 @@ from backend.database import (
     delete_episode,
     ensure_database_ready,
     get_home_screen,
-    shutdown_database,
 )
 from backend.settings import DEFAULT_JOURNAL
-from backend.services.queue import start_huey_consumer, stop_huey_consumer
 from frontend.screens.settings_screen import SettingsScreen
 from frontend.screens.view_screen import ViewScreen
 from frontend.screens.log_screen import LogScreen
@@ -175,19 +173,9 @@ class HomeScreen(Screen):
             logger.error(f"Failed to delete entry: {e}", exc_info=True)
             self.notify("Failed to delete entry", severity="error")
 
-    def _graceful_shutdown(self):
-        """Ensure worker stops before database teardown (idempotent)."""
-        try:
-            if hasattr(self.app, "stop_huey_worker"):
-                self.app.stop_huey_worker()
-        finally:
-            shutdown_database()
-
-    def action_quit(self):
-        # Stop background worker before tearing down the database to avoid
-        # connection errors/backoff during shutdown.
-        self._graceful_shutdown()
-        self.app.exit()
+    async def action_quit(self):
+        """Request graceful shutdown via unified async path."""
+        await self.app._async_shutdown()
 
     def action_cursor_down(self):
         if not self.episodes:
