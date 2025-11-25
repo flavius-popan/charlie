@@ -14,7 +14,6 @@ from backend.database.redis_ops import (
     redis_ops,
 )
 from backend.settings import DEFAULT_JOURNAL
-from frontend.utils import extract_title
 
 logger = logging.getLogger("charlie")
 
@@ -133,13 +132,9 @@ class EditScreen(Screen):
                 self.app.pop_screen()
                 return
 
-            title = extract_title(content)
-
             if self.is_new_entry:
                 from frontend.screens.view_screen import ViewScreen
                 uuid = await add_journal_entry(content=content)
-                if title:
-                    await update_episode(uuid, name=title)
                 inference_enabled = await asyncio.to_thread(get_inference_enabled)
 
                 # Determine if connections pane should be shown
@@ -164,14 +159,9 @@ class EditScreen(Screen):
                     self._enqueue_extraction_task(uuid, DEFAULT_JOURNAL)
             else:
                 # Update episode and check if content changed
-                if title:
-                    content_changed = await update_episode(
-                        self.episode_uuid, content=content, name=title
-                    )
-                else:
-                    content_changed = await update_episode(
-                        self.episode_uuid, content=content
-                    )
+                content_changed = await update_episode(
+                    self.episode_uuid, content=content
+                )
                 inference_enabled = await asyncio.to_thread(get_inference_enabled)
 
                 status = await asyncio.to_thread(

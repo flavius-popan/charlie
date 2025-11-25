@@ -43,7 +43,7 @@ async def app_test_context(app):
 def mock_database():
     """Mock all database operations for testing."""
     with patch('charlie.ensure_database_ready', new_callable=AsyncMock) as mock_ensure, \
-         patch('charlie.get_all_episodes', new_callable=AsyncMock) as mock_get_all, \
+         patch('charlie.get_home_screen', new_callable=AsyncMock) as mock_get_home, \
          patch('charlie.get_episode', new_callable=AsyncMock) as mock_get, \
          patch('charlie.add_journal_entry', new_callable=AsyncMock) as mock_add, \
          patch('charlie.update_episode', new_callable=AsyncMock) as mock_update, \
@@ -54,13 +54,13 @@ def mock_database():
          patch('charlie.get_episode_status') as mock_get_episode_status:
 
         mock_ensure.return_value = None
-        mock_get_all.return_value = []
+        mock_get_home.return_value = []
         mock_get_inference_enabled.return_value = False
         mock_get_episode_status.return_value = None
 
         yield {
             'ensure': mock_ensure,
-            'get_all': mock_get_all,
+            'get_home': mock_get_home,
             'get': mock_get,
             'add': mock_add,
             'update': mock_update,
@@ -86,7 +86,7 @@ class TestEditingPresence:
             "name": "Original",
             "valid_at": datetime(2025, 11, 19, 10, 0, 0)
         }
-        mock_database['get_all'].return_value = [mock_episode]
+        mock_database['get_home'].return_value = [mock_episode]
         mock_database['get'].return_value = mock_episode
 
         app = CharlieApp()
@@ -126,7 +126,7 @@ class TestEditingPresence:
             "name": "Original",
             "valid_at": datetime(2025, 11, 19, 10, 0, 0)
         }
-        mock_database['get_all'].return_value = [mock_episode]
+        mock_database['get_home'].return_value = [mock_episode]
         mock_database['get'].return_value = mock_episode
         mock_database['update'].return_value = True
 
@@ -172,7 +172,7 @@ class TestEditingPresence:
             "name": "Original",
             "valid_at": datetime(2025, 11, 19, 10, 0, 0)
         }
-        mock_database['get_all'].return_value = [mock_episode]
+        mock_database['get_home'].return_value = [mock_episode]
         mock_database['get'].return_value = mock_episode
         mock_database['update'].return_value = False
 
@@ -221,7 +221,7 @@ class TestEditingPresence:
             "name": "Original",
             "valid_at": datetime(2025, 11, 19, 10, 0, 0)
         }
-        mock_database['get_all'].return_value = [mock_episode]
+        mock_database['get_home'].return_value = [mock_episode]
         mock_database['get'].return_value = mock_episode
 
         mock_redis = Mock()

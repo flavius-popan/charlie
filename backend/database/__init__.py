@@ -22,7 +22,7 @@ from backend.database.persistence import (
     reset_persistence_state,
     update_episode,
 )
-from backend.database.queries import get_all_episodes, get_episode
+from backend.database.queries import get_episode, get_home_screen
 from backend.database.redis_ops import redis_ops
 from backend.database.utils import (
     SELF_ENTITY_LABELS,
@@ -55,7 +55,7 @@ __all__ = [
     "delete_episode",
     # Query operations
     "get_episode",
-    "get_all_episodes",
+    "get_home_screen",
     # Redis operations
     "redis_ops",
     # Driver access

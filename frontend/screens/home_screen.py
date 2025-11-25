@@ -9,7 +9,7 @@ from textual.widgets import Footer, Header, Label, ListItem, ListView, Static
 from backend.database import (
     delete_episode,
     ensure_database_ready,
-    get_all_episodes,
+    get_home_screen,
     shutdown_database,
 )
 from backend.settings import DEFAULT_JOURNAL
@@ -50,6 +50,14 @@ class HomeScreen(Screen):
         super().__init__()
         self.episodes = []
 
+    @staticmethod
+    def _format_date(valid_at) -> str:
+        """Handle datetime or string dates gracefully for list rendering."""
+        try:
+            return valid_at.strftime("%Y-%m-%d")  # type: ignore[arg-type]
+        except Exception:
+            return str(valid_at)
+
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False, icon="")
         if not self.episodes:
@@ -61,7 +69,7 @@ class HomeScreen(Screen):
                 *[
                     ListItem(
                         Label(
-                            f"{episode['valid_at'].strftime('%Y-%m-%d')} - {get_display_title(episode)}"
+                            f"{self._format_date(episode['valid_at'])} - {get_display_title(episode)}"
                         )
                     )
                     for episode in self.episodes
@@ -98,7 +106,7 @@ class HomeScreen(Screen):
 
     async def load_episodes(self):
         try:
-            new_episodes = await get_all_episodes()
+            new_episodes = await get_home_screen()
 
             if not new_episodes:
                 self.episodes = []
@@ -117,7 +125,7 @@ class HomeScreen(Screen):
                     items = [
                         ListItem(
                             Label(
-                                f"{episode['valid_at'].strftime('%Y-%m-%d')} - {get_display_title(episode)}"
+                                f"{self._format_date(episode['valid_at'])} - {get_display_title(episode)}"
                             )
                         )
                         for episode in new_episodes

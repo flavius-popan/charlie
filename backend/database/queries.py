@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 
 from graphiti_core.errors import NodeNotFoundError
 from graphiti_core.nodes import EpisodicNode
@@ -36,25 +37,108 @@ async def get_episode(episode_uuid: str, journal: str = DEFAULT_JOURNAL) -> dict
         return None
 
 
-async def get_all_episodes(journal: str = DEFAULT_JOURNAL) -> list[dict]:
-    """Retrieve all episodes for a journal, ordered by valid_at DESC (newest first).
+HOME_PREVIEW_SOURCE_CHARS = 240
+HOME_PREVIEW_MAX_LEN = 80
 
-    Args:
-        journal: Journal name (defaults to DEFAULT_JOURNAL)
 
-    Returns:
-        List of episode dicts with all fields (uuid, name, content, valid_at, created_at,
-        source, source_description, group_id, entity_edges, labels), ordered by valid_at DESC
+def _parse_valid_at(raw_valid_at):
+    """Convert FalkorDB string timestamps back to aware datetimes when possible."""
+    if isinstance(raw_valid_at, datetime):
+        return raw_valid_at
+    if isinstance(raw_valid_at, str):
+        try:
+            return datetime.fromisoformat(raw_valid_at)
+        except ValueError:
+            return raw_valid_at
+    return raw_valid_at
 
-    Note:
-        Uses graphiti-core's EpisodicNode.get_by_group_ids for retrieval.
-        The graphiti-core method orders by uuid DESC internally, but we sort by valid_at
-        for chronological ordering (newest first).
+
+def _build_preview(snippet: str, max_len: int = HOME_PREVIEW_MAX_LEN) -> str:
+    """Create a readable preview from a content snippet.
+
+    Prefers the first Markdown H1 line, otherwise the first sentence. Falls back
+    to truncation with an ellipsis to avoid harsh cut-offs.
     """
+    if not snippet:
+        return ""
+
+    snippet = snippet.replace("\r", "")
+    text = snippet.lstrip()
+    if not text:
+        return ""
+
+    first_newline = text.find("\n")
+    first_line = text if first_newline == -1 else text[:first_newline]
+
+    # Prefer a top-level markdown header
+    if first_line.startswith("# "):
+        candidate = first_line[2:].strip()
+        found_sentence = False
+    else:
+        flat = text.replace("\n", " ").strip()
+        sentence_ends = [pos for pos in (flat.find("."), flat.find("!"), flat.find("?")) if pos != -1]
+        if sentence_ends:
+            end_pos = min(sentence_ends)
+            candidate = flat[: end_pos + 1].strip()
+            found_sentence = True
+        else:
+            candidate = flat
+            found_sentence = False
+
+    truncated = False
+    if len(candidate) > max_len:
+        candidate = candidate[:max_len].rstrip()
+        truncated = True
+
+    add_ellipsis = False
+    if truncated:
+        add_ellipsis = True
+    elif not found_sentence and not first_line.startswith("# ") and len(snippet.strip()) >= max_len:
+        # No sentence end found in the available snippet and it's long enough
+        # that we likely chopped the original content.
+        add_ellipsis = True
+
+    if add_ellipsis and not candidate.endswith("..."):
+        candidate = candidate.rstrip(".!? ") + "..."
+
+    return candidate
+
+
+async def get_home_screen(journal: str = DEFAULT_JOURNAL) -> list[dict]:
+    """Lightweight query for home screen list items.
+
+    Returns uuid, name, valid_at, and a short preview derived from a small
+    substring of content to avoid loading full entries.
+    """
+
     driver = get_driver(journal)
-    episode_nodes = await EpisodicNode.get_by_group_ids(driver, group_ids=[journal])
-    episodes = [node.model_dump() for node in episode_nodes]
-    return sorted(episodes, key=lambda ep: ep['valid_at'], reverse=True)
+    records, _, _ = await driver.execute_query(
+        f"""
+        MATCH (e:Episodic)
+        WHERE e.group_id = $group_id
+        RETURN e.uuid AS uuid,
+               e.name AS name,
+               e.valid_at AS valid_at,
+               SUBSTRING(e.content, 0, {HOME_PREVIEW_SOURCE_CHARS}) AS content_preview
+        ORDER BY e.valid_at DESC
+        """,
+        group_id=journal,
+    )
+
+    episodes: list[dict] = []
+    for record in records:
+        valid_at = _parse_valid_at(record.get("valid_at"))
+        preview = _build_preview(record.get("content_preview") or "")
+        episodes.append(
+            {
+                "uuid": record.get("uuid"),
+                "name": record.get("name"),
+                "valid_at": valid_at,
+                "preview": preview,
+            }
+        )
+
+    return episodes
 
 
 async def delete_entity_mention(
@@ -199,4 +283,8 @@ async def delete_entity_mention(
 # - Entity timelines
 # - Search operations
 
-__all__ = ["get_episode", "get_all_episodes", "delete_entity_mention"]
+__all__ = [
+    "get_episode",
+    "get_home_screen",
+    "delete_entity_mention",
+]

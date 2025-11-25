@@ -33,7 +33,7 @@ from backend import add_journal_entry
 from backend.database import (
     delete_episode,
     ensure_database_ready,
-    get_all_episodes,
+    get_home_screen,
     get_episode,
     get_tcp_server_endpoint,
     shutdown_database,
