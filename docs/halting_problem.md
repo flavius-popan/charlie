@@ -245,3 +245,82 @@ def _blocking_shutdown(self):
 - [ ] **Layer 6:** Write headless shutdown tests
 - [ ] **Layer 6:** Write task cancellation tests (in `tests/test_backend/test_services_tasks.py`)
 - [ ] **Verification:** Manual test: quit during inference, verify task completes
+
+---
+
+## Post-Implementation Bug: Premature Shutdown Check (2025-11-24)
+
+### Symptom
+
+After implementing the halting problem solution, quitting during inference caused a cascade of errors:
+```
+RuntimeError: Database shutdown in progress
+```
+followed by:
+```
+KeyError: backend.services.tasks.extract_nodes_task: ...
+```
+
+The log showed inference completing successfully ("Extracted 25 provisional entities") but the task couldn't persist its results.
+
+### Root Cause
+
+`backend/database/redis_ops.py:84-85` contained a premature shutdown check:
+```python
+if lifecycle.is_shutdown_requested():
+    raise RuntimeError("Database shutdown in progress")
+```
+
+This check conflated two distinct concerns:
+1. **"Don't start new tasks"** - what `check_cancellation()` should enforce at task entry points
+2. **"Database is unavailable"** - only true when `_db` is None (after actual teardown)
+
+The shutdown flag was intended to signal tasks to exit early at checkpoints, NOT to block all database operations globally.
+
+### The Race Condition
+
+```
+User presses 'q':
+  1. request_shutdown()         → _shutdown_requested = True
+  2. notify("Just a sec!")
+  3. await to_thread(_blocking_shutdown)
+     └→ stop_huey_consumer()   → waits for current task (graceful=True)
+
+Meanwhile, in Huey worker thread:
+  1. extract_nodes_task running
+  2. LLM inference completes    → "Extracted 25 provisional entities"
+  3. get_suppressed_entities()  → calls redis_ops()
+  4. redis_ops() sees flag      → raises RuntimeError!
+  5. Work is lost, episode marked "dead"
+```
+
+The paradox: We waited for the task to finish (`graceful=True`), but the shutdown flag prevented it from finishing.
+
+### Why Tests Missed It
+
+The existing tests mocked individual Redis functions (`get_episode_status`, `set_episode_status`), bypassing the `redis_ops()` context manager entirely. The shutdown check was never exercised because mocks don't call the real context manager.
+
+### Fix
+
+**Removed lines 84-85 from `redis_ops.py`:**
+```python
+# REMOVED:
+if lifecycle.is_shutdown_requested():
+    raise RuntimeError("Database shutdown in progress")
+```
+
+The existing check for `lifecycle._db is None` is sufficient - it catches actual database unavailability after `_close_db()` runs.
+
+**Added test `test_redis_ops_allows_operations_during_shutdown`** to verify the correct behavior: `redis_ops()` should allow operations while the database is available, regardless of shutdown flag.
+
+### Key Lesson
+
+The shutdown flag is for **cooperative cancellation at checkpoints** (via `check_cancellation()`), not for **blocking all database access**. In-flight tasks must be able to persist their completed work during the graceful shutdown window.
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `backend/database/redis_ops.py` | Removed premature shutdown check (lines 84-85) |
+| `tests/test_backend/test_redis_ops.py` | Updated `test_shutdown_behavior` → `test_shutdown_flag_allows_operations_while_db_available` |
+| `tests/test_backend/test_services_tasks.py` | Added `test_redis_ops_allows_operations_during_shutdown` |

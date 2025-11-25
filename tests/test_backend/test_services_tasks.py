@@ -430,3 +430,28 @@ def test_orchestrator_skips_work_when_shutdown():
             mock_cleanup.assert_not_called()
     finally:
         lifecycle._shutdown_requested = False
+
+
+def test_redis_ops_allows_operations_during_shutdown(isolated_graph):
+    """redis_ops() should allow database operations when shutdown is requested.
+
+    The shutdown flag is for tasks to check at safe checkpoints (via check_cancellation).
+    It should NOT block database operations globally - in-flight tasks need to persist
+    their completed work even after shutdown is requested.
+
+    This tests the actual redis_ops() context manager, not mocked functions.
+    """
+    from backend.database.redis_ops import redis_ops
+    import backend.database.lifecycle as lifecycle
+
+    lifecycle._shutdown_requested = True
+    try:
+        # This should NOT raise - database is still available
+        with redis_ops() as r:
+            # Simple operation to verify Redis is accessible
+            r.set("test:shutdown_check", "works")
+            value = r.get("test:shutdown_check")
+            assert value == b"works"
+            r.delete("test:shutdown_check")
+    finally:
+        lifecycle._shutdown_requested = False

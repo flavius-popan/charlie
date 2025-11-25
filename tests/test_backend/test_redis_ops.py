@@ -204,17 +204,25 @@ def test_pattern_operations(redis_client, falkordb_test_context):
         assert b"session:abc" in keys
 
 
-def test_shutdown_behavior(falkordb_test_context):
-    """Test that redis_ops fails gracefully during shutdown."""
+def test_shutdown_flag_allows_operations_while_db_available(falkordb_test_context):
+    """Test that redis_ops allows operations when shutdown is requested.
+
+    The shutdown flag signals tasks to exit early at checkpoints (via check_cancellation),
+    but should NOT block database operations. In-flight tasks need to persist their
+    completed work even after shutdown is requested, as long as the DB is still available.
+    """
     from backend.database import redis_ops
     import backend.database.lifecycle as lifecycle
 
     lifecycle._shutdown_requested = True
 
     try:
-        with pytest.raises(RuntimeError, match="shutdown"):
-            with redis_ops() as r:
-                r.set("key", "value")
+        # Should NOT raise - database is still available
+        with redis_ops() as r:
+            r.set("test:shutdown_check", "works")
+            value = r.get("test:shutdown_check")
+            assert value == b"works"
+            r.delete("test:shutdown_check")
     finally:
         lifecycle._shutdown_requested = False
 
