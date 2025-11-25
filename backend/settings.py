@@ -27,6 +27,7 @@ LLAMA_CPP_VERBOSE = False
 
 # Generation parameters
 MODEL_CONFIG = {
+    # TODO: Should temp be 0? Or leave some room for creativity? Need to test.
     "temp": 0.7,
     "top_p": 0.8,
     "top_k": 20,

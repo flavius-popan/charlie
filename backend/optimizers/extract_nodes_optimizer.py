@@ -1,9 +1,12 @@
 """GEPA optimizer for entity extraction.
 
-Usage: python -m backend.optimizers.extract_nodes_optimizer
+Usage:
+    python -m backend.optimizers.extract_nodes_optimizer
+    python -m backend.optimizers.extract_nodes_optimizer --no-cache
 """
 from __future__ import annotations
 
+import argparse
 import json
 import logging
 
@@ -61,14 +64,7 @@ def load_examples() -> tuple[list[dspy.Example], list[dspy.Example]]:
 
 
 def metric(gold, pred, trace=None, pred_name=None, pred_trace=None):
-    """F1 score with rich feedback per GEPA best practices.
-
-    Based on patterns from DSPy tutorials (AIME, Papillon, TrustedMonitor):
-    - Always return dspy.Prediction(score=..., feedback=...)
-    - Include expected vs actual in feedback
-    - Provide actionable guidance for failures
-    - Be specific about edge cases (compound names, ambiguous refs)
-    """
+    """Score extraction quality and explain failures so GEPA can improve prompts."""
     expected = {
         (e.name.lower(), e.entity_type_id)
         for e in gold.extracted_entities.extracted_entities
@@ -138,7 +134,19 @@ def metric(gold, pred, trace=None, pred_name=None, pred_trace=None):
 
 
 def main():
+    parser = argparse.ArgumentParser(description="GEPA optimizer for entity extraction")
+    parser.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="Disable DSPy caching for a clean run (use when iterating on examples/metric)",
+    )
+    args = parser.parse_args()
+
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(message)s")
+
+    if args.no_cache:
+        dspy.configure_cache(enable_disk_cache=False, enable_memory_cache=False)
+        logger.info("Caching disabled for clean run")
 
     configure_dspy()
     reflection_lm = get_reflection_lm()
