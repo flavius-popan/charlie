@@ -13,14 +13,15 @@ wheels/
 .env
 .envrc
 .pytest_cache
-.models
 .direnv
 .claude
-prompts/.dspy_cache/
-backend/prompts/.dspy_cache/
 .dspy_cache
-pipeline/prompts/.dspy_cache/
+backend/prompts/gepa/
+backend/prompts/.dspy_cache/
 pipeline/prompts/gepa/
+pipeline/prompts/.dspy_cache/
+importers/custom/*
+!importers/custom/.gitkeep
 
 # Database files (FalkorDB/Redis/SQLite)
 data/*.db

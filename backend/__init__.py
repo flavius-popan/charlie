@@ -11,6 +11,7 @@ from graphiti_core.utils.datetime_utils import utc_now
 
 from backend.settings import DEFAULT_JOURNAL
 from backend.database import (
+    episode_exists,
     persist_episode,
     validate_journal_name,
 )
@@ -152,6 +153,10 @@ async def add_journal_entry(
         episode_uuid = uuid
     else:
         episode_uuid = str(uuid4())
+
+    # Idempotency: skip if already imported
+    if await episode_exists(episode_uuid, journal):
+        return episode_uuid
 
     if title is None:
         title = reference_time.strftime("%A %b %d, %Y").replace(" 0", " ")
