@@ -54,7 +54,33 @@ GEPA_AUTO_MODE = os.getenv("GEPA_AUTO_MODE", "light")
 
 # Thread counts: local llama.cpp can't fork safely, remote can burst
 GEPA_NUM_THREADS_LOCAL = 1
-GEPA_NUM_THREADS_REMOTE = 20
+GEPA_NUM_THREADS_REMOTE_MAX = 20
+
+
+def get_num_threads(num_examples: int, *, remote: bool = False) -> int:
+    """Get optimal thread count based on example count and execution mode."""
+    if not remote:
+        return GEPA_NUM_THREADS_LOCAL
+    return min(num_examples, GEPA_NUM_THREADS_REMOTE_MAX)
+
+
+# GEPA recommends small valset (just enough for Pareto tracking), large trainset
+GEPA_VALSET_MIN = 1
+GEPA_VALSET_MAX = 3
+
+
+def split_examples[T](examples: list[T]) -> tuple[list[T], list[T]]:
+    """Split examples into train/val optimized for GEPA.
+
+    GEPA needs valset only for Pareto tracking, so keep it small (1-3 examples).
+    All remaining examples go to trainset for learning.
+    """
+    if len(examples) <= GEPA_VALSET_MIN:
+        raise ValueError(f"Need at least {GEPA_VALSET_MIN + 1} examples, got {len(examples)}")
+
+    val_size = min(max(GEPA_VALSET_MIN, len(examples) // 10), GEPA_VALSET_MAX)
+    split_idx = len(examples) - val_size
+    return examples[:split_idx], examples[split_idx:]
 
 # =============================================================================
 # Remote (HuggingFace) Configuration

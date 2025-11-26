@@ -19,12 +19,12 @@ from dspy.teleprompt import GEPA
 from backend.optimizers import (
     configure_dspy,
     get_reflection_lm,
+    get_num_threads,
+    split_examples,
     evaluate_module,
     DATA_DIR,
     PROMPTS_DIR,
     GEPA_AUTO_MODE,
-    GEPA_NUM_THREADS_LOCAL,
-    GEPA_NUM_THREADS_REMOTE,
 )
 from backend.graph.extract_nodes import (
     EntityExtractor,
@@ -63,8 +63,7 @@ def load_examples() -> tuple[list[dspy.Example], list[dspy.Example]]:
             ).with_inputs("episode_content", "entity_types")
         )
 
-    split_idx = int(len(examples) * 0.8)
-    return examples[:split_idx], examples[split_idx:]
+    return split_examples(examples)
 
 
 def metric(gold, pred, trace=None, pred_name=None, pred_trace=None):
@@ -163,7 +162,7 @@ def main():
     trainset, valset = load_examples()
     logger.info("Loaded %d train, %d val examples", len(trainset), len(valset))
 
-    num_threads = GEPA_NUM_THREADS_REMOTE if args.remote else GEPA_NUM_THREADS_LOCAL
+    num_threads = get_num_threads(len(trainset) + len(valset), remote=args.remote)
     logger.info("Using num_threads=%d", num_threads)
 
     # Use load_prompts=False to get true baseline without cached optimizations
