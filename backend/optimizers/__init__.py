@@ -2,6 +2,7 @@
 
 All optimizer scripts import from here to ensure consistent settings.
 """
+
 from __future__ import annotations
 
 import os
@@ -53,7 +54,7 @@ GEPA_AUTO_MODE = os.getenv("GEPA_AUTO_MODE", "light")
 
 # Thread counts: local llama.cpp can't fork safely, remote can burst
 GEPA_NUM_THREADS_LOCAL = 1
-GEPA_NUM_THREADS_REMOTE = 40
+GEPA_NUM_THREADS_REMOTE = 50
 
 # =============================================================================
 # Remote (HuggingFace) Configuration
@@ -74,7 +75,9 @@ def get_task_lm(*, remote: bool = False) -> dspy.LM:
         # litellm uses HUGGINGFACE_API_KEY env var by convention
         api_key = os.getenv("HUGGINGFACE_API_KEY") or os.getenv("HF_TOKEN")
         if not api_key:
-            raise ValueError("HUGGINGFACE_API_KEY (or HF_TOKEN) required for remote optimization")
+            raise ValueError(
+                "HUGGINGFACE_API_KEY (or HF_TOKEN) required for remote optimization"
+            )
         return dspy.LM(
             model="huggingface/tgi",
             api_key=api_key,
@@ -84,6 +87,7 @@ def get_task_lm(*, remote: bool = False) -> dspy.LM:
         )
     else:
         from backend.inference.dspy_lm import DspyLM
+
         return DspyLM(repo_id=MODEL_REPO_ID, generation_config=MODEL_CONFIG)
 
 
@@ -91,7 +95,9 @@ def get_reflection_lm() -> dspy.LM:
     """Get reflection LM for GEPA (requires OPENAI_API_KEY)."""
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
-        raise ValueError(f"OPENAI_API_KEY required for GEPA reflection ({REFLECTION_MODEL})")
+        raise ValueError(
+            f"OPENAI_API_KEY required for GEPA reflection ({REFLECTION_MODEL})"
+        )
     return dspy.LM(
         model=REFLECTION_MODEL,
         api_key=api_key,
@@ -117,12 +123,14 @@ def evaluate_module(module, dataset: list, metric_fn) -> float:
     scores = []
     for ex in dataset:
         try:
-            pred = module(episode_content=ex.episode_content, entity_types=ex.entity_types)
+            pred = module(
+                episode_content=ex.episode_content, entity_types=ex.entity_types
+            )
             result = metric_fn(ex, pred)
             # NOTE: dspy.Prediction inherits from Example which implements __getitem__,
             # so both result.score and result['score'] work. Using dict-style here.
-            if hasattr(result, 'score'):
-                score = result['score']
+            if hasattr(result, "score"):
+                score = result["score"]
             else:
                 score = result  # Assume float
             scores.append(float(score))

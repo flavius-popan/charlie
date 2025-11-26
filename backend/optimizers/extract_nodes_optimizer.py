@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import time
 
 import dspy
 from dspy.teleprompt import GEPA
@@ -176,7 +177,10 @@ def main():
     )
     logger.info("GEPA configured with num_threads=%d", num_threads)
 
+    start_time = time.perf_counter()
     optimized = gepa.compile(student=baseline, trainset=trainset, valset=valset)
+    elapsed = time.perf_counter() - start_time
+    logger.info("GEPA optimization completed in %.1f seconds (%.1f minutes)", elapsed, elapsed / 60)
 
     optimized_score = evaluate_module(optimized, valset, metric)
     logger.info("Optimized: %.3f", optimized_score)
