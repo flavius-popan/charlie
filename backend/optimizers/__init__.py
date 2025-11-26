@@ -32,7 +32,7 @@ for env_var in ("DSPY_CACHEDIR", "DSPY_CACHE_DIR", "DSPY_CACHE"):
 # =============================================================================
 # Model Configuration
 # =============================================================================
-MODEL_REPO_ID = os.getenv("MODEL_REPO_ID", "unsloth/Qwen3-4B-Instruct-2507")
+MODEL_REPO_ID = os.getenv("MODEL_REPO_ID", "unsloth/Qwen3-4B-Instruct-2507-FP8")
 MODEL_CONFIG = {
     "temp": 0.7,
     "top_p": 0.8,
@@ -54,7 +54,7 @@ GEPA_AUTO_MODE = os.getenv("GEPA_AUTO_MODE", "light")
 
 # Thread counts: local llama.cpp can't fork safely, remote can burst
 GEPA_NUM_THREADS_LOCAL = 1
-GEPA_NUM_THREADS_REMOTE = 15
+GEPA_NUM_THREADS_REMOTE = 20
 
 # =============================================================================
 # Remote (HuggingFace) Configuration
