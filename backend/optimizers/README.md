@@ -21,6 +21,27 @@ Thread config (in __init__.py):
 
 L4 "not enough SMs for max_autotune_gemm" warning is expected and harmless.
 
+## GEPA Scaling
+
+GEPA runs ~128 full evals in "light" mode. Each full eval runs through all examples:
+- 3 examples × 128 evals = 384 metric calls
+- 30 examples × 128 evals = 3,840 metric calls
+
+### Dynamic Threads (`get_num_threads`)
+
+GEPA parallelizes metric calls within each eval batch, but can only parallelize up to N calls where N = number of examples. With 3 examples and 20 threads, 17 threads sit idle waiting.
+
+`get_num_threads(num_examples, remote)` returns `min(num_examples, 20)` for remote, avoiding wasted thread overhead. More examples = better thread utilization = faster wall-clock time despite more total calls.
+
+### Train/Val Split (`split_examples`)
+
+GEPA uses trainset for learning and valset only for Pareto tracking (selecting best candidates). Large valsets waste metric calls without improving optimization.
+
+`split_examples` keeps valset small (1-3 examples, capped) and puts everything else in trainset:
+- 10 examples → 9 train, 1 val
+- 30 examples → 27 train, 3 val
+- 100 examples → 97 train, 3 val
+
 ## Quantization Divergence
 
 Local uses Q4_K_M (~4.5 bit), remote uses FP8 (8 bit).

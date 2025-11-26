@@ -78,6 +78,7 @@ def split_examples[T](examples: list[T]) -> tuple[list[T], list[T]]:
     if len(examples) <= GEPA_VALSET_MIN:
         raise ValueError(f"Need at least {GEPA_VALSET_MIN + 1} examples, got {len(examples)}")
 
+    # 10% baseline ensures at least 1 val example per 10 total, then clamp to [1, 3]
     val_size = min(max(GEPA_VALSET_MIN, len(examples) // 10), GEPA_VALSET_MAX)
     split_idx = len(examples) - val_size
     return examples[:split_idx], examples[split_idx:]
@@ -160,5 +161,5 @@ def evaluate_module(
     )
 
     result = evaluator(module)
-    # DSPy may return EvaluationResult object instead of float
-    return float(result) if not isinstance(result, (int, float)) else result
+    # DSPy returns EvaluationResult (not float) which implements __float__()
+    return float(result)
