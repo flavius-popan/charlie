@@ -32,7 +32,7 @@ for env_var in ("DSPY_CACHEDIR", "DSPY_CACHE_DIR", "DSPY_CACHE"):
 # =============================================================================
 # Model Configuration
 # =============================================================================
-MODEL_REPO_ID = os.getenv("MODEL_REPO_ID", "unsloth/Qwen3-4B-Instruct-2507-GGUF")
+MODEL_REPO_ID = os.getenv("MODEL_REPO_ID", "Qwen/Qwen3-4B-Instruct-2507")
 MODEL_CONFIG = {
     "temp": 0.7,
     "top_p": 0.8,
@@ -54,15 +54,12 @@ GEPA_AUTO_MODE = os.getenv("GEPA_AUTO_MODE", "light")
 
 # Thread counts: local llama.cpp can't fork safely, remote can burst
 GEPA_NUM_THREADS_LOCAL = 1
-GEPA_NUM_THREADS_REMOTE = 80
+GEPA_NUM_THREADS_REMOTE = 30
 
 # =============================================================================
 # Remote (HuggingFace) Configuration
 # =============================================================================
-HF_ENDPOINT_URL = os.getenv(
-    "HF_ENDPOINT_URL",
-    "https://vvs4tdjjoe8k1101.us-east-1.aws.endpoints.huggingface.cloud",
-)
+HF_ENDPOINT_URL = os.getenv("HF_ENDPOINT_URL")
 
 
 def get_task_lm(*, remote: bool = False) -> dspy.LM:
@@ -78,12 +75,15 @@ def get_task_lm(*, remote: bool = False) -> dspy.LM:
             raise ValueError(
                 "HUGGINGFACE_API_KEY (or HF_TOKEN) required for remote optimization"
             )
+        if not HF_ENDPOINT_URL:
+            raise ValueError("HF_ENDPOINT_URL required for remote optimization")
         return dspy.LM(
-            model="openai/unsloth/Qwen3-4B-Instruct-2507",
+            model=f"openai/{MODEL_REPO_ID}",
             api_key=api_key,
             api_base=HF_ENDPOINT_URL + "/v1",
             temperature=MODEL_CONFIG["temp"],
             max_tokens=MODEL_CONFIG["max_tokens"],
+            extra_body={"chat_template_kwargs": {"enable_thinking": False}},
         )
     else:
         from backend.inference.dspy_lm import DspyLM
@@ -111,7 +111,7 @@ def configure_dspy(*, remote: bool = False):
     lm = get_task_lm(remote=remote)
     dspy.configure(lm=lm, adapter=dspy.ChatAdapter())
     if remote:
-        logger.info("Configured DSPy with remote HF endpoint: %s", HF_ENDPOINT_URL)
+        logger.info("Configured DSPy with remote HF endpoint")
     else:
         logger.info("Configured DSPy with local model: %s", MODEL_REPO_ID)
 
