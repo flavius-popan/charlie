@@ -27,7 +27,7 @@ LLAMA_CPP_VERBOSE = False
 
 # Generation parameters
 MODEL_CONFIG = {
-    "temp": 0.7,
+    "temp": 0.0,
     "top_p": 0.8,
     "top_k": 20,
     "min_p": 0.0,

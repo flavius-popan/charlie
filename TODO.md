@@ -1,10 +1,13 @@
 # Stability Fixes
-
+- Opening/closing connections pane during inference is really buggy,
+  only re-opens after finishing inference.
+- Deleting a journal while inference running causes cache destruction
 - Any other systems in need of an FSM for safety?
 - BACKUPS! Need to think of ways to always have backups.
 
 ## Minor but important
 
+- Automate test runs in CI
 - Hide "d/up/down" labels in connections pane if no connections found
 - Improve readability/UI when no connections found/other valid statuses.
 - Add wc/token/journal metrics at bottom of md viewer

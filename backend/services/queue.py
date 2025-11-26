@@ -66,16 +66,9 @@ def _get_redis_connection() -> ConnectionPool:
 
 
 # PriorityRedisHuey supports priority queueing (higher priority = processed first)
-huey = PriorityRedisHuey(
-    "charlie",
-    connection_pool=_get_redis_connection(),
-)
-
-logger.info(
-    "Huey task queue initialized (worker_type=%s, workers=%d)",
-    HUEY_WORKER_TYPE,
-    HUEY_WORKERS,
-)
+# Connection pool is set lazily when start_huey_consumer() is called to avoid
+# triggering database initialization at import time (breaks test collection).
+huey = PriorityRedisHuey("charlie")
 
 # In-process consumer management
 class InProcessConsumer(Consumer):

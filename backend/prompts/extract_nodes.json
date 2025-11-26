@@ -1,0 +1,36 @@
+{
+  "extractor.predict": {
+    "traces": [],
+    "train": [],
+    "demos": [],
+    "signature": {
+      "instructions": "Extract meaningful entities from a personal journal entry by identifying and classifying specific named references present in the text. The entities you should extract can be categorized into four main types: \n\n1. **Person (entity_type_id 1)**: This includes individual people mentioned by name, such as friends, colleagues, or family members. For example, names like \"Sarah\", \"Tom\", or \"Dr. Patel\" should be classified under this category.\n\n2. **Place (entity_type_id 2)**: Identify specific named locations and venues, such as parks, streets, buildings, or landmarks. For instance, \"Crissy Field\", \"Washington Square\", and \"Dolores Park\" are all classified as places.\n\n3. **Organization (entity_type_id 3)**: This encompasses named companies, teams, communities, or groups. Examples include \"Salesforce\", \"Bay Area Runners Club\", and any institution or program that is explicitly named, like \"Adobe Creative Residency\".\n\n4. **Activity (entity_type_id 4)**: Recognize named events, outings, routines, or recurring activities. This could include activities like \"weekly check-in\", \"warm-up\", or \"breathing exercises\".\n\nWhile extracting entities, pay attention to the following guidelines:\n- Aim to identify all named entities, including compound names (e.g., \"Dr. Smith\") and specific events or activities.\n- Avoid extracting generic terms or phrases that do not refer to specific named entities (e.g., \"morning routine\" is too vague).\n- Ensure you do not overlook multi-part names, such as \"Mama's on Washington Square\", which should be treated as a single entity.\n- Focus on contextual clues to assign the most specific and appropriate type to each entity.\n\nIn your responses, provide a clear breakdown of the reasoning behind your classifications, and ensure that your final list of extracted entities is accurate, concise, and categorized correctly according to the provided definitions. \n\nThis task requires careful reading and analysis of the text to ensure that all relevant entities are captured accurately.",
+      "fields": [
+        {
+          "prefix": "Episode Content:",
+          "description": "personal journal entry text"
+        },
+        {
+          "prefix": "Entity Types:",
+          "description": "available entity type definitions with IDs"
+        },
+        {
+          "prefix": "Reasoning: Let's think step by step in order to",
+          "description": "${reasoning}"
+        },
+        {
+          "prefix": "Extracted Entities:",
+          "description": "entities found in the journal entry, each with name and most specific type ID"
+        }
+      ]
+    },
+    "lm": null
+  },
+  "metadata": {
+    "dependency_versions": {
+      "python": "3.13",
+      "dspy": "3.0.4",
+      "cloudpickle": "3.1"
+    }
+  }
+}

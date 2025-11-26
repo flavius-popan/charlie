@@ -5,6 +5,7 @@ import json
 import logging
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 
 import dspy
 from pydantic import BaseModel, model_validator
@@ -63,9 +64,27 @@ class EntityExtractor(dspy.Module):
     Optimizable with DSPy teleprompters.
     """
 
-    def __init__(self):
+    _prompts_loaded: bool = False
+
+    def __init__(self, load_prompts: bool = True):
         super().__init__()
         self.extractor = dspy.ChainOfThought(EntityExtractionSignature)
+        if load_prompts:
+            self._load_optimized_prompts()
+
+    def _load_optimized_prompts(self):
+        """Load optimized prompts if available (once per process)."""
+        if EntityExtractor._prompts_loaded:
+            return
+
+        prompt_path = Path(__file__).parent.parent / "prompts" / "extract_nodes.json"
+        if prompt_path.exists():
+            try:
+                self.load(str(prompt_path))
+                logger.info("Loaded optimized prompts from %s", prompt_path)
+                EntityExtractor._prompts_loaded = True
+            except Exception as e:
+                logger.warning("Failed to load prompts: %s", e)
 
     def forward(self, episode_content: str, entity_types: str) -> ExtractedEntities:
         """Extract entities from text.
