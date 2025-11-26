@@ -27,6 +27,14 @@ from backend.settings import DEFAULT_JOURNAL
 logger = logging.getLogger(__name__)
 
 
+class EpisodeDeletedError(Exception):
+    """Raised when episode is deleted during extraction."""
+
+    def __init__(self, episode_uuid: str):
+        self.episode_uuid = episode_uuid
+        super().__init__(f"Episode {episode_uuid} was deleted during extraction")
+
+
 class NullEmbedder(EmbedderClient):
     """Fallback embedder that returns empty vectors when embeddings are unavailable."""
 
@@ -467,9 +475,11 @@ async def persist_entities_and_edges(
     edges: list[EntityEdge],
     episodic_edges: list[EpisodicEdge],
     journal: str,
+    episode_uuid: str,
 ) -> None:
     """Persist entities and relationships using graphiti-core bulk writer.
 
+    Validates episode still exists before writing to prevent orphaned data.
     Ensures embeddings are set, creates NullEmbedder, calls add_nodes_and_edges_bulk.
     Thread-safe via per-journal locking.
 
@@ -478,12 +488,25 @@ async def persist_entities_and_edges(
         edges: List of EntityEdge objects to persist
         episodic_edges: List of EpisodicEdge objects to persist
         journal: Journal name (graph to persist to)
+        episode_uuid: Episode UUID being processed (validated before persist)
 
     Raises:
+        EpisodeDeletedError: If episode was deleted during extraction
         RuntimeError: If persistence fails
     """
     from backend.database.driver import get_driver
+    from backend.database.queries import episode_exists
     from graphiti_core.utils.bulk_utils import add_nodes_and_edges_bulk
+
+    # Check episode still exists before persisting
+    if not await episode_exists(episode_uuid, journal):
+        logger.info(
+            "Episode %s was deleted, discarding %d nodes and %d edges",
+            episode_uuid,
+            len(nodes),
+            len(edges),
+        )
+        raise EpisodeDeletedError(episode_uuid)
 
     await ensure_database_ready(journal)
 
@@ -540,4 +563,5 @@ __all__ = [
     "delete_episode",
     "persist_entities_and_edges",
     "reset_persistence_state",
+    "EpisodeDeletedError",
 ]

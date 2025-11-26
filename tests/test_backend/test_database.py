@@ -1034,6 +1034,7 @@ async def test_persist_entities_and_edges(isolated_graph):
         edges=[],
         episodic_edges=[episodic_edge],
         journal=DEFAULT_JOURNAL,
+        episode_uuid=episode_uuid,
     )
 
     # Verify entity exists
@@ -1042,6 +1043,45 @@ async def test_persist_entities_and_edges(isolated_graph):
     records, _, _ = await driver.execute_query(query)
     assert len(records) > 0
     assert records[0]['count'] >= 1
+
+
+@pytest.mark.asyncio
+async def test_persist_entities_and_edges_raises_when_episode_deleted(isolated_graph):
+    """Test that persist_entities_and_edges raises EpisodeDeletedError for missing episode."""
+    from backend.database.persistence import persist_entities_and_edges, EpisodeDeletedError
+    from graphiti_core.nodes import EntityNode
+    from graphiti_core.edges import EpisodicEdge
+    from graphiti_core.utils.datetime_utils import utc_now
+    from backend.settings import DEFAULT_JOURNAL
+
+    nonexistent_uuid = "nonexistent-episode-uuid"
+
+    person_node = EntityNode(
+        name="TestPerson",
+        group_id=DEFAULT_JOURNAL,
+        labels=["Entity", "Person"],
+        summary="",
+        created_at=utc_now(),
+        name_embedding=[],
+    )
+
+    episodic_edge = EpisodicEdge(
+        source_node_uuid=nonexistent_uuid,
+        target_node_uuid=person_node.uuid,
+        group_id=DEFAULT_JOURNAL,
+        created_at=utc_now(),
+    )
+
+    with pytest.raises(EpisodeDeletedError) as exc_info:
+        await persist_entities_and_edges(
+            nodes=[person_node],
+            edges=[],
+            episodic_edges=[episodic_edge],
+            journal=DEFAULT_JOURNAL,
+            episode_uuid=nonexistent_uuid,
+        )
+
+    assert exc_info.value.episode_uuid == nonexistent_uuid
 
 
 @pytest.mark.asyncio

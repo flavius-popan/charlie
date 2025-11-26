@@ -463,6 +463,7 @@ async def extract_nodes(
         edges=[],
         episodic_edges=episodic_edges,
         journal=journal,
+        episode_uuid=episode_uuid,
     )
 
     with redis_ops() as r:

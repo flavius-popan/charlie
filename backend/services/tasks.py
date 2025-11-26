@@ -9,6 +9,9 @@ import time
 
 import backend.dspy_cache  # noqa: F401
 import dspy
+from graphiti_core.errors import NodeNotFoundError
+
+from backend.database.persistence import EpisodeDeletedError
 from backend.settings import ORCHESTRATOR_INTERVAL_SECONDS
 from .queue import huey
 
@@ -138,6 +141,18 @@ def extract_nodes_task(episode_uuid: str, journal: str):
     except TaskCancelled:
         logger.info("Task cancelled due to shutdown for episode %s", episode_uuid)
         return {"cancelled": True}
+    except EpisodeDeletedError as e:
+        from backend.database.redis_ops import remove_episode_from_queue
+
+        logger.info("Episode %s deleted during extraction, cleaning up", e.episode_uuid)
+        remove_episode_from_queue(episode_uuid, journal)
+        return {"episode_deleted": True, "uuid": episode_uuid}
+    except NodeNotFoundError:
+        from backend.database.redis_ops import remove_episode_from_queue
+
+        logger.info("Episode %s was deleted, cleaning up", episode_uuid)
+        remove_episode_from_queue(episode_uuid, journal)
+        return {"episode_deleted": True, "uuid": episode_uuid}
     except Exception:
         try:
             set_episode_status(episode_uuid, "dead", journal)
