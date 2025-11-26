@@ -1,0 +1,36 @@
+{
+  "extractor.predict": {
+    "traces": [],
+    "train": [],
+    "demos": [],
+    "signature": {
+      "instructions": "Extract meaningful entities from a personal journal entry by identifying and classifying specific named entities into predefined categories. The categories to use for classification are: \n\n1. **Person**: Individual people mentioned by name (e.g., Marcus, Elena, Dr. Patel).\n2. **Place**: Specific named locations and venues (e.g., Philz Coffee, Dolores Park).\n3. **Organization**: Named companies, teams, communities, or groups (e.g., Stripe).\n4. **Activity**: Named events, outings, routines, or recurring activities (e.g., breathing exercises).\n\nWhen performing the task, adhere to the following guidelines:\n\n- Prioritize extracting specific and well-defined entities over generic terms. For example, do not include vague or non-specific terms like \"tennis courts\" unless they are part of a larger, explicitly named location.\n- Ensure that each identified entity is classified correctly based on the context in which it appears in the journal entry. For instance, \"breathing exercises\" should be recognized as an activity due to its description of a routine.\n- Avoid redundant extractions; if a broader location encompasses specific features (like \"Dolores Park\" including \"tennis courts\"), only extract the broader entity.\n- Aim for high precision and recall in entity extraction, ensuring all relevant entities are captured without including unrelated or ambiguous terms.\n\nUse the provided journal entry content and entity types to generate a list of extracted entities in the specified format, ensuring clarity and accuracy in both the reasoning behind classifications and the final list of entities.",
+      "fields": [
+        {
+          "prefix": "Episode Content:",
+          "description": "personal journal entry text"
+        },
+        {
+          "prefix": "Entity Types:",
+          "description": "available entity type definitions with IDs"
+        },
+        {
+          "prefix": "Reasoning: Let's think step by step in order to",
+          "description": "${reasoning}"
+        },
+        {
+          "prefix": "Extracted Entities:",
+          "description": "entities found in the journal entry, each with name and most specific type ID"
+        }
+      ]
+    },
+    "lm": null
+  },
+  "metadata": {
+    "dependency_versions": {
+      "python": "3.13",
+      "dspy": "3.0.4",
+      "cloudpickle": "3.1"
+    }
+  }
+}
