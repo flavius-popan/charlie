@@ -37,3 +37,9 @@ python -m backend.optimizers.extract_nodes_optimizer --remote      # fast, HF en
 python -m backend.optimizers.extract_nodes_optimizer               # slow, local llama.cpp
 python -m backend.optimizers.extract_nodes_optimizer --remote --no-cache
 ```
+
+## Run Log
+
+| Date | Optimizer | Examples | Mode | Time | Baseline | Optimized | Notes |
+|------|-----------|----------|------|------|----------|-----------|-------|
+| 2025-11-25 | extract_nodes | 3 (2t/1v) | remote/BF16/L4 | 60m | 66.7% | 66.7% | FP8, pre-dynamic threads, 20 threads hardcoded |

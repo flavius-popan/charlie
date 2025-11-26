@@ -159,4 +159,6 @@ def evaluate_module(
         display_table=0,
     )
 
-    return evaluator(module)
+    result = evaluator(module)
+    # DSPy may return EvaluationResult object instead of float
+    return float(result) if not isinstance(result, (int, float)) else result
