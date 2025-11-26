@@ -74,30 +74,30 @@ def dayone_multi_entry_json(tmp_path):
 
 
 @pytest.fixture
-def blogger_xml_file(tmp_path):
-    """Create a temporary Blogger corpus XML file."""
-    xml_content = """<Blog>
+def basic_xml_file(tmp_path):
+    """Create a temporary XML file with date/post structure."""
+    xml_content = """<Root>
     <date>26,November,2025</date>
     <post>First blog post content.</post>
     <date>25,November,2025</date>
     <post>Second blog post content.</post>
-</Blog>"""
+</Root>"""
     xml_path = tmp_path / "corpus.xml"
     xml_path.write_text(xml_content)
     return xml_path
 
 
 @pytest.fixture
-def blogger_xml_with_empty(tmp_path):
-    """Blogger XML with empty posts that should be skipped."""
-    xml_content = """<Blog>
+def basic_xml_with_empty(tmp_path):
+    """XML with empty posts that should be skipped."""
+    xml_content = """<Root>
     <date>26,November,2025</date>
     <post>Valid post</post>
     <date>25,November,2025</date>
     <post>   </post>
     <date>24,November,2025</date>
     <post></post>
-</Blog>"""
+</Root>"""
     xml_path = tmp_path / "corpus_empty.xml"
     xml_path.write_text(xml_content)
     return xml_path

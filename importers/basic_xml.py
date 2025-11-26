@@ -1,23 +1,27 @@
 #!/usr/bin/env python
-"""Blogger corpus XML importer.
+"""Basic XML importer for date/post structured journals.
 
 Usage:
-    python importers/xml.py corpus.xml --timezone America/New_York [--dry-run] [--journal NAME]
+    python importers/basic_xml.py corpus.xml [--timezone America/New_York] [--dry-run] [--journal NAME]
 
-Expected XML format:
-    <Blog>
+Expected XML format (e.g., blog authorship corpus):
+    <Root>
         <date>26,November,2025</date>
         <post>Entry content here...</post>
         <date>25,November,2025</date>
         <post>Another entry...</post>
-    </Blog>
+    </Root>
 """
 
-import asyncio
 import sys
+from pathlib import Path
+
+# Enable direct script execution: python importers/basic_xml.py
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+import asyncio
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
-from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from rich.console import Console
@@ -25,24 +29,15 @@ from rich.console import Console
 from importers.utils import setup_argparse, import_entries, generate_file_uuid
 
 
-def parse_blogger_date(date_str: str, tz: ZoneInfo) -> datetime:
-    """Parse Blogger date format: DD,Month,YYYY.
-
-    Returns timezone-aware datetime in UTC.
-    """
-    # Format: "26,November,2025"
+def parse_date(date_str: str, tz: ZoneInfo) -> datetime:
+    """Parse date format: DD,Month,YYYY -> UTC datetime."""
     dt = datetime.strptime(date_str.strip(), "%d,%B,%Y")
-    # Apply timezone then convert to UTC
     local_dt = dt.replace(tzinfo=tz)
     return local_dt.astimezone(timezone.utc)
 
 
-def parse_blogger_xml(path: Path, tz: ZoneInfo) -> list[tuple[str, datetime, str]]:
-    """Parse Blogger corpus XML file.
-
-    Returns:
-        List of (content, datetime, uuid) tuples
-    """
+def parse_xml(path: Path, tz: ZoneInfo) -> list[tuple[str, datetime, str]]:
+    """Parse XML file with <date>/<post> structure."""
     tree = ET.parse(path)
     root = tree.getroot()
 
@@ -53,7 +48,7 @@ def parse_blogger_xml(path: Path, tz: ZoneInfo) -> list[tuple[str, datetime, str
 
     for elem in root:
         if elem.tag == "date":
-            current_date = parse_blogger_date(elem.text, tz)
+            current_date = parse_date(elem.text, tz)
         elif elem.tag == "post":
             if current_date is None:
                 continue
@@ -62,15 +57,25 @@ def parse_blogger_xml(path: Path, tz: ZoneInfo) -> list[tuple[str, datetime, str
             if not content:
                 continue
 
-            uuid = generate_file_uuid("blogger", f"{filepath_str}:{post_index}")
+            uuid = generate_file_uuid("basic_xml", f"{filepath_str}:{post_index}")
             entries.append((content, current_date, uuid))
             post_index += 1
 
     return entries
 
 
+def get_local_timezone() -> tuple[datetime.tzinfo, str]:
+    """Get local timezone, returns (tzinfo, display_name)."""
+    local_dt = datetime.now().astimezone()
+    local_tz = local_dt.tzinfo
+    # Try to get IANA name, fall back to offset string
+    tz_name = getattr(local_tz, "key", None) or local_dt.strftime("%Z")
+    return local_tz, tz_name
+
+
 async def main():
-    parser = setup_argparse("Import journal entries from Blogger corpus XML")
+    parser = setup_argparse("Import journal entries from XML with date/post structure")
+    parser.add_argument("--timezone", help="Timezone for entries (default: system timezone)")
     args = parser.parse_args()
 
     console = Console()
@@ -80,30 +85,30 @@ async def main():
         console.print(f"[red]File not found: {input_path}[/red]")
         sys.exit(1)
 
-    if not args.timezone:
-        console.print("[red]--timezone required (e.g., America/New_York, UTC)[/red]")
-        sys.exit(1)
+    if args.timezone:
+        try:
+            tz = ZoneInfo(args.timezone)
+        except Exception as e:
+            console.print(f"[red]Invalid timezone: {args.timezone} ({e})[/red]")
+            sys.exit(1)
+    else:
+        tz, tz_name = get_local_timezone()
+        console.print(f"[dim]Using system timezone: {tz_name} (use --timezone to override)[/dim]")
 
-    try:
-        tz = ZoneInfo(args.timezone)
-    except Exception as e:
-        console.print(f"[red]Invalid timezone: {args.timezone} ({e})[/red]")
-        sys.exit(1)
-
-    entries = parse_blogger_xml(input_path, tz)
+    entries = parse_xml(input_path, tz)
 
     if not entries:
         console.print("[yellow]No entries found to import[/yellow]")
         sys.exit(0)
 
-    console.print(f"Found {len(entries)} entries from Blogger corpus")
+    console.print(f"Found {len(entries)} entries")
 
     if args.dry_run:
         console.print("[yellow]Dry run - no changes will be made[/yellow]")
 
     imported, skipped = await import_entries(
         entries,
-        source="Blogger",
+        source="XML Import",
         journal=args.journal,
         dry_run=args.dry_run,
         console=console,

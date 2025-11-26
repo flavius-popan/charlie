@@ -23,7 +23,6 @@ def setup_argparse(description: str) -> ArgumentParser:
     parser.add_argument("input", help="Input file path")
     parser.add_argument("--dry-run", action="store_true", help="Show what would be imported without persisting")
     parser.add_argument("--journal", default=DEFAULT_JOURNAL, help=f"Target journal (default: {DEFAULT_JOURNAL})")
-    parser.add_argument("--timezone", help="Timezone for entries (e.g., America/New_York)")
     return parser
 
 

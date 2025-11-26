@@ -6,13 +6,17 @@ Usage:
     python importers/dayone.py export.json [--dry-run] [--journal NAME]
 """
 
+import sys
+from pathlib import Path
+
+# Enable direct script execution: python importers/dayone.py
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 import asyncio
 import json
 import re
-import sys
 import zipfile
 from datetime import datetime, timezone
-from pathlib import Path
 
 from rich.console import Console
 

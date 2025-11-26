@@ -38,16 +38,6 @@ class TestSetupArgparse:
         args = parser.parse_args(["input.json", "--journal", "custom"])
         assert args.journal == "custom"
 
-    def test_timezone_default_none(self):
-        parser = setup_argparse("Test description")
-        args = parser.parse_args(["input.json"])
-        assert args.timezone is None
-
-    def test_timezone_override(self):
-        parser = setup_argparse("Test description")
-        args = parser.parse_args(["input.json", "--timezone", "UTC"])
-        assert args.timezone == "UTC"
-
 
 class TestGenerateFileUuid:
     """Tests for deterministic UUID generation."""

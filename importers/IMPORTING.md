@@ -6,14 +6,14 @@ Import journal entries from external sources into charlie.
 
 | Format | Command |
 |--------|---------|
-| Day One | `python importers/dayone.py export.json` |
-| Day One (zip) | `python importers/dayone.py export.zip` |
-| Blogger XML | `python importers/xml.py corpus.xml --timezone UTC` |
+| Day One | `python importers/dayone.py export.zip` |
+| Basic XML | `python importers/basic_xml.py corpus.xml --timezone UTC` |
 
 ## Common Options
 
 All importers support:
 
+- `-h, --help` - Show help message and usage
 - `--dry-run` - Show what would be imported without persisting
 - `--journal NAME` - Target journal (default: charlie's default journal)
 
@@ -32,23 +32,23 @@ Features:
 - Cleans markdown escape characters
 - Skips empty entries
 
-## Blogger XML Importer
+## Basic XML Importer
 
-Imports from Blogger corpus XML format.
+Imports from XML files with `<date>/<post>` structure (e.g., blog authorship corpus).
 
 ```bash
-python importers/xml.py corpus.xml --timezone America/New_York
-python importers/xml.py corpus.xml --timezone UTC --dry-run
+python importers/basic_xml.py corpus.xml
+python importers/basic_xml.py corpus.xml --timezone America/New_York --dry-run
 ```
 
-The `--timezone` flag is required since the XML format has no timezone info.
+If `--timezone` is not specified, your system timezone is used (and logged).
 
 Expected XML format:
 ```xml
-<Blog>
+<Root>
     <date>26,November,2025</date>
     <post>Entry content here...</post>
-</Blog>
+</Root>
 ```
 
 ## Idempotency
