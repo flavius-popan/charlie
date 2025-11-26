@@ -36,10 +36,10 @@ def convert_dayone_uuid(hex_uuid: str) -> str:
 # Markdown cleaners: (pattern, replacement)
 # Applied in order during import
 MARKDOWN_CLEANERS = [
-    # Day One escapes periods, brackets, etc. with backslashes
-    (r"\\([.#*_\[\]()])", r"\1"),
-    # Day One image references use custom URL scheme that won't work elsewhere
+    # Day One image references use custom URL scheme - strip before unescape
     (r"!\[\]\(dayone-moment://[^)]+\)", ""),
+    # Day One escapes markdown special chars with backslashes: \. \! \# \* \, etc.
+    (r"\\([.!#*_\[\](){}+\-|`~<>,])", r"\1"),
 ]
 
 

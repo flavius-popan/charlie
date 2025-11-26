@@ -32,53 +32,113 @@ class TestConvertDayoneUuid:
 
 
 class TestCleanDayoneMarkdown:
-    """Tests for markdown escape cleaning."""
+    """Tests for markdown escape cleaning.
 
+    Day One escapes special characters with backslashes. These must be
+    removed to produce clean markdown that renders correctly and doesn't
+    confuse the entity extractor.
+    """
+
+    # Individual character tests
     def test_removes_escaped_periods(self):
-        result = clean_dayone_markdown(r"Hello\. World\.")
-        assert result == "Hello. World."
+        assert clean_dayone_markdown(r"Hello\. World\.") == "Hello. World."
+
+    def test_removes_escaped_exclamation(self):
+        assert clean_dayone_markdown(r"Good luck Charlie\!") == "Good luck Charlie!"
 
     def test_removes_escaped_hash(self):
-        result = clean_dayone_markdown(r"\# Not a header")
-        assert result == "# Not a header"
+        assert clean_dayone_markdown(r"\# Not a header") == "# Not a header"
 
     def test_removes_escaped_asterisks(self):
-        result = clean_dayone_markdown(r"\*not bold\*")
-        assert result == "*not bold*"
+        assert clean_dayone_markdown(r"\*not bold\*") == "*not bold*"
 
     def test_removes_escaped_underscores(self):
-        result = clean_dayone_markdown(r"\_not italic\_")
-        assert result == "_not italic_"
+        assert clean_dayone_markdown(r"\_not italic\_") == "_not italic_"
 
     def test_removes_escaped_brackets(self):
-        result = clean_dayone_markdown(r"\[not a link\]")
-        assert result == "[not a link]"
+        assert clean_dayone_markdown(r"\[not a link\]") == "[not a link]"
 
     def test_removes_escaped_parens(self):
-        result = clean_dayone_markdown(r"\(not a link url\)")
-        assert result == "(not a link url)"
+        assert clean_dayone_markdown(r"\(not a link url\)") == "(not a link url)"
 
+    def test_removes_escaped_curly_braces(self):
+        assert clean_dayone_markdown(r"\{code\}") == "{code}"
+
+    def test_removes_escaped_plus(self):
+        assert clean_dayone_markdown(r"1\+ 2") == "1+ 2"
+
+    def test_removes_escaped_minus(self):
+        assert clean_dayone_markdown(r"\- item") == "- item"
+
+    def test_removes_escaped_pipe(self):
+        assert clean_dayone_markdown(r"a \| b") == "a | b"
+
+    def test_removes_escaped_backtick(self):
+        assert clean_dayone_markdown(r"\`code\`") == "`code`"
+
+    def test_removes_escaped_tilde(self):
+        assert clean_dayone_markdown(r"\~\~strikethrough\~\~") == "~~strikethrough~~"
+
+    def test_removes_escaped_angle_brackets(self):
+        assert clean_dayone_markdown(r"\<html\>") == "<html>"
+
+    def test_removes_escaped_commas(self):
+        assert clean_dayone_markdown(r"Topics: AI\, coding\, life") == "Topics: AI, coding, life"
+
+    # Preservation tests
     def test_preserves_normal_backslashes(self):
-        result = clean_dayone_markdown(r"path\\to\\file")
-        assert result == r"path\\to\\file"
+        assert clean_dayone_markdown(r"path\\to\\file") == r"path\\to\\file"
 
-    def test_handles_mixed_content(self):
-        result = clean_dayone_markdown(r"# Header\. List: 1\. 2\. 3\.")
-        assert result == "# Header. List: 1. 2. 3."
+    def test_preserves_backslash_before_letters(self):
+        assert clean_dayone_markdown(r"line\nbreak") == r"line\nbreak"
 
+    def test_preserves_normal_markdown_images(self):
+        assert clean_dayone_markdown("![alt](https://example.com/image.png)") == "![alt](https://example.com/image.png)"
+
+    # Image reference tests
     def test_strips_dayone_image_references(self):
         result = clean_dayone_markdown("Before ![](dayone-moment://DE9D21695B6B480BBC86D42E861AC857) After")
         assert result == "Before  After"
 
     def test_strips_multiple_image_references(self):
-        result = clean_dayone_markdown(
-            "![](dayone-moment://AAA) text ![](dayone-moment://BBB)"
-        )
+        result = clean_dayone_markdown("![](dayone-moment://AAA) text ![](dayone-moment://BBB)")
         assert result == " text "
 
-    def test_preserves_normal_markdown_images(self):
-        result = clean_dayone_markdown("![alt](https://example.com/image.png)")
-        assert result == "![alt](https://example.com/image.png)"
+    # Comprehensive before/after tests
+    def test_realistic_entry_with_escapes(self):
+        before = r"Good luck Charlie\! This is a test\. Here's a list: 1\. First 2\. Second"
+        after = "Good luck Charlie! This is a test. Here's a list: 1. First 2. Second"
+        assert clean_dayone_markdown(before) == after
+
+    def test_entry_with_image_and_escapes(self):
+        before = r"Check this out\! ![](dayone-moment://ABC123) Pretty cool\."
+        after = "Check this out!  Pretty cool."
+        assert clean_dayone_markdown(before) == after
+
+    def test_no_trailing_backslashes(self):
+        """Ensure no stray backslashes remain after cleaning."""
+        cases = [
+            r"Hello\. World\!",
+            r"\# Header\.",
+            r"List\: 1\. 2\. 3\.",
+            r"Name\: Charlie\!",
+        ]
+        for text in cases:
+            result = clean_dayone_markdown(text)
+            # No backslash should precede punctuation in output
+            assert r"\." not in result, f"Found \\. in: {result}"
+            assert r"\!" not in result, f"Found \\! in: {result}"
+            assert r"\:" not in result or ":" not in text.replace(r"\:", ""), f"Found \\: in: {result}"
+
+    def test_output_is_valid_for_entity_extraction(self):
+        """Output should be clean text suitable for LLM entity extraction."""
+        before = r"Met with Charlie\! Great conversation\. Topics: AI\, coding\."
+        result = clean_dayone_markdown(before)
+        # Should contain the actual names/words without escape artifacts
+        assert "Charlie!" in result
+        assert "conversation." in result
+        # Should not have backslash-escaped sequences
+        assert "\\" not in result or result.count("\\") == before.count("\\\\")
 
 
 class TestParseDayoneDate:
