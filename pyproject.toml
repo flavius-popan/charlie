@@ -41,6 +41,7 @@ markers = [
 ]
 filterwarnings = [
     "ignore:Support for class-based `config` is deprecated:DeprecationWarning",
+    "ignore:The `local_dir_use_symlinks` argument is deprecated:UserWarning",
     # Note: The following Textual warnings appear during interpreter shutdown and
     # cannot be suppressed via filterwarnings. See tests/conftest.py for details.
     "ignore:coroutine.*was never awaited:RuntimeWarning",
