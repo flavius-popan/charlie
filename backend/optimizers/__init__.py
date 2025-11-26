@@ -54,7 +54,7 @@ GEPA_AUTO_MODE = os.getenv("GEPA_AUTO_MODE", "light")
 
 # Thread counts: local llama.cpp can't fork safely, remote can burst
 GEPA_NUM_THREADS_LOCAL = 1
-GEPA_NUM_THREADS_REMOTE = 50
+GEPA_NUM_THREADS_REMOTE = 80
 
 # =============================================================================
 # Remote (HuggingFace) Configuration
@@ -72,16 +72,16 @@ def get_task_lm(*, remote: bool = False) -> dspy.LM:
         remote: If True, use HuggingFace endpoint. If False, use local llama.cpp.
     """
     if remote:
-        # litellm uses HUGGINGFACE_API_KEY env var by convention
+        # HF Inference Endpoints with vLLM expose OpenAI-compatible API
         api_key = os.getenv("HUGGINGFACE_API_KEY") or os.getenv("HF_TOKEN")
         if not api_key:
             raise ValueError(
                 "HUGGINGFACE_API_KEY (or HF_TOKEN) required for remote optimization"
             )
         return dspy.LM(
-            model="huggingface/tgi",
+            model="openai/unsloth/Qwen3-4B-Instruct-2507",
             api_key=api_key,
-            api_base=HF_ENDPOINT_URL,
+            api_base=HF_ENDPOINT_URL + "/v1",
             temperature=MODEL_CONFIG["temp"],
             max_tokens=MODEL_CONFIG["max_tokens"],
         )
@@ -116,25 +116,22 @@ def configure_dspy(*, remote: bool = False):
         logger.info("Configured DSPy with local model: %s", MODEL_REPO_ID)
 
 
-def evaluate_module(module, dataset: list, metric_fn) -> float:
-    """Evaluate a DSPy module on a dataset."""
+def evaluate_module(
+    module, dataset: list, metric_fn, *, num_threads: int | None = None
+) -> float:
+    """Evaluate a DSPy module on a dataset using parallel threads."""
     if not dataset:
         return 0.0
-    scores = []
-    for ex in dataset:
-        try:
-            pred = module(
-                episode_content=ex.episode_content, entity_types=ex.entity_types
-            )
-            result = metric_fn(ex, pred)
-            # NOTE: dspy.Prediction inherits from Example which implements __getitem__,
-            # so both result.score and result['score'] work. Using dict-style here.
-            if hasattr(result, "score"):
-                score = result["score"]
-            else:
-                score = result  # Assume float
-            scores.append(float(score))
-        except Exception as e:
-            logger.warning("Error evaluating example: %s", e)
-            scores.append(0.0)
-    return sum(scores) / len(scores)
+
+    if num_threads is None:
+        num_threads = GEPA_NUM_THREADS_LOCAL
+
+    evaluator = dspy.Evaluate(
+        devset=dataset,
+        metric=metric_fn,
+        num_threads=num_threads,
+        display_progress=True,
+        display_table=0,
+    )
+
+    return evaluator(module)

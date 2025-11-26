@@ -163,26 +163,27 @@ def main():
     trainset, valset = load_examples()
     logger.info("Loaded %d train, %d val examples", len(trainset), len(valset))
 
+    num_threads = GEPA_NUM_THREADS_REMOTE if args.remote else GEPA_NUM_THREADS_LOCAL
+    logger.info("Using num_threads=%d", num_threads)
+
     # Use load_prompts=False to get true baseline without cached optimizations
     baseline = EntityExtractor(load_prompts=False)
-    baseline_score = evaluate_module(baseline, valset, metric)
+    baseline_score = evaluate_module(baseline, valset, metric, num_threads=num_threads)
     logger.info("Baseline: %.3f", baseline_score)
 
-    num_threads = GEPA_NUM_THREADS_REMOTE if args.remote else GEPA_NUM_THREADS_LOCAL
     gepa = GEPA(
         metric=metric,
         reflection_lm=reflection_lm,
-        auto=GEPA_AUTO_MODE,  # "light", "medium", or "heavy"
+        auto=GEPA_AUTO_MODE,
         num_threads=num_threads,
     )
-    logger.info("GEPA configured with num_threads=%d", num_threads)
 
     start_time = time.perf_counter()
     optimized = gepa.compile(student=baseline, trainset=trainset, valset=valset)
     elapsed = time.perf_counter() - start_time
     logger.info("GEPA optimization completed in %.1f seconds (%.1f minutes)", elapsed, elapsed / 60)
 
-    optimized_score = evaluate_module(optimized, valset, metric)
+    optimized_score = evaluate_module(optimized, valset, metric, num_threads=num_threads)
     logger.info("Optimized: %.3f", optimized_score)
 
     PROMPT_OUTPUT.parent.mkdir(parents=True, exist_ok=True)
