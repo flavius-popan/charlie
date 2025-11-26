@@ -33,12 +33,21 @@ def convert_dayone_uuid(hex_uuid: str) -> str:
     return f"{h[:8]}-{h[8:12]}-{h[12:16]}-{h[16:20]}-{h[20:]}"
 
 
-def clean_dayone_markdown(text: str) -> str:
-    r"""Remove Day One's escaped characters from markdown.
+# Markdown cleaners: (pattern, replacement)
+# Applied in order during import
+MARKDOWN_CLEANERS = [
+    # Day One escapes periods, brackets, etc. with backslashes
+    (r"\\([.#*_\[\]()])", r"\1"),
+    # Day One image references use custom URL scheme that won't work elsewhere
+    (r"!\[\]\(dayone-moment://[^)]+\)", ""),
+]
 
-    Day One escapes periods as \. in markdown, which renders poorly elsewhere.
-    """
-    return re.sub(r"\\([.#*_\[\]()])", r"\1", text)
+
+def clean_dayone_markdown(text: str) -> str:
+    """Apply all markdown cleaners to normalize Day One content."""
+    for pattern, replacement in MARKDOWN_CLEANERS:
+        text = re.sub(pattern, replacement, text)
+    return text
 
 
 def parse_dayone_date(iso_string: str) -> datetime:

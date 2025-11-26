@@ -66,6 +66,20 @@ class TestCleanDayoneMarkdown:
         result = clean_dayone_markdown(r"# Header\. List: 1\. 2\. 3\.")
         assert result == "# Header. List: 1. 2. 3."
 
+    def test_strips_dayone_image_references(self):
+        result = clean_dayone_markdown("Before ![](dayone-moment://DE9D21695B6B480BBC86D42E861AC857) After")
+        assert result == "Before  After"
+
+    def test_strips_multiple_image_references(self):
+        result = clean_dayone_markdown(
+            "![](dayone-moment://AAA) text ![](dayone-moment://BBB)"
+        )
+        assert result == " text "
+
+    def test_preserves_normal_markdown_images(self):
+        result = clean_dayone_markdown("![alt](https://example.com/image.png)")
+        assert result == "![alt](https://example.com/image.png)"
+
 
 class TestParseDayoneDate:
     """Tests for ISO date parsing."""
