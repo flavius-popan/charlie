@@ -276,7 +276,7 @@ def enqueue_pending_episodes() -> int:
 
     Note:
         Only enqueues if inference is enabled.
-        Safe to call multiple times - tasks check status for idempotency.
+        Huey's unique=True on extract_nodes_task handles deduplication.
         Background tasks are enqueued with priority=0 (low priority).
     """
     if not get_inference_enabled():

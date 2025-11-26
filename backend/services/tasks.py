@@ -36,7 +36,7 @@ def check_cancellation():
         raise TaskCancelled("Shutdown requested")
 
 
-@huey.task()
+@huey.task(unique=True)
 def extract_nodes_task(episode_uuid: str, journal: str):
     """Background entity extraction task.
 
@@ -64,19 +64,19 @@ def extract_nodes_task(episode_uuid: str, journal: str):
     from backend.graph.extract_nodes import extract_nodes
     from backend.inference.manager import cleanup_if_no_work, get_model, is_model_loading_blocked
 
-    logger.info("extract_nodes_task started for episode %s", episode_uuid)
-
     try:
         check_cancellation()  # Entry checkpoint
 
         current_status = get_episode_status(episode_uuid, journal)
         if current_status != "pending_nodes":
-            logger.info(
+            logger.debug(
                 "Episode %s already processed (status: %s), skipping",
                 episode_uuid,
                 current_status,
             )
             return {"already_processed": True, "status": current_status}
+
+        logger.info("extract_nodes_task started for episode %s", episode_uuid)
 
         if not get_inference_enabled():
             logger.info("Inference disabled, leaving episode %s in pending_nodes", episode_uuid)
@@ -113,11 +113,12 @@ def extract_nodes_task(episode_uuid: str, journal: str):
         # Self entity "I" doesn't count - edges need at least one other node
         if result.extracted_count > 0:
             set_episode_status(episode_uuid, "pending_edges", journal, uuid_map=result.uuid_map)
-            logger.info(
-                "Transitioned episode %s to pending_edges with %d uuid mappings",
-                episode_uuid,
-                len(result.uuid_map),
-            )
+            # TODO: Uncomment this log when extract_edges_task is implemented
+            # logger.info(
+            #     "Transitioned episode %s to pending_edges with %d uuid mappings",
+            #     episode_uuid,
+            #     len(result.uuid_map),
+            # )
 
             # TODO: Uncomment when extract_edges_task is implemented
             # from backend.services.tasks import extract_edges_task
