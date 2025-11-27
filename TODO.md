@@ -1,6 +1,4 @@
 # Stability Fixes
-- Opening/closing connections pane during inference is really buggy,
-  only re-opens after finishing inference.
 - Any other systems in need of an FSM for safety?
 - BACKUPS! Need to think of ways to always have backups.
 
