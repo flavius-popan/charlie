@@ -80,12 +80,20 @@ class SidebarStateMachine(StateMachine):
     empty_idle = State()
 
     # Events
+    # Make "show" idempotent: if the sidebar is already visible, treat show as a
+    # no-op to avoid TransitionNotAllowed when UI state and machine visibility get
+    # temporarily out of sync.
     show = (
         hidden.to(disabled, cond="_should_go_disabled")
         | hidden.to(processing_nodes, cond="_should_go_processing")
         | hidden.to(awaiting_edges, cond="_should_go_awaiting")
         | hidden.to(ready_entities, cond="_should_go_ready")
         | hidden.to(empty_idle)
+        | disabled.to(disabled)
+        | processing_nodes.to(processing_nodes)
+        | awaiting_edges.to(awaiting_edges)
+        | ready_entities.to(ready_entities)
+        | empty_idle.to(empty_idle)
     )
 
     hide = (

@@ -139,7 +139,7 @@ async def test_view_screen_toggle_connections_auto_selects_first_item():
                 {"uuid": "uuid-1", "name": "Sarah", "type": "Person"},
                 {"uuid": "uuid-2", "name": "Park", "type": "Place"},
             ]
-            sidebar.loading = False
+            sidebar.cache_loading = False
 
             await pilot.pause()
 
@@ -220,7 +220,7 @@ async def test_toggle_connections_starts_polling_and_refreshes_when_pending():
                             # Sidebar should start hidden for from_edit=False
                             assert sidebar.display is False
                             # Loading remains True while entry is pending
-                            assert sidebar.loading is True
+                            assert sidebar.cache_loading is True
 
                             # Toggle connections on (starts polling)
                             await pilot.press("c")
@@ -233,9 +233,21 @@ async def test_toggle_connections_starts_polling_and_refreshes_when_pending():
 async def test_view_screen_from_edit_starts_polling_and_spinner_when_pending():
     """Opening ViewScreen from Edit flow should keep loading, start polling, and show spinner."""
 
+    # Mock Redis to say this episode IS actively processing
+    def mock_hgetall(key):
+        if key == "task:active_episode":
+            return {b"uuid": b"test-uuid", b"journal": b"test"}
+        return {}
+
     with patch("charlie.get_episode", new_callable=AsyncMock) as mock_get, patch(
         "frontend.screens.view_screen.get_episode_status", return_value="pending_nodes"
-    ), patch("charlie.get_inference_enabled", return_value=True):
+    ), patch("charlie.get_inference_enabled", return_value=True), patch(
+        "frontend.screens.view_screen.redis_ops"
+    ) as mock_redis_ctx:
+        # Setup Redis mock to return active episode
+        mock_redis = mock_redis_ctx.return_value.__enter__.return_value
+        mock_redis.hgetall = mock_hgetall
+
         mock_get.return_value = {
             "uuid": "test-uuid",
             "content": "# Test\nContent",
@@ -276,8 +288,9 @@ async def test_view_screen_from_edit_starts_polling_and_spinner_when_pending():
 
                 assert poll_started is True, "Polling should start when pending from edit flow"
                 # Check that worker would be running (in real scenario, not mocked set_interval)
-                assert sidebar.loading is True, "Sidebar should remain in loading state while pending"
-                assert sidebar.active_processing is True, "Sidebar should mark processing as active"
+                assert sidebar.cache_loading is True, "Sidebar should remain in loading state while pending"
+                # active_episode_uuid should match this episode
+                assert sidebar.active_episode_uuid == "test-uuid", "Should have active episode UUID"
 
                 content = sidebar.query_one("#entity-content")
                 assert content.query(LoadingIndicator), "Spinner should be visible while processing"

@@ -76,9 +76,9 @@ def test_extract_nodes_task_with_entities_extracted(episode_uuid):
 
                             mock_get_model.assert_called_once_with("llm")
                             mock_extract.assert_called_once_with(episode_uuid, DEFAULT_JOURNAL)
-                            # With entities extracted, should transition to pending_edges
+                            # With entities extracted, should transition to done (edges task TBD)
                             mock_set_status.assert_called_once_with(
-                                episode_uuid, "pending_edges", DEFAULT_JOURNAL, uuid_map=mock_result.uuid_map
+                                episode_uuid, "done", DEFAULT_JOURNAL, uuid_map=mock_result.uuid_map
                             )
                             mock_cleanup.assert_called_once()
 
@@ -278,9 +278,9 @@ def test_extract_nodes_task_removes_from_queue_on_success(episode_uuid):
 
                             extract_nodes_task.call_local(episode_uuid, DEFAULT_JOURNAL)
 
-                            # With entities extracted, should transition to pending_edges
+                            # With entities extracted, should transition to done (edges task TBD)
                             mock_set_status.assert_called_once_with(
-                                episode_uuid, "pending_edges", DEFAULT_JOURNAL, uuid_map={"prov": "canon"}
+                                episode_uuid, "done", DEFAULT_JOURNAL, uuid_map={"prov": "canon"}
                             )
 
 

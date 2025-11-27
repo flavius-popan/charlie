@@ -57,8 +57,10 @@ def extract_nodes_task(episode_uuid: str, journal: str):
         Higher priority numbers are processed first.
     """
     from backend.database.redis_ops import (
+        clear_active_episode,
         get_episode_status,
         get_inference_enabled,
+        set_active_episode,
         set_episode_status,
     )
     from backend.graph.extract_nodes import extract_nodes
@@ -75,6 +77,9 @@ def extract_nodes_task(episode_uuid: str, journal: str):
                 current_status,
             )
             return {"already_processed": True, "status": current_status}
+
+        # Mark this episode as actively processing (for spinner display)
+        set_active_episode(episode_uuid, journal)
 
         logger.info("extract_nodes_task started for episode %s", episode_uuid)
 
@@ -109,20 +114,16 @@ def extract_nodes_task(episode_uuid: str, journal: str):
             result.resolved_count,
         )
 
-        # Only transition to pending_edges if entities were extracted
-        # Self entity "I" doesn't count - edges need at least one other node
+        # Edges extraction task is not implemented yet. We mark episodes as DONE
+        # immediately after node extraction so the UI stops showing spinners.
+        # When extract_edges_task lands, switch this back to pending_edges and
+        # enqueue the edges task.
         if result.extracted_count > 0:
-            set_episode_status(episode_uuid, "pending_edges", journal, uuid_map=result.uuid_map)
-            # TODO: Uncomment this log when extract_edges_task is implemented
-            # logger.info(
-            #     "Transitioned episode %s to pending_edges with %d uuid mappings",
-            #     episode_uuid,
-            #     len(result.uuid_map),
-            # )
-
-            # TODO: Uncomment when extract_edges_task is implemented
-            # from backend.services.tasks import extract_edges_task
-            # extract_edges_task(episode_uuid, journal)
+            set_episode_status(episode_uuid, "done", journal, uuid_map=result.uuid_map)
+            logger.info(
+                "Marked episode %s done after node extraction (edges task TBD)",
+                episode_uuid,
+            )
         else:
             # No entities extracted (only self or nothing) - no edges possible
             set_episode_status(episode_uuid, "done", journal)
@@ -164,6 +165,10 @@ def extract_nodes_task(episode_uuid: str, journal: str):
         logger.exception("extract_nodes_task failed for episode %s", episode_uuid)
         raise
     finally:
+        try:
+            clear_active_episode()
+        except Exception:
+            logger.warning("Failed to clear active episode", exc_info=True)
         try:
             cleanup_if_no_work()
         except Exception:

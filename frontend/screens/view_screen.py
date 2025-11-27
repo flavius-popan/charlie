@@ -10,9 +10,11 @@ from textual.screen import Screen
 from textual.widgets import Footer, Header, ListView, Markdown
 
 from backend.database import get_episode
+from backend.database.redis_ops import redis_ops
 from backend.database.redis_ops import (
     get_episode_status,
     get_inference_enabled,
+    is_episode_actively_processing,
 )
 from backend.settings import DEFAULT_JOURNAL
 from textual.worker import WorkerCancelled
@@ -57,6 +59,7 @@ class ViewScreen(Screen):
     status: reactive[str | None] = reactive(None)
     inference_enabled: reactive[bool] = reactive(True)
     active_processing: reactive[bool] = reactive(False)
+    active_episode_uuid: reactive[str | None] = reactive(None)
 
     def __init__(
         self,
@@ -94,6 +97,7 @@ class ViewScreen(Screen):
             inference_enabled=self.inference_enabled,
             status=self.status,
             active_processing=self.active_processing,
+            active_episode_uuid=self.active_episode_uuid,
             on_entity_deleted=self._on_entity_deleted,
             id="entity-sidebar",
         )
@@ -103,6 +107,7 @@ class ViewScreen(Screen):
             status=ViewScreen.status,
             active_processing=ViewScreen.active_processing,
             inference_enabled=ViewScreen.inference_enabled,
+            active_episode_uuid=ViewScreen.active_episode_uuid,
         )
 
         yield Header(show_clock=False, icon="")
@@ -115,8 +120,9 @@ class ViewScreen(Screen):
     async def on_mount(self):
         await self.load_episode()
 
-        # Sync inference/status context to sidebar
-        self._refresh_sidebar_context()
+        # Sync inference/status context to sidebar (async to avoid blocking)
+        await self._refresh_sidebar_context_async()
+        await self._update_active_processing_async()
 
         # Show sidebar only if coming from EditScreen
         sidebar = self.query_one("#entity-sidebar", EntitySidebar)
@@ -152,25 +158,53 @@ class ViewScreen(Screen):
 
     async def on_screen_resume(self):
         """Called when returning to this screen."""
-        self._refresh_sidebar_context()
+        await self._refresh_sidebar_context_async()
+        await self._update_active_processing_async()
         await self.load_episode()
 
     def _sync_machine_output(self) -> None:
-        """Sync machine output to reactive properties for sidebar consumption."""
+        """Sync machine output to reactive properties for sidebar consumption.
+
+        NOTE: Only sets active_processing=False when machine indicates processing is DONE.
+        When machine says we SHOULD be processing, active_processing is controlled by
+        _update_active_processing_async() to distinguish actively-processing vs queued episodes.
+        """
         output = self.sidebar_machine.output
         self.status = output.status
-        self.active_processing = output.active_processing
 
-        # Inference state is handled separately in _refresh_sidebar_context
-        # since it requires reading from Redis
+        # When machine says processing is done, we know active_processing is False
+        # (no Redis check needed). When machine says we should be processing,
+        # leave it alone - _update_active_processing_async() handles that case.
+        if not output.active_processing:
+            self.active_processing = False
+
+    async def _update_active_processing_async(self) -> None:
+        """Check if THIS episode is actively processing (async-safe).
+
+        Spinner should show only for the single episode Huey is working on.
+        """
+        def _get_active_uuid():
+            with redis_ops() as r:
+                data = r.hgetall("task:active_episode")
+                if not data:
+                    return None
+                try:
+                    return data.get(b"uuid", b"").decode()
+                except Exception:
+                    return None
+
+        active_uuid = await asyncio.to_thread(_get_active_uuid)
+        self.active_episode_uuid = active_uuid
+        self.active_processing = bool(active_uuid and active_uuid == self.episode_uuid)
 
     async def load_episode(self):
         try:
             self.episode = await get_episode(self.episode_uuid)
 
             if self.episode:
-                # Refresh sidebar context in case status changed externally
-                self._refresh_sidebar_context()
+                # Refresh sidebar context in case status changed externally (async to avoid blocking)
+                await self._refresh_sidebar_context_async()
+                await self._update_active_processing_async()
                 markdown = self.query_one("#journal-content", Markdown)
                 await markdown.update(self.episode["content"])
             else:
@@ -196,7 +230,7 @@ class ViewScreen(Screen):
         self.workers.cancel_group(self, "status-poll")
         self.app.pop_screen()
 
-    def action_toggle_connections(self) -> None:
+    async def action_toggle_connections(self) -> None:
         """Toggle sidebar visibility and focus if opened."""
         sidebar = self.query_one("#entity-sidebar", EntitySidebar)
         current_visible = self.sidebar_machine.output.visible
@@ -205,14 +239,19 @@ class ViewScreen(Screen):
             # Hide sidebar
             self.sidebar_machine.send("hide")
             self._sync_machine_output()
+            self.active_processing = False  # No spinner when hidden
             sidebar.display = False
             self.workers.cancel_group(self, "status-poll")
         else:
             # Show sidebar - refresh context and route event
             sidebar.display = True
-            self._refresh_sidebar_context()
+            await self._refresh_sidebar_context_async()
             self.sidebar_machine.send("show", status=self.sidebar_machine.output.status)
             self._sync_machine_output()
+
+            # Check if this episode is actively processing (async)
+            await self._update_active_processing_async()
+
             sidebar._update_content()
 
             # Start polling if machine indicates we should
@@ -257,6 +296,9 @@ class ViewScreen(Screen):
 
                 self._sync_machine_output()
 
+                # Check if this episode is actively processing (async)
+                await self._update_active_processing_async()
+
                 # When extraction complete, refresh and stop
                 if status in ("pending_edges", "done", None):
                     try:
@@ -269,6 +311,7 @@ class ViewScreen(Screen):
                         else:
                             self.sidebar_machine.send("cache_empty", entities_present=False)
                         self._sync_machine_output()
+                        await self._update_active_processing_async()
                     except NoMatches:
                         logger.debug("Sidebar not found during poll - stopping")
                     except Exception as exc:
@@ -311,6 +354,29 @@ class ViewScreen(Screen):
             # Machine already has best-known state; skip update on error
             return
 
+        self._apply_sidebar_context(inferred_enabled, status)
+
+    async def _refresh_sidebar_context_async(self):
+        """Update sidebar context without blocking the UI (async version)."""
+        try:
+            self.query_one("#entity-sidebar", EntitySidebar)
+        except NoMatches:
+            logger.debug("Sidebar not yet mounted; skipping context refresh")
+            return
+
+        try:
+            inferred_enabled = await asyncio.to_thread(get_inference_enabled)
+            status = await asyncio.to_thread(
+                get_episode_status, self.episode_uuid, self.journal
+            )
+        except Exception as exc:
+            logger.debug("Failed to refresh sidebar context: %s", exc)
+            return
+
+        self._apply_sidebar_context(inferred_enabled, status)
+
+    def _apply_sidebar_context(self, inferred_enabled: bool, status: str | None):
+        """Apply inference and status context to sidebar state machine."""
         # Update machine with fresh context
         if inferred_enabled != self.sidebar_machine.inference_enabled_flag:
             if inferred_enabled:

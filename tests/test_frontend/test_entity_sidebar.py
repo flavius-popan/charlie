@@ -66,7 +66,7 @@ async def test_entity_sidebar_shows_loading_initially():
     async with app.run_test():
         sidebar = app.query_one(EntitySidebar)
         # Should be in loading state
-        assert sidebar.loading is True
+        assert sidebar.cache_loading is True
 
 
 @pytest.mark.asyncio
@@ -76,9 +76,10 @@ async def test_entity_sidebar_shows_loading_indicator_when_loading():
 
     async with app.run_test():
         sidebar = app.query_one(EntitySidebar)
-        sidebar.loading = True
+        sidebar.cache_loading = True
         sidebar.status = "pending_nodes"
-        sidebar.active_processing = True
+        sidebar.episode_uuid = "test-uuid"
+        sidebar.active_episode_uuid = "test-uuid"  # This episode is actively processing
         sidebar._update_content()
 
         content = sidebar.query_one("#entity-content")
@@ -98,7 +99,7 @@ async def test_entity_sidebar_displays_entities():
             {"uuid": "uuid-1", "name": "Sarah", "type": "Person"},
             {"uuid": "uuid-2", "name": "Central Park", "type": "Place"},
         ]
-        sidebar.loading = False
+        sidebar.cache_loading = False
 
         await pilot.pause()
 
@@ -120,7 +121,7 @@ async def test_entity_sidebar_formats_entity_labels():
             {"uuid": "uuid-1", "name": "Sarah", "type": "Person"},
             {"uuid": "uuid-2", "name": "Park", "type": "Entity"},
         ]
-        sidebar.loading = False
+        sidebar.cache_loading = False
 
         await pilot.pause()
 
@@ -160,7 +161,7 @@ async def test_entity_sidebar_refresh_entities():
             sidebar = app.query_one(EntitySidebar)
             await sidebar.refresh_entities()
 
-            assert sidebar.loading is False
+            assert sidebar.cache_loading is False
             assert sidebar.entities == mock_entities
 
 
@@ -174,7 +175,7 @@ async def test_entity_sidebar_shows_delete_confirmation():
         sidebar.entities = [
             {"uuid": "uuid-1", "name": "Sarah", "type": "Person"},
         ]
-        sidebar.loading = False
+        sidebar.cache_loading = False
 
         await pilot.pause()
 
@@ -201,7 +202,7 @@ async def test_entity_sidebar_deletes_entity():
                 {"uuid": "uuid-1", "name": "Sarah", "type": "Person"},
                 {"uuid": "uuid-2", "name": "Park", "type": "Place"},
             ]
-            sidebar.loading = False
+            sidebar.cache_loading = False
 
             await pilot.pause()
 
@@ -236,7 +237,7 @@ async def test_entity_sidebar_delete_last_entity_shows_no_connections():
             sidebar.entities = [
                 {"uuid": "uuid-1", "name": "Sarah", "type": "Person"},
             ]
-            sidebar.loading = False
+            sidebar.cache_loading = False
             sidebar.status = "pending_nodes"
             sidebar.inference_enabled = True
             sidebar.active_processing = False
@@ -282,7 +283,7 @@ async def test_entity_sidebar_auto_selects_first_item():
             {"uuid": "uuid-1", "name": "Sarah", "type": "Person"},
             {"uuid": "uuid-2", "name": "Park", "type": "Place"},
         ]
-        sidebar.loading = False
+        sidebar.cache_loading = False
 
         await pilot.pause()
 
@@ -317,7 +318,7 @@ async def test_entity_sidebar_batch_update_triggers_single_render():
                 {"uuid": "uuid-1", "name": "Sarah", "type": "Person"},
                 {"uuid": "uuid-2", "name": "Park", "type": "Place"},
             ]
-            sidebar.loading = False
+            sidebar.cache_loading = False
 
         await pilot.pause()
 
@@ -364,7 +365,7 @@ async def test_entity_sidebar_batch_update_atomicity():
 
             # Verify final state
             assert sidebar.entities == mock_entities
-            assert sidebar.loading is False
+            assert sidebar.cache_loading is False
 
 
 @pytest.mark.asyncio
@@ -388,7 +389,7 @@ async def test_entity_sidebar_refresh_with_missing_cache_key():
             await pilot.pause()
 
             # Should stay in loading state
-            assert sidebar.loading is True
+            assert sidebar.cache_loading is True
 
             # Entities should stay empty
             assert sidebar.entities == []
@@ -416,7 +417,7 @@ async def test_entity_sidebar_refresh_with_malformed_json():
                 await pilot.pause()
 
                 # Should set loading to False (graceful fail)
-        assert sidebar.loading is False
+        assert sidebar.cache_loading is False
 
         # Error should be logged (called at least once)
         assert mock_logger.error.call_count >= 1
@@ -431,7 +432,7 @@ async def test_sidebar_shows_disabled_message_when_inference_off_pending():
         sidebar = app.query_one(EntitySidebar)
         sidebar.inference_enabled = False
         sidebar.status = "pending_nodes"
-        sidebar.loading = True
+        sidebar.cache_loading = True
         sidebar.entities = []
 
         sidebar._update_content()
@@ -442,7 +443,7 @@ async def test_sidebar_shows_disabled_message_when_inference_off_pending():
         rendered = label.render()
         text = rendered.plain if hasattr(rendered, "plain") else str(rendered)
         assert "Inference disabled" in text
-        assert sidebar.loading is False
+        assert sidebar.cache_loading is False
 
 
 @pytest.mark.asyncio
@@ -454,7 +455,7 @@ async def test_sidebar_shows_disabled_message_when_inference_off_done():
         sidebar = app.query_one(EntitySidebar)
         sidebar.inference_enabled = False
         sidebar.status = "done"
-        sidebar.loading = True
+        sidebar.cache_loading = True
         sidebar.entities = []
 
         sidebar._update_content()
@@ -465,7 +466,7 @@ async def test_sidebar_shows_disabled_message_when_inference_off_done():
         rendered = label.render()
         text = rendered.plain if hasattr(rendered, "plain") else str(rendered)
         assert "Inference disabled" in text
-        assert sidebar.loading is False
+        assert sidebar.cache_loading is False
 
 
 @pytest.mark.asyncio
@@ -477,8 +478,9 @@ async def test_sidebar_shows_spinner_when_processing_and_inference_on():
         sidebar = app.query_one(EntitySidebar)
         sidebar.inference_enabled = True
         sidebar.status = "pending_nodes"
-        sidebar.loading = True
-        sidebar.active_processing = True
+        sidebar.cache_loading = True
+        sidebar.episode_uuid = "test-uuid"
+        sidebar.active_episode_uuid = "test-uuid"  # This episode is actively processing
         sidebar.entities = []
 
         sidebar._update_content()
@@ -497,7 +499,7 @@ async def test_sidebar_shows_awaiting_when_processing_not_active():
         sidebar = app.query_one(EntitySidebar)
         sidebar.inference_enabled = True
         sidebar.status = "pending_nodes"
-        sidebar.loading = True
+        sidebar.cache_loading = True
         sidebar.active_processing = False
         sidebar.entities = []
 
@@ -522,7 +524,7 @@ async def test_entity_sidebar_preserves_content_after_toggle():
             {"uuid": "uuid-1", "name": "Sarah", "type": "Person"},
             {"uuid": "uuid-2", "name": "Park", "type": "Place"},
         ]
-        sidebar.loading = False
+        sidebar.cache_loading = False
 
         await pilot.pause()
 
@@ -569,14 +571,14 @@ async def test_entity_sidebar_refresh_triggered_on_manual_display():
 
             # Simulate home→view scenario: sidebar hidden and still loading
             sidebar.display = False
-            sidebar.loading = True
+            sidebar.cache_loading = True
             sidebar.status = "pending_nodes"
             sidebar.entities = []
             await pilot.pause()
 
             # Simulate action_toggle_connections logic
             sidebar.display = True
-            if sidebar.loading:
+            if sidebar.cache_loading:
                 await sidebar.refresh_entities()
             sidebar._update_content()
 
@@ -585,4 +587,4 @@ async def test_entity_sidebar_refresh_triggered_on_manual_display():
             await pilot.pause()
 
             # Should have loaded entities
-            assert sidebar.loading is False, f"Should have finished loading"
+            assert sidebar.cache_loading is False, f"Should have finished loading"
