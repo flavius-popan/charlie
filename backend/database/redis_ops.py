@@ -404,3 +404,54 @@ def remove_suppressed_entity(journal: str, entity_name: str) -> bool:
         normalized_name = entity_name.lower()
         removed_count = r.srem(key, normalized_name)
         return removed_count > 0
+
+
+# Active Episode Tracking
+
+
+def set_active_episode(episode_uuid: str, journal: str) -> None:
+    """Mark episode as actively being processed by Huey worker.
+
+    Args:
+        episode_uuid: Episode UUID currently being processed
+        journal: Journal name
+
+    Note:
+        Only one episode can be active at a time (single worker).
+        Called at start of extract_nodes_task actual processing.
+    """
+    with redis_ops() as r:
+        r.hset("task:active_episode", mapping={"uuid": episode_uuid, "journal": journal})
+
+
+def clear_active_episode() -> None:
+    """Clear the active episode marker.
+
+    Note:
+        Called when task completes (success, failure, or cancellation).
+        Safe to call even if no episode is active.
+    """
+    with redis_ops() as r:
+        r.delete("task:active_episode")
+
+
+def is_episode_actively_processing(episode_uuid: str) -> bool:
+    """Check if a specific episode is the one currently being processed.
+
+    Args:
+        episode_uuid: Episode UUID to check
+
+    Returns:
+        True if this episode is the active one, False otherwise
+    """
+    with redis_ops() as r:
+        data = r.hgetall("task:active_episode")
+        if not data:
+            return False
+        try:
+            active_uuid = data.get(b"uuid", b"").decode()
+            return active_uuid == episode_uuid
+        except (UnicodeDecodeError, AttributeError):
+            # Corrupted data - clear it
+            r.delete("task:active_episode")
+            return False

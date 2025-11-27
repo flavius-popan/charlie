@@ -121,24 +121,29 @@ async def test_toggle_connections_routes_show_event():
 
         with patch("frontend.screens.view_screen.get_inference_enabled", return_value=True):
             with patch("frontend.screens.view_screen.get_episode_status", return_value=None):
-                app = ViewScreenMachineTestApp(
-                    from_edit=False,
-                    initial_status=None,
-                )
+                with patch("frontend.screens.view_screen.redis_ops") as mock_redis_ctx:
+                    # No active episode
+                    mock_redis = mock_redis_ctx.return_value.__enter__.return_value
+                    mock_redis.hgetall.return_value = {}
 
-                async with app.run_test() as pilot:
-                    await pilot.pause()
-                    screen = app.screen
+                    app = ViewScreenMachineTestApp(
+                        from_edit=False,
+                        initial_status=None,
+                    )
 
-                    # Initially hidden
-                    assert screen.sidebar_machine.output.visible is False
+                    async with app.run_test() as pilot:
+                        await pilot.pause()
+                        screen = app.screen
 
-                    # Toggle on
-                    screen.action_toggle_connections()
-                    await pilot.pause()
+                        # Initially hidden
+                        assert screen.sidebar_machine.output.visible is False
 
-                    # Should be visible (but not necessarily should_poll since status is None/done)
-                    assert screen.sidebar_machine.output.visible is True
+                        # Toggle on (now async)
+                        await screen.action_toggle_connections()
+                        await pilot.pause()
+
+                        # Should be visible (but not necessarily should_poll since status is None/done)
+                        assert screen.sidebar_machine.output.visible is True
 
 
 @pytest.mark.asyncio
@@ -152,25 +157,29 @@ async def test_toggle_connections_routes_hide_event():
 
         with patch("frontend.screens.view_screen.get_inference_enabled", return_value=True):
             with patch("frontend.screens.view_screen.get_episode_status", return_value="pending_nodes"):
-                app = ViewScreenMachineTestApp(
-                    from_edit=True,
-                    initial_status="pending_nodes",
-                )
+                with patch("frontend.screens.view_screen.redis_ops") as mock_redis_ctx:
+                    mock_redis = mock_redis_ctx.return_value.__enter__.return_value
+                    mock_redis.hgetall.return_value = {b"uuid": b"test-uuid", b"journal": b"test"}
 
-                async with app.run_test() as pilot:
-                    await pilot.pause()
-                    screen = app.screen
+                    app = ViewScreenMachineTestApp(
+                        from_edit=True,
+                        initial_status="pending_nodes",
+                    )
 
-                    # Initially visible (from_edit=True)
-                    assert screen.sidebar_machine.output.visible is True
+                    async with app.run_test() as pilot:
+                        await pilot.pause()
+                        screen = app.screen
 
-                    # Toggle off
-                    screen.action_toggle_connections()
-                    await pilot.pause()
+                        # Initially visible (from_edit=True)
+                        assert screen.sidebar_machine.output.visible is True
 
-                    # Should be hidden
-                    assert screen.sidebar_machine.output.visible is False
-                    assert screen.sidebar_machine.output.should_poll is False
+                        # Toggle off (now async)
+                        await screen.action_toggle_connections()
+                        await pilot.pause()
+
+                        # Should be hidden
+                        assert screen.sidebar_machine.output.visible is False
+                        assert screen.sidebar_machine.output.should_poll is False
 
 
 @pytest.mark.asyncio
@@ -313,26 +322,31 @@ async def test_sync_machine_output_updates_reactives():
 
         with patch("frontend.screens.view_screen.get_inference_enabled", return_value=True):
             with patch("frontend.screens.view_screen.get_episode_status", return_value="pending_nodes"):
-                app = ViewScreenMachineTestApp(
-                    from_edit=True,
-                    initial_status="pending_nodes",
-                )
+                with patch("frontend.screens.view_screen.redis_ops") as mock_redis_ctx:
+                    # Mock this episode as actively processing
+                    mock_redis = mock_redis_ctx.return_value.__enter__.return_value
+                    mock_redis.hgetall.return_value = {b"uuid": b"test-uuid", b"journal": b"test"}
 
-                async with app.run_test() as pilot:
-                    await pilot.pause()
-                    screen = app.screen
+                    app = ViewScreenMachineTestApp(
+                        from_edit=True,
+                        initial_status="pending_nodes",
+                    )
 
-                    # from_edit=True should seed the machine to processing_nodes
-                    assert screen.status == "pending_nodes"
-                    # processing_nodes state should have active_processing=True
-                    assert screen.active_processing is True
+                    async with app.run_test() as pilot:
+                        await pilot.pause()
+                        screen = app.screen
 
-                    # Transition to ready state and verify sync
-                    screen.sidebar_machine.send("cache_entities_found")
-                    screen._sync_machine_output()
+                        # from_edit=True should seed the machine to processing_nodes
+                        assert screen.status == "pending_nodes"
+                        # active_episode_uuid should be set from Redis
+                        assert screen.active_episode_uuid == "test-uuid"
 
-                    # Now in ready_entities state, so active_processing should be False
-                    assert screen.active_processing is False
+                        # Transition to ready state and verify sync
+                        screen.sidebar_machine.send("cache_entities_found")
+                        screen._sync_machine_output()
+
+                        # Now in ready_entities state, so active_processing should be False
+                        assert screen.active_processing is False
 
 
 @pytest.mark.asyncio
@@ -386,41 +400,45 @@ async def test_sidebar_display_property_syncs_with_visibility():
 
         with patch("frontend.screens.view_screen.get_inference_enabled", return_value=True):
             with patch("frontend.screens.view_screen.get_episode_status", return_value="pending_nodes"):
-                app = ViewScreenMachineTestApp(
-                    from_edit=True,
-                    initial_status="pending_nodes",
-                )
+                with patch("frontend.screens.view_screen.redis_ops") as mock_redis_ctx:
+                    mock_redis = mock_redis_ctx.return_value.__enter__.return_value
+                    mock_redis.hgetall.return_value = {b"uuid": b"test-uuid", b"journal": b"test"}
 
-                async with app.run_test() as pilot:
-                    await pilot.pause()
-                    screen = app.screen
+                    app = ViewScreenMachineTestApp(
+                        from_edit=True,
+                        initial_status="pending_nodes",
+                    )
 
-                    # Import here to avoid circular imports
-                    from frontend.widgets.entity_sidebar import EntitySidebar
+                    async with app.run_test() as pilot:
+                        await pilot.pause()
+                        screen = app.screen
 
-                    sidebar = screen.query_one("#entity-sidebar", EntitySidebar)
+                        # Import here to avoid circular imports
+                        from frontend.widgets.entity_sidebar import EntitySidebar
 
-                    # Initially visible (from_edit=True)
-                    assert screen.sidebar_machine.output.visible is True
-                    assert sidebar.display is True, "Sidebar should be displayed initially"
+                        sidebar = screen.query_one("#entity-sidebar", EntitySidebar)
 
-                    # Toggle off (press 'c' equivalent)
-                    screen.action_toggle_connections()
-                    await pilot.pause()
+                        # Initially visible (from_edit=True)
+                        assert screen.sidebar_machine.output.visible is True
+                        assert sidebar.display is True, "Sidebar should be displayed initially"
 
-                    # Machine state should be hidden
-                    assert screen.sidebar_machine.output.visible is False
-                    # UI state should also be hidden
-                    assert sidebar.display is False, "Sidebar.display should be False after toggling off"
+                        # Toggle off (now async)
+                        await screen.action_toggle_connections()
+                        await pilot.pause()
 
-                    # Toggle on again
-                    screen.action_toggle_connections()
-                    await pilot.pause()
+                        # Machine state should be hidden
+                        assert screen.sidebar_machine.output.visible is False
+                        # UI state should also be hidden
+                        assert sidebar.display is False, "Sidebar.display should be False after toggling off"
 
-                    # Machine state should be visible again
-                    assert screen.sidebar_machine.output.visible is True
-                    # UI state should also be visible
-                    assert sidebar.display is True, "Sidebar.display should be True after toggling on"
+                        # Toggle on again (now async)
+                        await screen.action_toggle_connections()
+                        await pilot.pause()
+
+                        # Machine state should be visible again
+                        assert screen.sidebar_machine.output.visible is True
+                        # UI state should also be visible
+                        assert sidebar.display is True, "Sidebar.display should be True after toggling on"
 
 
 @pytest.mark.asyncio
@@ -438,36 +456,41 @@ async def test_sidebar_hidden_when_viewing_from_home():
 
         with patch("frontend.screens.view_screen.get_inference_enabled", return_value=True):
             with patch("frontend.screens.view_screen.get_episode_status", return_value=None):
-                app = ViewScreenMachineTestApp(
-                    from_edit=False,  # Viewing from home, not from edit
-                    initial_status=None,
-                )
+                with patch("frontend.screens.view_screen.redis_ops") as mock_redis_ctx:
+                    # No active episode
+                    mock_redis = mock_redis_ctx.return_value.__enter__.return_value
+                    mock_redis.hgetall.return_value = {}
 
-                async with app.run_test() as pilot:
-                    await pilot.pause()
-                    screen = app.screen
+                    app = ViewScreenMachineTestApp(
+                        from_edit=False,  # Viewing from home, not from edit
+                        initial_status=None,
+                    )
 
-                    from frontend.widgets.entity_sidebar import EntitySidebar
+                    async with app.run_test() as pilot:
+                        await pilot.pause()
+                        screen = app.screen
 
-                    sidebar = screen.query_one("#entity-sidebar", EntitySidebar)
+                        from frontend.widgets.entity_sidebar import EntitySidebar
 
-                    # Machine state should be hidden (correct)
-                    assert screen.sidebar_machine.output.visible is False
+                        sidebar = screen.query_one("#entity-sidebar", EntitySidebar)
 
-                    # BUG: This assertion will fail before the fix
-                    assert sidebar.display is False, "Sidebar should not be displayed when viewing from home"
+                        # Machine state should be hidden (correct)
+                        assert screen.sidebar_machine.output.visible is False
 
-                    # Single 'c' press should show it
-                    screen.action_toggle_connections()
-                    await pilot.pause()
-                    assert sidebar.display is True, "Sidebar should show after pressing 'c'"
+                        # BUG: This assertion will fail before the fix
+                        assert sidebar.display is False, "Sidebar should not be displayed when viewing from home"
 
-                    # Single 'c' press should hide it again (not two presses)
-                    screen.action_toggle_connections()
-                    await pilot.pause()
-                    assert (
-                        sidebar.display is False
-                    ), "Sidebar should hide with single 'c' press (not require two presses)"
+                        # Single 'c' press should show it (now async)
+                        await screen.action_toggle_connections()
+                        await pilot.pause()
+                        assert sidebar.display is True, "Sidebar should show after pressing 'c'"
+
+                        # Single 'c' press should hide it again (not two presses)
+                        await screen.action_toggle_connections()
+                        await pilot.pause()
+                        assert (
+                            sidebar.display is False
+                        ), "Sidebar should hide with single 'c' press (not require two presses)"
 
 
 @pytest.mark.asyncio
@@ -526,9 +549,9 @@ async def test_delete_last_entity_shows_correct_message():
                     children = list(content_container.children)
                     assert len(children) > 0, "Content should have a message"
 
-                        # With pending status we keep loading True while awaiting processing
-                    assert sidebar.loading is True, \
-                        f"With pending status and no entities, loading should stay True, got {sidebar.loading}"
+                    # With pending status we keep cache_loading True while awaiting processing
+                    assert sidebar.cache_loading is True, \
+                        f"With pending status and no entities, cache_loading should stay True, got {sidebar.cache_loading}"
 
 
 @pytest.mark.asyncio
@@ -652,8 +675,8 @@ async def test_sidebar_renders_once_per_cycle():
                         original_update()
 
                     sidebar._update_content = counting_update
-                    # Allow renders (initial loading True prevents watcher renders)
-                    sidebar.loading = False
+                    # Allow renders (initial cache_loading True prevents watcher renders)
+                    sidebar.cache_loading = False
 
                     # Trigger multiple reactive changes within one cycle
                     screen.status = "pending_edges"  # change from pending_nodes

@@ -58,22 +58,13 @@ class HomeScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False, icon="")
-        if not self.episodes:
-            empty = Static(EMPTY_STATE_CAT, id="empty-state")
-            empty.can_focus = True
-            yield empty
-        else:
-            yield ListView(
-                *[
-                    ListItem(
-                        Label(
-                            f"{self._format_date(episode['valid_at'])} - {get_display_title(episode)}"
-                        )
-                    )
-                    for episode in self.episodes
-                ],
-                id="episodes-list",
-            )
+        empty = Static(EMPTY_STATE_CAT, id="empty-state")
+        empty.can_focus = True
+        empty.display = False
+        yield empty
+        list_view = ListView(id="episodes-list")
+        list_view.display = False
+        yield list_view
         yield Footer()
 
     async def on_mount(self):
@@ -105,19 +96,18 @@ class HomeScreen(Screen):
     async def load_episodes(self):
         try:
             new_episodes = await get_home_screen()
+            list_view = self.query_one("#episodes-list", ListView)
+            empty_state = self.query_one("#empty-state", Static)
 
-            if not new_episodes:
-                self.episodes = []
-                # Safe to recompose: switching between Static (empty state) and ListView
-                # Neither widget has state that needs to be preserved
-                await self.recompose()
-                empty_state = self.query_one("#empty-state", Static)
-                empty_state.focus()
-            else:
-                try:
-                    list_view = self.query_one("#episodes-list", ListView)
+            with self.app.batch_update():
+                if not new_episodes:
+                    self.episodes = []
+                    await list_view.clear()
+                    list_view.display = False
+                    empty_state.display = True
+                    empty_state.focus()
+                else:
                     old_index = list_view.index if list_view.index is not None else 0
-
                     await list_view.clear()
 
                     items = [
@@ -128,20 +118,15 @@ class HomeScreen(Screen):
                         )
                         for episode in new_episodes
                     ]
-                    if items:
-                        await list_view.extend(items)
-
+                    await list_view.extend(items)
                     self.episodes = new_episodes
 
-                    if len(self.episodes) > 0:
-                        new_index = min(old_index, len(self.episodes) - 1)
-                        list_view.index = new_index
-                        list_view.focus()
-                except Exception:
-                    self.episodes = new_episodes
-                    # Safe to recompose: fallback when ListView doesn't exist yet
-                    # (happens when transitioning from empty to populated state)
-                    await self.recompose()
+                    empty_state.display = False
+                    list_view.display = True
+
+                    new_index = min(old_index, len(self.episodes) - 1)
+                    list_view.index = new_index
+                    list_view.focus()
         except Exception as e:
             logger.error(f"Failed to load episodes: {e}", exc_info=True)
             self.notify("Error loading episodes", severity="error")

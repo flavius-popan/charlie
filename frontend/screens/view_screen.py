@@ -10,9 +10,11 @@ from textual.screen import Screen
 from textual.widgets import Footer, Header, ListView, Markdown
 
 from backend.database import get_episode
+from backend.database.redis_ops import redis_ops
 from backend.database.redis_ops import (
     get_episode_status,
     get_inference_enabled,
+    is_episode_actively_processing,
 )
 from backend.settings import DEFAULT_JOURNAL
 from textual.worker import WorkerCancelled
@@ -57,6 +59,7 @@ class ViewScreen(Screen):
     status: reactive[str | None] = reactive(None)
     inference_enabled: reactive[bool] = reactive(True)
     active_processing: reactive[bool] = reactive(False)
+    active_episode_uuid: reactive[str | None] = reactive(None)
 
     def __init__(
         self,
@@ -84,6 +87,9 @@ class ViewScreen(Screen):
             visible=from_edit,
         )
 
+        # Guard against reentrant toggle calls during async operations
+        self._toggling = False
+
         # Sync machine output to reactive properties
         self._sync_machine_output()
 
@@ -94,6 +100,7 @@ class ViewScreen(Screen):
             inference_enabled=self.inference_enabled,
             status=self.status,
             active_processing=self.active_processing,
+            active_episode_uuid=self.active_episode_uuid,
             on_entity_deleted=self._on_entity_deleted,
             id="entity-sidebar",
         )
@@ -103,6 +110,7 @@ class ViewScreen(Screen):
             status=ViewScreen.status,
             active_processing=ViewScreen.active_processing,
             inference_enabled=ViewScreen.inference_enabled,
+            active_episode_uuid=ViewScreen.active_episode_uuid,
         )
 
         yield Header(show_clock=False, icon="")
@@ -115,8 +123,8 @@ class ViewScreen(Screen):
     async def on_mount(self):
         await self.load_episode()
 
-        # Sync inference/status context to sidebar
-        self._refresh_sidebar_context()
+        # Sync all sidebar context in one batched Redis call
+        await self._refresh_all_sidebar_state()
 
         # Show sidebar only if coming from EditScreen
         sidebar = self.query_one("#entity-sidebar", EntitySidebar)
@@ -152,25 +160,88 @@ class ViewScreen(Screen):
 
     async def on_screen_resume(self):
         """Called when returning to this screen."""
-        self._refresh_sidebar_context()
+        await self._refresh_all_sidebar_state()
         await self.load_episode()
 
     def _sync_machine_output(self) -> None:
-        """Sync machine output to reactive properties for sidebar consumption."""
+        """Sync machine output to reactive properties for sidebar consumption.
+
+        NOTE: Only sets active_processing=False when machine indicates processing is DONE.
+        When machine says we SHOULD be processing, active_processing is controlled by
+        _update_active_processing_async() to distinguish actively-processing vs queued episodes.
+        """
         output = self.sidebar_machine.output
         self.status = output.status
-        self.active_processing = output.active_processing
 
-        # Inference state is handled separately in _refresh_sidebar_context
-        # since it requires reading from Redis
+        # When machine says processing is done, we know active_processing is False
+        # (no Redis check needed). When machine says we should be processing,
+        # leave it alone - _update_active_processing_async() handles that case.
+        if not output.active_processing:
+            self.active_processing = False
+
+    async def _fetch_sidebar_context_batched(self) -> tuple[bool, str | None, str | None]:
+        """Fetch all sidebar context from Redis in a single batched call.
+
+        Returns:
+            Tuple of (inference_enabled, status, active_episode_uuid)
+        """
+        def _fetch_all():
+            # Use existing helper functions for consistency with tests
+            inferred_enabled = get_inference_enabled()
+            status = get_episode_status(self.episode_uuid, self.journal)
+
+            # Fetch active episode directly for batching
+            with redis_ops() as r:
+                active_data = r.hgetall("task:active_episode")
+            active_uuid = active_data.get(b"uuid", b"").decode() if active_data else None
+
+            return (inferred_enabled, status, active_uuid)
+
+        return await asyncio.to_thread(_fetch_all)
+
+    async def _refresh_all_sidebar_state(self) -> None:
+        """Refresh all sidebar context in one batched Redis call."""
+        try:
+            self.query_one("#entity-sidebar", EntitySidebar)
+        except NoMatches:
+            return
+
+        try:
+            inferred_enabled, status, active_uuid = await self._fetch_sidebar_context_batched()
+        except Exception as exc:
+            logger.debug("Failed to refresh sidebar context: %s", exc)
+            return
+
+        self._apply_sidebar_context(inferred_enabled, status)
+        self.active_episode_uuid = active_uuid
+        self.active_processing = bool(active_uuid and active_uuid == self.episode_uuid)
+
+    async def _update_active_processing_async(self) -> None:
+        """Check if THIS episode is actively processing (async-safe).
+
+        Spinner should show only for the single episode Huey is working on.
+        """
+        def _get_active_uuid():
+            with redis_ops() as r:
+                data = r.hgetall("task:active_episode")
+                if not data:
+                    return None
+                try:
+                    return data.get(b"uuid", b"").decode()
+                except Exception:
+                    return None
+
+        active_uuid = await asyncio.to_thread(_get_active_uuid)
+        self.active_episode_uuid = active_uuid
+        self.active_processing = bool(active_uuid and active_uuid == self.episode_uuid)
 
     async def load_episode(self):
         try:
             self.episode = await get_episode(self.episode_uuid)
 
             if self.episode:
-                # Refresh sidebar context in case status changed externally
-                self._refresh_sidebar_context()
+                # Refresh sidebar context in case status changed externally (batched for speed)
+                await self._refresh_all_sidebar_state()
                 markdown = self.query_one("#journal-content", Markdown)
                 await markdown.update(self.episode["content"])
             else:
@@ -196,42 +267,73 @@ class ViewScreen(Screen):
         self.workers.cancel_group(self, "status-poll")
         self.app.pop_screen()
 
-    def action_toggle_connections(self) -> None:
+    async def action_toggle_connections(self) -> None:
         """Toggle sidebar visibility and focus if opened."""
-        sidebar = self.query_one("#entity-sidebar", EntitySidebar)
-        current_visible = self.sidebar_machine.output.visible
+        # Prevent reentrant calls during async operations
+        if self._toggling:
+            return
+        self._toggling = True
 
-        if current_visible:
-            # Hide sidebar
-            self.sidebar_machine.send("hide")
-            self._sync_machine_output()
-            sidebar.display = False
-            self.workers.cancel_group(self, "status-poll")
-        else:
-            # Show sidebar - refresh context and route event
-            sidebar.display = True
-            self._refresh_sidebar_context()
-            self.sidebar_machine.send("show", status=self.sidebar_machine.output.status)
-            self._sync_machine_output()
-            sidebar._update_content()
+        try:
+            sidebar = self.query_one("#entity-sidebar", EntitySidebar)
+            current_visible = self.sidebar_machine.output.visible
 
-            # Start polling if machine indicates we should
-            if self.sidebar_machine.output.should_poll:
-                if not any(w.name == "status-poll" for w in self.workers if w.is_running):
-                    sidebar.run_worker(sidebar.refresh_entities(), exclusive=True)
-                    self.run_worker(self._poll_until_complete(), exclusive=True, name="status-poll")
+            if current_visible:
+                # Hide sidebar
+                self.sidebar_machine.send("hide")
+                self._sync_machine_output()
+                self.active_processing = False  # No spinner when hidden
+                sidebar.display = False
+                # IMPORTANT: Cancel ALL workers when hiding to prevent race conditions.
+                # Workers started on child widgets (sidebar.run_worker) continue running
+                # even when the widget is hidden. If not cancelled, they race with the
+                # next "show" operation, corrupting state. Always cancel child widget
+                # workers when hiding/destroying the parent context.
+                self.workers.cancel_group(self, "status-poll")
+                sidebar.workers.cancel_all()
             else:
-                # Machine indicates we shouldn't poll - check cache anyway
-                sidebar.run_worker(sidebar.refresh_entities(), exclusive=True)
+                # Show sidebar - refresh context and route event
+                sidebar.display = True
 
-            if sidebar.entities:
-                try:
-                    list_view = sidebar.query_one(ListView)
-                    if list_view.index is None:
-                        list_view.index = 0
-                    self.set_focus(list_view)
-                except Exception:
-                    pass
+                # Batch all Redis reads into a single call for minimal latency
+                inferred_enabled, status, active_uuid = await self._fetch_sidebar_context_batched()
+
+                self._apply_sidebar_context(inferred_enabled, status)
+                self.sidebar_machine.send("show", status=self.sidebar_machine.output.status)
+                self._sync_machine_output()
+
+                # Update active processing state
+                self.active_episode_uuid = active_uuid
+                self.active_processing = bool(active_uuid and active_uuid == self.episode_uuid)
+
+                sidebar._update_content()
+
+                # Start polling if machine indicates we should
+                if self.sidebar_machine.output.should_poll:
+                    if not any(w.name == "status-poll" for w in self.workers if w.is_running):
+                        sidebar.run_worker(sidebar.refresh_entities(), exclusive=True)
+                        self.run_worker(self._poll_until_complete(), exclusive=True, name="status-poll")
+                else:
+                    # Machine indicates we shouldn't poll - check cache anyway
+                    sidebar.run_worker(sidebar.refresh_entities(), exclusive=True)
+
+                if sidebar.entities:
+                    try:
+                        list_view = sidebar.query_one(ListView)
+                        if list_view.index is None:
+                            list_view.index = 0
+                        self.set_focus(list_view)
+                    except Exception:
+                        pass
+                else:
+                    # No entities yet - keep focus on markdown to avoid focus limbo
+                    try:
+                        markdown = self.query_one("#journal-content", Markdown)
+                        self.set_focus(markdown)
+                    except Exception:
+                        pass
+        finally:
+            self._toggling = False
 
     def action_show_logs(self) -> None:
         """Navigate to log viewer."""
@@ -257,6 +359,9 @@ class ViewScreen(Screen):
 
                 self._sync_machine_output()
 
+                # Check if this episode is actively processing (async)
+                await self._update_active_processing_async()
+
                 # When extraction complete, refresh and stop
                 if status in ("pending_edges", "done", None):
                     try:
@@ -269,6 +374,7 @@ class ViewScreen(Screen):
                         else:
                             self.sidebar_machine.send("cache_empty", entities_present=False)
                         self._sync_machine_output()
+                        await self._update_active_processing_async()
                     except NoMatches:
                         logger.debug("Sidebar not found during poll - stopping")
                     except Exception as exc:
@@ -311,6 +417,30 @@ class ViewScreen(Screen):
             # Machine already has best-known state; skip update on error
             return
 
+        self._apply_sidebar_context(inferred_enabled, status)
+
+    async def _refresh_sidebar_context_async(self):
+        """Update sidebar context without blocking the UI (async version)."""
+        try:
+            self.query_one("#entity-sidebar", EntitySidebar)
+        except NoMatches:
+            logger.debug("Sidebar not yet mounted; skipping context refresh")
+            return
+
+        try:
+            # Parallelize Redis calls for faster response
+            inferred_enabled, status = await asyncio.gather(
+                asyncio.to_thread(get_inference_enabled),
+                asyncio.to_thread(get_episode_status, self.episode_uuid, self.journal),
+            )
+        except Exception as exc:
+            logger.debug("Failed to refresh sidebar context: %s", exc)
+            return
+
+        self._apply_sidebar_context(inferred_enabled, status)
+
+    def _apply_sidebar_context(self, inferred_enabled: bool, status: str | None):
+        """Apply inference and status context to sidebar state machine."""
         # Update machine with fresh context
         if inferred_enabled != self.sidebar_machine.inference_enabled_flag:
             if inferred_enabled:

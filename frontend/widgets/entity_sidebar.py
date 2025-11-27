@@ -158,11 +158,12 @@ class EntitySidebar(Container):
 
     episode_uuid: reactive[str] = reactive("")
     journal: reactive[str] = reactive("")
-    loading: reactive[bool] = reactive(True)
+    cache_loading: reactive[bool] = reactive(True)
     entities: reactive[list[dict]] = reactive([])
     inference_enabled: reactive[bool] = reactive(True)
     status: reactive[str | None] = reactive(None)
     active_processing: reactive[bool] = reactive(False)
+    active_episode_uuid: reactive[str | None] = reactive(None)
 
     def __init__(
         self,
@@ -172,6 +173,7 @@ class EntitySidebar(Container):
         inference_enabled: bool = True,
         status: str | None = None,
         active_processing: bool = False,
+        active_episode_uuid: str | None = None,
         on_entity_deleted: Callable[[bool], None] | None = None,
         **kwargs,
     ):
@@ -182,6 +184,7 @@ class EntitySidebar(Container):
         self.set_reactive(EntitySidebar.inference_enabled, inference_enabled)
         self.set_reactive(EntitySidebar.status, status)
         self.set_reactive(EntitySidebar.active_processing, active_processing)
+        self.set_reactive(EntitySidebar.active_episode_uuid, active_episode_uuid)
 
     def compose(self) -> ComposeResult:
         yield Label("Connections", classes="sidebar-header")
@@ -194,8 +197,8 @@ class EntitySidebar(Container):
         # Attempt immediate cache fetch - if data exists, show instantly
         self.run_worker(self.refresh_entities(), exclusive=True)
 
-    def watch_loading(self, loading: bool) -> None:
-        """Reactive: swap between loading indicator and entity list."""
+    def watch_cache_loading(self, loading: bool) -> None:
+        """Reactive: re-render when cache loading flag changes."""
         if not self.is_mounted:
             return
         self._request_render()
@@ -210,14 +213,14 @@ class EntitySidebar(Container):
         """Reactive: re-render when entities change."""
         if not self.is_mounted:
             return
-        if not self.loading:
+        if not self.cache_loading:
             self._request_render()
 
     def watch_status(self, status: str | None) -> None:
         """Reactive: re-render when status changes."""
         if not self.is_mounted:
             return
-        if not self.loading:
+        if not self.cache_loading:
             self._request_render()
 
     def _request_render(self) -> None:
@@ -235,7 +238,10 @@ class EntitySidebar(Container):
             self._update_content()
 
     def _update_content(self) -> None:
-        """Update container content based on loading state and entity data."""
+        """Update container content based on loading state and entity data.
+
+        Skips DOM manipulation when content hasn't changed to avoid jank.
+        """
         if not self.is_mounted:
             return
 
@@ -244,16 +250,22 @@ class EntitySidebar(Container):
             # Defer until the container is attached to avoid mount errors.
             self.call_after_refresh(self._update_content)
             return
-        content_container.remove_children()
+
+        current_children = list(content_container.children)
 
         should_show_spinner = (
-            self.loading
+            self.cache_loading
             and self.inference_enabled
             and self.status in ("pending_nodes", "pending_edges")
-            and self.active_processing
+            and self.active_episode_uuid
+            and self.active_episode_uuid == self.episode_uuid
         )
 
         if should_show_spinner:
+            # Skip if already showing spinner
+            if len(current_children) == 1 and isinstance(current_children[0], LoadingIndicator):
+                return
+            content_container.remove_children()
             content_container.mount(LoadingIndicator())
             return
 
@@ -269,17 +281,33 @@ class EntitySidebar(Container):
             elif self.status in ("pending_nodes", "pending_edges"):
                 message = "Awaiting processing..."
                 clear_loading = False
-                self.loading = True
+                self.cache_loading = True
 
+            # Skip if already showing same message
+            if len(current_children) == 1 and isinstance(current_children[0], Label):
+                existing_label = current_children[0]
+                if existing_label.render() == message:
+                    if clear_loading:
+                        self.cache_loading = False
+                    return
+
+            content_container.remove_children()
             content_container.mount(Label(message))
             if clear_loading:
-                self.loading = False
+                self.cache_loading = False
         else:
+            # Skip if already showing entities (ListView exists and count matches)
+            if len(current_children) == 1 and isinstance(current_children[0], ListView):
+                existing_list = current_children[0]
+                if len(existing_list.children) == len(self.entities):
+                    return
+
             items = [
                 EntityListItem(self._format_entity_label(entity))
                 for entity in self.entities
             ]
             list_view = ListView(*items)
+            content_container.remove_children()
             content_container.mount(list_view)
 
             def focus_and_select():
@@ -311,14 +339,14 @@ class EntitySidebar(Container):
                 # Batch update to trigger only one render
                 with self.app.batch_update():
                     self.entities = filtered_nodes
-                    self.loading = False
+                    self.cache_loading = False
                 self.post_message(self.CacheCheckComplete(entities_found=True))
             else:
-                # No data found - notify parent, keep loading=True for polling
+                # No data found - notify parent, keep cache_loading=True for polling
                 self.post_message(self.CacheCheckComplete(entities_found=False))
         except Exception as e:
             logger.error(f"Failed to fetch entities from Redis: {e}", exc_info=True)
-            self.loading = False
+            self.cache_loading = False
             self.post_message(self.CacheCheckComplete(entities_found=False))
 
     def action_delete_entity(self) -> None:
