@@ -120,9 +120,8 @@ class ViewScreen(Screen):
     async def on_mount(self):
         await self.load_episode()
 
-        # Sync inference/status context to sidebar (async to avoid blocking)
-        await self._refresh_sidebar_context_async()
-        await self._update_active_processing_async()
+        # Sync all sidebar context in one batched Redis call
+        await self._refresh_all_sidebar_state()
 
         # Show sidebar only if coming from EditScreen
         sidebar = self.query_one("#entity-sidebar", EntitySidebar)
@@ -158,8 +157,7 @@ class ViewScreen(Screen):
 
     async def on_screen_resume(self):
         """Called when returning to this screen."""
-        await self._refresh_sidebar_context_async()
-        await self._update_active_processing_async()
+        await self._refresh_all_sidebar_state()
         await self.load_episode()
 
     def _sync_machine_output(self) -> None:
@@ -177,6 +175,43 @@ class ViewScreen(Screen):
         # leave it alone - _update_active_processing_async() handles that case.
         if not output.active_processing:
             self.active_processing = False
+
+    async def _fetch_sidebar_context_batched(self) -> tuple[bool, str | None, str | None]:
+        """Fetch all sidebar context from Redis in a single batched call.
+
+        Returns:
+            Tuple of (inference_enabled, status, active_episode_uuid)
+        """
+        def _fetch_all():
+            # Use existing helper functions for consistency with tests
+            inferred_enabled = get_inference_enabled()
+            status = get_episode_status(self.episode_uuid, self.journal)
+
+            # Fetch active episode directly for batching
+            with redis_ops() as r:
+                active_data = r.hgetall("task:active_episode")
+            active_uuid = active_data.get(b"uuid", b"").decode() if active_data else None
+
+            return (inferred_enabled, status, active_uuid)
+
+        return await asyncio.to_thread(_fetch_all)
+
+    async def _refresh_all_sidebar_state(self) -> None:
+        """Refresh all sidebar context in one batched Redis call."""
+        try:
+            self.query_one("#entity-sidebar", EntitySidebar)
+        except NoMatches:
+            return
+
+        try:
+            inferred_enabled, status, active_uuid = await self._fetch_sidebar_context_batched()
+        except Exception as exc:
+            logger.debug("Failed to refresh sidebar context: %s", exc)
+            return
+
+        self._apply_sidebar_context(inferred_enabled, status)
+        self.active_episode_uuid = active_uuid
+        self.active_processing = bool(active_uuid and active_uuid == self.episode_uuid)
 
     async def _update_active_processing_async(self) -> None:
         """Check if THIS episode is actively processing (async-safe).
@@ -202,9 +237,8 @@ class ViewScreen(Screen):
             self.episode = await get_episode(self.episode_uuid)
 
             if self.episode:
-                # Refresh sidebar context in case status changed externally (async to avoid blocking)
-                await self._refresh_sidebar_context_async()
-                await self._update_active_processing_async()
+                # Refresh sidebar context in case status changed externally (batched for speed)
+                await self._refresh_all_sidebar_state()
                 markdown = self.query_one("#journal-content", Markdown)
                 await markdown.update(self.episode["content"])
             else:
@@ -245,12 +279,17 @@ class ViewScreen(Screen):
         else:
             # Show sidebar - refresh context and route event
             sidebar.display = True
-            await self._refresh_sidebar_context_async()
+
+            # Batch all Redis reads into a single call for minimal latency
+            inferred_enabled, status, active_uuid = await self._fetch_sidebar_context_batched()
+
+            self._apply_sidebar_context(inferred_enabled, status)
             self.sidebar_machine.send("show", status=self.sidebar_machine.output.status)
             self._sync_machine_output()
 
-            # Check if this episode is actively processing (async)
-            await self._update_active_processing_async()
+            # Update active processing state
+            self.active_episode_uuid = active_uuid
+            self.active_processing = bool(active_uuid and active_uuid == self.episode_uuid)
 
             sidebar._update_content()
 
@@ -365,9 +404,10 @@ class ViewScreen(Screen):
             return
 
         try:
-            inferred_enabled = await asyncio.to_thread(get_inference_enabled)
-            status = await asyncio.to_thread(
-                get_episode_status, self.episode_uuid, self.journal
+            # Parallelize Redis calls for faster response
+            inferred_enabled, status = await asyncio.gather(
+                asyncio.to_thread(get_inference_enabled),
+                asyncio.to_thread(get_episode_status, self.episode_uuid, self.journal),
             )
         except Exception as exc:
             logger.debug("Failed to refresh sidebar context: %s", exc)
