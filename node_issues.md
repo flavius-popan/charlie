@@ -15,3 +15,4 @@
 - "using producer.ai", should verbs be captured in node name...? Probably not.
 - "C/Zig/Zig Day/CtF/Soldering ", can't sub-extract, extra space (handle extra spaces in code?)
 - "Aaktun in Durham", should be two locations
+- "morning walk" + "evening walk", should be "walking/walks/walk"?
