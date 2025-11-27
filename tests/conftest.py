@@ -8,6 +8,7 @@ pytest's filterwarnings or Python's warnings module. They are emitted by Textual
 internal async cleanup and do not indicate test failures. See pyproject.toml filterwarnings
 for attempted suppressions.
 """
+import os
 from pathlib import Path
 import sys
 from unittest.mock import AsyncMock, patch
@@ -16,6 +17,13 @@ from unittest.mock import AsyncMock, patch
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+# ---------------------------------------------------------------------------
+# Log isolation: redirect test logs to tests/data/charlie-test.log
+# This MUST occur before any backend/logging imports.
+# ---------------------------------------------------------------------------
+TEST_LOG_PATH = Path(__file__).parent / "data" / "charlie-test.log"
+os.environ["TEXTUAL_LOG"] = str(TEST_LOG_PATH)
 
 # ---------------------------------------------------------------------------
 # Database isolation: redirect all tests to tests/data/charlie-test.db

@@ -151,3 +151,67 @@ def reset_model_manager():
     manager.MODELS["llm"] = None
     yield
     manager.MODELS["llm"] = None
+
+
+def _reset_huey_state():
+    """Reset Huey storage state after consumer tests."""
+    from backend.services.queue import huey, SafeTaskSet
+    from backend.inference import manager
+    from backend.database.redis_ops import redis_ops
+
+    try:
+        huey.storage.close()
+    except Exception:
+        pass
+    huey.storage.pool = None
+    huey.storage.conn = None
+
+    # Reset _tasks_in_flight to regular set if it was wrapped
+    if isinstance(huey._tasks_in_flight, SafeTaskSet):
+        huey._tasks_in_flight = set(huey._tasks_in_flight)
+
+    # Clear editing state (mirrors consumer startup behavior)
+    try:
+        with redis_ops() as r:
+            r.delete("editing:active")
+    except Exception:
+        pass
+
+    # Reset startup grace period to avoid blocking model loading in subsequent tests
+    manager._app_startup_time = None
+
+
+@pytest.fixture
+def huey_consumer(isolated_graph):
+    """Start Huey consumer for test, with proper cleanup.
+
+    Mocks orchestrator scheduling to prevent inference tasks from running.
+    Resets Huey storage state after test to avoid polluting subsequent tests.
+    """
+    from unittest.mock import patch
+    from backend.services import queue
+
+    with patch("backend.services.tasks.orchestrate_inference_work.schedule"):
+        queue.start_huey_consumer()
+        try:
+            yield queue
+        finally:
+            queue.stop_huey_consumer()
+            _reset_huey_state()
+
+
+@pytest.fixture
+def huey_consumer_with_orchestrator(isolated_graph):
+    """Start Huey consumer with orchestrator enabled (for inference tests).
+
+    Unlike huey_consumer, this does NOT mock the orchestrator - tasks will run.
+    Use for integration tests that need real task processing.
+    """
+    from backend.services import queue
+
+    queue.start_huey_consumer()
+    try:
+        yield queue
+    finally:
+        queue.stop_huey_consumer()
+        _reset_huey_state()

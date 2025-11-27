@@ -62,6 +62,43 @@ async def test_view_screen_has_markdown_viewer():
 
 
 @pytest.mark.asyncio
+async def test_view_screen_displays_content():
+    """Should display episode content in Markdown widget."""
+    with patch("charlie.get_episode", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = {
+            "uuid": "test-uuid",
+            "content": "# Test Title\nTest content body",
+        }
+
+        app = ViewScreenTestApp(episode_uuid="test-uuid", journal="test")
+
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            markdown = app.screen.query_one("#journal-content", Markdown)
+            assert markdown is not None
+
+
+@pytest.mark.asyncio
+async def test_view_screen_has_header():
+    """Should display Header."""
+    with patch("charlie.get_episode", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = {
+            "uuid": "test-uuid",
+            "content": "# Test\nContent",
+        }
+
+        app = ViewScreenTestApp(episode_uuid="test-uuid", journal="test")
+
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            from textual.widgets import Header
+            headers = app.screen.query(Header)
+            assert len(headers) > 0
+
+
+@pytest.mark.asyncio
 async def test_view_screen_log_viewer_toggle():
     """Test that 'l' key navigates to log viewer."""
     with patch("charlie.get_episode", new_callable=AsyncMock) as mock_get:

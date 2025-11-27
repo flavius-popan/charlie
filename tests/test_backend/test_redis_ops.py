@@ -426,26 +426,12 @@ def test_enqueue_pending_episodes_processes_backlog(falkordb_test_context):
     remove_episode_from_queue(episode3, DEFAULT_JOURNAL)
 
 
-def test_enqueue_pending_episodes_idempotent(falkordb_test_context):
-    """Calling enqueue_pending_episodes multiple times is safe."""
-    from backend.database.redis_ops import enqueue_pending_episodes, set_inference_enabled
-    from unittest.mock import patch
+def test_extract_nodes_task_has_unique_deduplication():
+    """Verify extract_nodes_task uses Huey's unique=True for deduplication."""
+    from backend.services.tasks import extract_nodes_task
 
-    episode1 = str(uuid4())
-    set_episode_status(episode1, "pending_nodes", DEFAULT_JOURNAL)
-
-    set_inference_enabled(True)
-
-    with patch("backend.services.tasks.extract_nodes_task") as mock_task:
-        count1 = enqueue_pending_episodes()
-        assert count1 == 1
-
-        count2 = enqueue_pending_episodes()
-        assert count2 == 1
-
-        assert mock_task.call_count == 2
-
-    remove_episode_from_queue(episode1, DEFAULT_JOURNAL)
+    # Huey stores unique flag in the task's settings dict
+    assert extract_nodes_task.settings.get("unique") is True
 
 
 def test_get_episodes_by_status_scan_consistency(falkordb_test_context):

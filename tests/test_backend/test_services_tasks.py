@@ -300,23 +300,26 @@ def test_extract_nodes_task_idempotency_check(episode_uuid):
             assert mock_status.call_count == 2
 
 
-def test_extract_nodes_task_sets_dead_on_missing_episode(isolated_graph, cleanup_test_episodes):
-    """Integration: missing episode should move to dead after failure."""
+def test_extract_nodes_task_handles_missing_episode_gracefully(isolated_graph, cleanup_test_episodes):
+    """Integration: missing episode should be cleaned up gracefully, not marked dead."""
     from backend.services.tasks import extract_nodes_task
     from backend.database.redis_ops import (
         set_episode_status,
         get_episode_status,
-        remove_episode_from_queue,
     )
 
-    missing_uuid = "missing-episode-dead"
+    missing_uuid = "missing-episode-graceful"
     set_episode_status(missing_uuid, "pending_nodes", DEFAULT_JOURNAL)
 
-    with pytest.raises(Exception):
-        extract_nodes_task.call_local(missing_uuid, DEFAULT_JOURNAL)
+    # Should NOT raise - graceful handling returns result dict
+    result = extract_nodes_task.call_local(missing_uuid, DEFAULT_JOURNAL)
 
-    assert get_episode_status(missing_uuid, DEFAULT_JOURNAL) == "dead"
-    remove_episode_from_queue(missing_uuid, DEFAULT_JOURNAL)
+    # Episode deleted during extraction should be handled gracefully
+    assert result["episode_deleted"] is True
+    assert result["uuid"] == missing_uuid
+
+    # Redis should be cleaned up (status removed)
+    assert get_episode_status(missing_uuid, DEFAULT_JOURNAL) is None
 
 
 def test_orchestrate_inference_work_reschedules_and_runs_once():
@@ -456,3 +459,49 @@ def test_redis_ops_allows_operations_during_shutdown(isolated_graph):
             r.delete("test:shutdown_check")
     finally:
         lifecycle._shutdown_requested = False
+
+
+def test_extract_nodes_task_handles_node_not_found_error(episode_uuid):
+    """Task handles NodeNotFoundError gracefully when episode deleted mid-extraction."""
+    from backend.services.tasks import extract_nodes_task
+    from graphiti_core.errors import NodeNotFoundError
+
+    with patch("backend.database.redis_ops.get_episode_status") as mock_status:
+        with patch("backend.database.redis_ops.get_inference_enabled", create=True) as mock_enabled:
+            with patch("backend.inference.manager.get_model") as mock_get_model:
+                with patch("backend.graph.extract_nodes.extract_nodes") as mock_extract:
+                    with patch("backend.inference.manager.cleanup_if_no_work"):
+                        with patch("backend.database.redis_ops.remove_episode_from_queue") as mock_remove:
+                            mock_status.return_value = "pending_nodes"
+                            mock_enabled.return_value = True
+                            mock_get_model.return_value = Mock()
+                            mock_extract.side_effect = NodeNotFoundError(episode_uuid)
+
+                            result = extract_nodes_task.call_local(episode_uuid, DEFAULT_JOURNAL)
+
+                            assert result["episode_deleted"] is True
+                            assert result["uuid"] == episode_uuid
+                            mock_remove.assert_called_once_with(episode_uuid, DEFAULT_JOURNAL)
+
+
+def test_extract_nodes_task_handles_episode_deleted_error(episode_uuid):
+    """Task handles EpisodeDeletedError gracefully when episode deleted during persistence."""
+    from backend.services.tasks import extract_nodes_task
+    from backend.database.persistence import EpisodeDeletedError
+
+    with patch("backend.database.redis_ops.get_episode_status") as mock_status:
+        with patch("backend.database.redis_ops.get_inference_enabled", create=True) as mock_enabled:
+            with patch("backend.inference.manager.get_model") as mock_get_model:
+                with patch("backend.graph.extract_nodes.extract_nodes") as mock_extract:
+                    with patch("backend.inference.manager.cleanup_if_no_work"):
+                        with patch("backend.database.redis_ops.remove_episode_from_queue") as mock_remove:
+                            mock_status.return_value = "pending_nodes"
+                            mock_enabled.return_value = True
+                            mock_get_model.return_value = Mock()
+                            mock_extract.side_effect = EpisodeDeletedError(episode_uuid)
+
+                            result = extract_nodes_task.call_local(episode_uuid, DEFAULT_JOURNAL)
+
+                            assert result["episode_deleted"] is True
+                            assert result["uuid"] == episode_uuid
+                            mock_remove.assert_called_once_with(episode_uuid, DEFAULT_JOURNAL)

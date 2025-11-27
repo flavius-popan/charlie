@@ -91,7 +91,7 @@ def cleanup_if_no_work() -> None:
         unload_all_models()
         return
 
-    # INVERTED: Unload when editing to keep UI snappy
+    # Unload when editing to keep UI snappy
     try:
         with redis_ops() as r:
             if r.exists("editing:active"):

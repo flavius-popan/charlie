@@ -37,6 +37,12 @@ async def get_episode(episode_uuid: str, journal: str = DEFAULT_JOURNAL) -> dict
         return None
 
 
+async def episode_exists(uuid: str, journal: str = DEFAULT_JOURNAL) -> bool:
+    """Check if episode UUID exists in journal."""
+    episode = await get_episode(uuid, journal)
+    return episode is not None
+
+
 HOME_PREVIEW_SOURCE_CHARS = 240
 HOME_PREVIEW_MAX_LEN = 80
 
@@ -280,6 +286,7 @@ async def delete_entity_mention(
 
 __all__ = [
     "get_episode",
+    "episode_exists",
     "get_home_screen",
     "delete_entity_mention",
 ]
