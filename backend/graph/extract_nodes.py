@@ -21,7 +21,7 @@ from graphiti_core.utils.maintenance.dedup_helpers import (
 )
 from graphiti_core.utils.maintenance.edge_operations import filter_existing_duplicate_of_edges
 
-from backend.database.redis_ops import get_suppressed_entities
+from backend.database.redis_ops import get_suppressed_entities, append_unresolved_entities
 
 logger = logging.getLogger(__name__)
 
@@ -420,6 +420,26 @@ async def extract_nodes(
         driver,
         dedupe_enabled,
     )
+
+    # Cache unresolved entities for future batch dedup
+    # These are entities that MinHash couldn't match to existing ones
+    unresolved_for_batch = []
+    for prov_node in provisional_nodes:
+        canonical_uuid = uuid_map.get(prov_node.uuid, prov_node.uuid)
+        # If it mapped to itself AND wasn't in existing entities, it's truly new
+        if canonical_uuid == prov_node.uuid and canonical_uuid not in existing_uuid_set:
+            unresolved_for_batch.append({
+                "uuid": prov_node.uuid,
+                "name": prov_node.name,
+                "labels": prov_node.labels,
+                "episode_uuid": episode_uuid,
+                "journal": journal,
+                "extracted_at": utc_now().isoformat(),
+            })
+
+    if unresolved_for_batch:
+        append_unresolved_entities(journal, unresolved_for_batch)
+        logger.info("Queued %d unresolved entities for batch dedup", len(unresolved_for_batch))
 
     from backend.database.redis_ops import redis_ops
 

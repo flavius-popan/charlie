@@ -269,13 +269,14 @@ def set_inference_enabled(enabled: bool) -> None:
 
 
 def enqueue_pending_episodes() -> int:
-    """Enqueue all pending episodes for processing.
+    """Enqueue all pending episodes for processing in chronological order.
 
     Returns:
         Number of episodes enqueued
 
     Note:
         Only enqueues if inference is enabled.
+        Episodes are processed oldest-first (by valid_at) to improve entity dedup.
         Huey's unique=True on extract_nodes_task handles deduplication.
         Background tasks are enqueued with priority=0 (low priority).
     """
@@ -285,13 +286,14 @@ def enqueue_pending_episodes() -> int:
     # Import here to avoid circular dependency (tasks.py imports from redis_ops)
     from backend.services.tasks import extract_nodes_task
 
-    pending = get_episodes_by_status("pending_nodes")
-    for episode_uuid in pending:
-        data = get_episode_data(episode_uuid)
-        journal = data.get("journal", "")
-        extract_nodes_task(episode_uuid, journal, priority=0)
+    count = 0
+    for journal in get_journals_with_pending_episodes():
+        pending = get_pending_episodes(journal)  # Already sorted oldest-first
+        for episode_uuid in pending:
+            extract_nodes_task(episode_uuid, journal, priority=0)
+            count += 1
 
-    return len(pending)
+    return count
 
 
 def cleanup_orphaned_episode_keys() -> int:
@@ -455,3 +457,134 @@ def is_episode_actively_processing(episode_uuid: str) -> bool:
             # Corrupted data - clear it
             r.delete("task:active_episode")
             return False
+
+
+# Unresolved Entities Queue (for batch dedup)
+
+
+def append_unresolved_entities(journal: str, entities: list[dict]) -> None:
+    """Append unresolved entities to batch dedup queue.
+
+    Unresolved entities are those that MinHash deduplication couldn't match
+    to existing entities. They become new entities in the graph but are also
+    queued here for a future batch LLM dedup job to review cross-episode
+    matches (e.g., "Sarah" from Episode 1 and "Sarah Chen" from Episode 50).
+
+    Args:
+        journal: Journal name
+        entities: List of entity dicts with uuid, name, labels, episode_uuid,
+                  journal, and extracted_at fields
+    """
+    if not entities:
+        return
+    with redis_ops() as r:
+        key = f"dedup:unresolved:{journal}"
+        r.rpush(key, *[json.dumps(e) for e in entities])
+
+
+def pop_unresolved_entities(journal: str, count: int = 100) -> list[dict]:
+    """Pop unresolved entities from batch dedup queue.
+
+    Args:
+        journal: Journal name
+        count: Max entities to pop
+
+    Returns:
+        List of entity dicts
+    """
+    with redis_ops() as r:
+        key = f"dedup:unresolved:{journal}"
+        entities = []
+        for _ in range(count):
+            item = r.lpop(key)
+            if item is None:
+                break
+            entities.append(json.loads(item))
+        return entities
+
+
+def get_unresolved_entities_count(journal: str) -> int:
+    """Get count of unresolved entities in queue.
+
+    Args:
+        journal: Journal name
+
+    Returns:
+        Number of entities in queue
+    """
+    with redis_ops() as r:
+        return r.llen(f"dedup:unresolved:{journal}")
+
+
+# Pending Episodes Queue (Chronologically Ordered)
+
+
+def add_pending_episode(episode_uuid: str, journal: str, valid_at) -> None:
+    """Add episode to pending queue sorted by valid_at timestamp.
+
+    Uses a Redis Sorted Set to maintain chronological order (oldest first).
+    This ensures entities are extracted progressively, improving dedup quality.
+
+    Args:
+        episode_uuid: Episode UUID
+        journal: Journal name
+        valid_at: Episode reference time (datetime object)
+    """
+    with redis_ops() as r:
+        key = f"pending:nodes:{journal}"
+        score = valid_at.timestamp()
+        r.zadd(key, {episode_uuid: score})
+
+
+def get_pending_episodes(journal: str) -> list[str]:
+    """Get pending episodes in chronological order (oldest first).
+
+    Args:
+        journal: Journal name
+
+    Returns:
+        List of episode UUIDs sorted by valid_at (oldest first)
+    """
+    with redis_ops() as r:
+        key = f"pending:nodes:{journal}"
+        return [uuid.decode() for uuid in r.zrange(key, 0, -1)]
+
+
+def remove_pending_episode(episode_uuid: str, journal: str) -> None:
+    """Remove episode from pending queue.
+
+    Args:
+        episode_uuid: Episode UUID
+        journal: Journal name
+    """
+    with redis_ops() as r:
+        key = f"pending:nodes:{journal}"
+        r.zrem(key, episode_uuid)
+
+
+def get_pending_episodes_count(journal: str) -> int:
+    """Get count of pending episodes for a journal.
+
+    Args:
+        journal: Journal name
+
+    Returns:
+        Number of pending episodes
+    """
+    with redis_ops() as r:
+        return r.zcard(f"pending:nodes:{journal}")
+
+
+def get_journals_with_pending_episodes() -> list[str]:
+    """Get list of journals that have pending episodes.
+
+    Returns:
+        List of journal names with at least one pending episode
+    """
+    with redis_ops() as r:
+        journals = []
+        for key in r.scan_iter(match="pending:nodes:*"):
+            if r.zcard(key) > 0:
+                journal = key.decode().split(":")[-1]
+                journals.append(journal)
+        return journals

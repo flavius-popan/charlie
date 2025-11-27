@@ -350,17 +350,20 @@ def test_get_episode_uuid_map_returns_none_when_not_set(
 
 
 @pytest.mark.asyncio
-async def test_add_journal_entry_sets_pending_nodes_status(isolated_graph):
-    """New journal entries are marked as pending_nodes for extraction."""
+async def test_add_journal_entry_adds_to_pending_queue(isolated_graph):
+    """New journal entries are added to the pending queue for extraction."""
+    from backend.database.redis_ops import (
+        get_pending_episodes,
+        remove_pending_episode,
+    )
+
     episode_uuid = await add_journal_entry("Today I met Sarah at the park.")
 
-    status = get_episode_status(episode_uuid, DEFAULT_JOURNAL)
-    assert status == "pending_nodes"
-
-    pending_episodes = get_episodes_by_status("pending_nodes")
+    # Episode should be in the chronologically-sorted pending queue
+    pending_episodes = get_pending_episodes(DEFAULT_JOURNAL)
     assert episode_uuid in pending_episodes
 
-    remove_episode_from_queue(episode_uuid, DEFAULT_JOURNAL)
+    remove_pending_episode(episode_uuid, DEFAULT_JOURNAL)
 
 
 def test_episode_lifecycle_completes_properly(
@@ -389,9 +392,12 @@ def test_episode_lifecycle_completes_properly(
 
 def test_enqueue_pending_episodes_processes_backlog(falkordb_test_context):
     """Pending episodes are enqueued when inference is re-enabled."""
+    from datetime import datetime, timezone
     from backend.database.redis_ops import (
+        add_pending_episode,
         enqueue_pending_episodes,
         get_inference_enabled,
+        remove_pending_episode,
         set_inference_enabled,
     )
     from unittest.mock import patch
@@ -400,9 +406,11 @@ def test_enqueue_pending_episodes_processes_backlog(falkordb_test_context):
     episode2 = str(uuid4())
     episode3 = str(uuid4())
 
-    set_episode_status(episode1, "pending_nodes", DEFAULT_JOURNAL)
-    set_episode_status(episode2, "pending_nodes", DEFAULT_JOURNAL)
-    set_episode_status(episode3, "pending_nodes", DEFAULT_JOURNAL)
+    # Add episodes to pending queue with chronological timestamps
+    base_time = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    add_pending_episode(episode1, DEFAULT_JOURNAL, base_time.replace(day=1))
+    add_pending_episode(episode2, DEFAULT_JOURNAL, base_time.replace(day=2))
+    add_pending_episode(episode3, DEFAULT_JOURNAL, base_time.replace(day=3))
 
     set_inference_enabled(False)
     assert get_inference_enabled() is False
@@ -421,9 +429,9 @@ def test_enqueue_pending_episodes_processes_backlog(falkordb_test_context):
         called_uuids = {call[0][0] for call in mock_task.call_args_list}
         assert called_uuids == {episode1, episode2, episode3}
 
-    remove_episode_from_queue(episode1, DEFAULT_JOURNAL)
-    remove_episode_from_queue(episode2, DEFAULT_JOURNAL)
-    remove_episode_from_queue(episode3, DEFAULT_JOURNAL)
+    remove_pending_episode(episode1, DEFAULT_JOURNAL)
+    remove_pending_episode(episode2, DEFAULT_JOURNAL)
+    remove_pending_episode(episode3, DEFAULT_JOURNAL)
 
 
 def test_extract_nodes_task_has_unique_deduplication():
@@ -434,8 +442,12 @@ def test_extract_nodes_task_has_unique_deduplication():
     assert extract_nodes_task.settings.get("unique") is True
 
 
-def test_get_episodes_by_status_scan_consistency(falkordb_test_context):
+def test_get_episodes_by_status_scan_consistency(falkordb_test_context, redis_client):
     """Scan-based lookup returns consistent results with episode hash state."""
+    # Clean up any leftover keys from other tests
+    for key in redis_client.scan_iter(match="journal:*"):
+        redis_client.delete(key)
+
     episode1 = str(uuid4())
     episode2 = str(uuid4())
     episode3 = str(uuid4())
@@ -463,8 +475,12 @@ def test_get_episodes_by_status_scan_consistency(falkordb_test_context):
 
 
 @pytest.mark.asyncio
-async def test_get_episodes_by_status_ignores_suppressed_entities_set(falkordb_test_context):
+async def test_get_episodes_by_status_ignores_suppressed_entities_set(falkordb_test_context, redis_client):
     """Suppression sets should not break or pollute status scanning."""
+    # Clean up any leftover keys from other tests
+    for key in redis_client.scan_iter(match="journal:*"):
+        redis_client.delete(key)
+
     episode = str(uuid4())
     set_episode_status(episode, "pending_nodes", DEFAULT_JOURNAL)
 
@@ -478,10 +494,16 @@ async def test_get_episodes_by_status_ignores_suppressed_entities_set(falkordb_t
     remove_episode_from_queue(episode, DEFAULT_JOURNAL)
 
 
-def test_cleanup_if_no_work_checks_pending_nodes_only(falkordb_test_context):
+def test_cleanup_if_no_work_checks_pending_nodes_only(falkordb_test_context, redis_client):
     """cleanup_if_no_work only needs to check pending_nodes status."""
     from backend.inference.manager import cleanup_if_no_work, MODELS
     from backend.database.redis_ops import get_episodes_by_status
+
+    # Clean up any leftover keys from other tests
+    for key in redis_client.scan_iter(match="journal:*"):
+        redis_client.delete(key)
+    for key in redis_client.scan_iter(match="pending:*"):
+        redis_client.delete(key)
 
     episode1 = str(uuid4())
     set_episode_status(episode1, "pending_nodes", DEFAULT_JOURNAL)
@@ -498,3 +520,250 @@ def test_cleanup_if_no_work_checks_pending_nodes_only(falkordb_test_context):
 
     cleanup_if_no_work()
     assert MODELS["llm"] is None
+
+
+# Unresolved Entities Queue Tests
+
+
+def test_append_unresolved_entities(falkordb_test_context):
+    """Append unresolved entities to batch dedup queue."""
+    from backend.database.redis_ops import (
+        append_unresolved_entities,
+        pop_unresolved_entities,
+        get_unresolved_entities_count,
+    )
+
+    entities = [
+        {
+            "uuid": str(uuid4()),
+            "name": "Sarah",
+            "labels": ["Entity", "Person"],
+            "episode_uuid": str(uuid4()),
+            "journal": DEFAULT_JOURNAL,
+            "extracted_at": "2024-01-01T00:00:00",
+        },
+        {
+            "uuid": str(uuid4()),
+            "name": "Coffee Shop",
+            "labels": ["Entity", "Location"],
+            "episode_uuid": str(uuid4()),
+            "journal": DEFAULT_JOURNAL,
+            "extracted_at": "2024-01-01T00:00:00",
+        },
+    ]
+
+    append_unresolved_entities(DEFAULT_JOURNAL, entities)
+
+    count = get_unresolved_entities_count(DEFAULT_JOURNAL)
+    assert count == 2
+
+    retrieved = pop_unresolved_entities(DEFAULT_JOURNAL, count=10)
+    assert len(retrieved) == 2
+    assert retrieved[0]["name"] == "Sarah"
+    assert retrieved[1]["name"] == "Coffee Shop"
+
+    # Queue should be empty now
+    count_after = get_unresolved_entities_count(DEFAULT_JOURNAL)
+    assert count_after == 0
+
+
+def test_append_unresolved_entities_empty_list(falkordb_test_context):
+    """Appending empty list is a no-op."""
+    from backend.database.redis_ops import (
+        append_unresolved_entities,
+        get_unresolved_entities_count,
+    )
+
+    append_unresolved_entities(DEFAULT_JOURNAL, [])
+    count = get_unresolved_entities_count(DEFAULT_JOURNAL)
+    assert count == 0
+
+
+def test_pop_unresolved_entities_respects_count(falkordb_test_context):
+    """Pop respects count parameter."""
+    from backend.database.redis_ops import (
+        append_unresolved_entities,
+        pop_unresolved_entities,
+        get_unresolved_entities_count,
+    )
+
+    entities = [
+        {"uuid": str(uuid4()), "name": f"Entity{i}", "labels": ["Entity"], "episode_uuid": str(uuid4()), "journal": DEFAULT_JOURNAL, "extracted_at": "2024-01-01T00:00:00"}
+        for i in range(5)
+    ]
+
+    append_unresolved_entities(DEFAULT_JOURNAL, entities)
+    assert get_unresolved_entities_count(DEFAULT_JOURNAL) == 5
+
+    # Pop only 2
+    retrieved = pop_unresolved_entities(DEFAULT_JOURNAL, count=2)
+    assert len(retrieved) == 2
+    assert get_unresolved_entities_count(DEFAULT_JOURNAL) == 3
+
+    # Pop remaining
+    remaining = pop_unresolved_entities(DEFAULT_JOURNAL, count=10)
+    assert len(remaining) == 3
+    assert get_unresolved_entities_count(DEFAULT_JOURNAL) == 0
+
+
+def test_pop_unresolved_entities_empty_queue(falkordb_test_context):
+    """Pop from empty queue returns empty list."""
+    from backend.database.redis_ops import pop_unresolved_entities
+
+    retrieved = pop_unresolved_entities(DEFAULT_JOURNAL, count=10)
+    assert retrieved == []
+
+
+# Pending Episodes Queue (Chronologically Ordered) Tests
+
+
+def test_pending_episodes_chronological_order(falkordb_test_context):
+    """Pending episodes are returned in chronological order (oldest first)."""
+    from datetime import datetime, timezone
+    from backend.database.redis_ops import (
+        add_pending_episode,
+        get_pending_episodes,
+        remove_pending_episode,
+    )
+
+    episode_old = str(uuid4())
+    episode_mid = str(uuid4())
+    episode_new = str(uuid4())
+
+    # Add in non-chronological order
+    time_mid = datetime(2024, 6, 15, 12, 0, 0, tzinfo=timezone.utc)
+    time_old = datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+    time_new = datetime(2024, 12, 31, 12, 0, 0, tzinfo=timezone.utc)
+
+    add_pending_episode(episode_mid, DEFAULT_JOURNAL, time_mid)
+    add_pending_episode(episode_old, DEFAULT_JOURNAL, time_old)
+    add_pending_episode(episode_new, DEFAULT_JOURNAL, time_new)
+
+    # Should return oldest first
+    pending = get_pending_episodes(DEFAULT_JOURNAL)
+    assert pending == [episode_old, episode_mid, episode_new]
+
+    # Cleanup
+    remove_pending_episode(episode_old, DEFAULT_JOURNAL)
+    remove_pending_episode(episode_mid, DEFAULT_JOURNAL)
+    remove_pending_episode(episode_new, DEFAULT_JOURNAL)
+
+
+def test_remove_pending_episode(falkordb_test_context):
+    """Remove episode from pending queue."""
+    from datetime import datetime, timezone
+    from backend.database.redis_ops import (
+        add_pending_episode,
+        get_pending_episodes,
+        remove_pending_episode,
+        get_pending_episodes_count,
+    )
+
+    episode1 = str(uuid4())
+    episode2 = str(uuid4())
+
+    time1 = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    time2 = datetime(2024, 1, 2, tzinfo=timezone.utc)
+
+    add_pending_episode(episode1, DEFAULT_JOURNAL, time1)
+    add_pending_episode(episode2, DEFAULT_JOURNAL, time2)
+    assert get_pending_episodes_count(DEFAULT_JOURNAL) == 2
+
+    remove_pending_episode(episode1, DEFAULT_JOURNAL)
+    assert get_pending_episodes_count(DEFAULT_JOURNAL) == 1
+
+    pending = get_pending_episodes(DEFAULT_JOURNAL)
+    assert pending == [episode2]
+
+    # Cleanup
+    remove_pending_episode(episode2, DEFAULT_JOURNAL)
+
+
+def test_get_pending_episodes_count(falkordb_test_context):
+    """Get count of pending episodes."""
+    from datetime import datetime, timezone
+    from backend.database.redis_ops import (
+        add_pending_episode,
+        get_pending_episodes_count,
+        remove_pending_episode,
+    )
+
+    assert get_pending_episodes_count(DEFAULT_JOURNAL) == 0
+
+    episodes = [str(uuid4()) for _ in range(3)]
+    base_time = datetime(2024, 1, 1, tzinfo=timezone.utc)
+
+    for i, ep in enumerate(episodes):
+        add_pending_episode(ep, DEFAULT_JOURNAL, base_time.replace(day=i + 1))
+
+    assert get_pending_episodes_count(DEFAULT_JOURNAL) == 3
+
+    # Cleanup
+    for ep in episodes:
+        remove_pending_episode(ep, DEFAULT_JOURNAL)
+
+
+def test_get_journals_with_pending_episodes(falkordb_test_context):
+    """Find journals that have pending work."""
+    from datetime import datetime, timezone
+    from backend.database.redis_ops import (
+        add_pending_episode,
+        get_journals_with_pending_episodes,
+        remove_pending_episode,
+    )
+
+    episode1 = str(uuid4())
+    episode2 = str(uuid4())
+    time = datetime(2024, 1, 1, tzinfo=timezone.utc)
+
+    # Add to default journal
+    add_pending_episode(episode1, DEFAULT_JOURNAL, time)
+    # Add to another journal
+    add_pending_episode(episode2, "work", time)
+
+    journals = get_journals_with_pending_episodes()
+    assert DEFAULT_JOURNAL in journals
+    assert "work" in journals
+
+    # Remove from work journal - should no longer appear
+    remove_pending_episode(episode2, "work")
+    journals_after = get_journals_with_pending_episodes()
+    assert DEFAULT_JOURNAL in journals_after
+    assert "work" not in journals_after
+
+    # Cleanup
+    remove_pending_episode(episode1, DEFAULT_JOURNAL)
+
+
+@pytest.mark.asyncio
+async def test_add_journal_entry_uses_pending_queue(isolated_graph):
+    """New journal entries are added to chronologically-sorted pending queue."""
+    from datetime import datetime, timezone
+    from backend.database.redis_ops import (
+        get_pending_episodes,
+        get_pending_episodes_count,
+        remove_pending_episode,
+    )
+
+    # Add entries with different reference times (out of order)
+    time_new = datetime(2024, 12, 1, tzinfo=timezone.utc)
+    time_old = datetime(2024, 1, 1, tzinfo=timezone.utc)
+
+    uuid_new = await add_journal_entry(
+        "Entry from December",
+        reference_time=time_new,
+    )
+    uuid_old = await add_journal_entry(
+        "Entry from January",
+        reference_time=time_old,
+    )
+
+    # Should be sorted oldest first
+    pending = get_pending_episodes(DEFAULT_JOURNAL)
+    assert uuid_old in pending
+    assert uuid_new in pending
+    assert pending.index(uuid_old) < pending.index(uuid_new)
+
+    # Cleanup
+    remove_pending_episode(uuid_old, DEFAULT_JOURNAL)
+    remove_pending_episode(uuid_new, DEFAULT_JOURNAL)
