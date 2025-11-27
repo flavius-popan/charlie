@@ -238,7 +238,10 @@ class EntitySidebar(Container):
             self._update_content()
 
     def _update_content(self) -> None:
-        """Update container content based on loading state and entity data."""
+        """Update container content based on loading state and entity data.
+
+        Skips DOM manipulation when content hasn't changed to avoid jank.
+        """
         if not self.is_mounted:
             return
 
@@ -247,7 +250,8 @@ class EntitySidebar(Container):
             # Defer until the container is attached to avoid mount errors.
             self.call_after_refresh(self._update_content)
             return
-        content_container.remove_children()
+
+        current_children = list(content_container.children)
 
         should_show_spinner = (
             self.cache_loading
@@ -258,6 +262,10 @@ class EntitySidebar(Container):
         )
 
         if should_show_spinner:
+            # Skip if already showing spinner
+            if len(current_children) == 1 and isinstance(current_children[0], LoadingIndicator):
+                return
+            content_container.remove_children()
             content_container.mount(LoadingIndicator())
             return
 
@@ -275,15 +283,31 @@ class EntitySidebar(Container):
                 clear_loading = False
                 self.cache_loading = True
 
+            # Skip if already showing same message
+            if len(current_children) == 1 and isinstance(current_children[0], Label):
+                existing_label = current_children[0]
+                if existing_label.render() == message:
+                    if clear_loading:
+                        self.cache_loading = False
+                    return
+
+            content_container.remove_children()
             content_container.mount(Label(message))
             if clear_loading:
                 self.cache_loading = False
         else:
+            # Skip if already showing entities (ListView exists and count matches)
+            if len(current_children) == 1 and isinstance(current_children[0], ListView):
+                existing_list = current_children[0]
+                if len(existing_list.children) == len(self.entities):
+                    return
+
             items = [
                 EntityListItem(self._format_entity_label(entity))
                 for entity in self.entities
             ]
             list_view = ListView(*items)
+            content_container.remove_children()
             content_container.mount(list_view)
 
             def focus_and_select():

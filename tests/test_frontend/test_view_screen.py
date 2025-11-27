@@ -2,7 +2,7 @@
 
 import asyncio
 import pytest
-from unittest.mock import patch, AsyncMock
+from unittest.mock import patch, AsyncMock, MagicMock
 from textual.app import App, ComposeResult
 from textual.screen import Screen
 from textual.widgets import Markdown, LoadingIndicator
@@ -294,3 +294,60 @@ async def test_view_screen_from_edit_starts_polling_and_spinner_when_pending():
 
                 content = sidebar.query_one("#entity-content")
                 assert content.query(LoadingIndicator), "Spinner should be visible while processing"
+
+
+@pytest.mark.asyncio
+async def test_toggle_sidebar_cancels_sidebar_workers_on_hide():
+    """Regression test: hiding sidebar must cancel sidebar workers to prevent race conditions.
+
+    Without this fix, the open -> close -> open cycle would fail because:
+    1. First open starts a worker on the sidebar (refresh_entities)
+    2. Close hides sidebar but worker keeps running
+    3. Second open races with the still-running worker, corrupting state
+
+    The fix ensures sidebar.workers.cancel_all() is called when hiding.
+    """
+    with patch("charlie.get_episode", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = {
+            "uuid": "test-uuid",
+            "content": "# Test\nContent",
+        }
+
+        app = ViewScreenTestApp(episode_uuid="test-uuid", journal="test", from_edit=False)
+
+        async with app.run_test() as pilot:
+            screen: ViewScreen = app.screen
+            sidebar = screen.query_one(EntitySidebar)
+
+            # Sidebar starts hidden when from_edit=False
+            assert sidebar.display is False
+
+            # Track if cancel_all was called
+            cancel_all_called = False
+            original_cancel_all = sidebar.workers.cancel_all
+
+            def mock_cancel_all():
+                nonlocal cancel_all_called
+                cancel_all_called = True
+                return original_cancel_all()
+
+            sidebar.workers.cancel_all = mock_cancel_all
+
+            # Open sidebar (1st press)
+            await pilot.press("c")
+            await pilot.pause()
+            assert sidebar.display is True, "Sidebar should be visible after 1st press"
+
+            # Close sidebar (2nd press) - this should call cancel_all
+            await pilot.press("c")
+            await pilot.pause()
+            assert sidebar.display is False, "Sidebar should be hidden after 2nd press"
+            assert cancel_all_called, "sidebar.workers.cancel_all() must be called when hiding"
+
+            # Reset tracking
+            cancel_all_called = False
+
+            # Open sidebar again (3rd press) - should work without issues
+            await pilot.press("c")
+            await pilot.pause()
+            assert sidebar.display is True, "Sidebar should be visible after 3rd press (regression check)"

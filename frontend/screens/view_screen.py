@@ -87,6 +87,9 @@ class ViewScreen(Screen):
             visible=from_edit,
         )
 
+        # Guard against reentrant toggle calls during async operations
+        self._toggling = False
+
         # Sync machine output to reactive properties
         self._sync_machine_output()
 
@@ -266,50 +269,71 @@ class ViewScreen(Screen):
 
     async def action_toggle_connections(self) -> None:
         """Toggle sidebar visibility and focus if opened."""
-        sidebar = self.query_one("#entity-sidebar", EntitySidebar)
-        current_visible = self.sidebar_machine.output.visible
+        # Prevent reentrant calls during async operations
+        if self._toggling:
+            return
+        self._toggling = True
 
-        if current_visible:
-            # Hide sidebar
-            self.sidebar_machine.send("hide")
-            self._sync_machine_output()
-            self.active_processing = False  # No spinner when hidden
-            sidebar.display = False
-            self.workers.cancel_group(self, "status-poll")
-        else:
-            # Show sidebar - refresh context and route event
-            sidebar.display = True
+        try:
+            sidebar = self.query_one("#entity-sidebar", EntitySidebar)
+            current_visible = self.sidebar_machine.output.visible
 
-            # Batch all Redis reads into a single call for minimal latency
-            inferred_enabled, status, active_uuid = await self._fetch_sidebar_context_batched()
-
-            self._apply_sidebar_context(inferred_enabled, status)
-            self.sidebar_machine.send("show", status=self.sidebar_machine.output.status)
-            self._sync_machine_output()
-
-            # Update active processing state
-            self.active_episode_uuid = active_uuid
-            self.active_processing = bool(active_uuid and active_uuid == self.episode_uuid)
-
-            sidebar._update_content()
-
-            # Start polling if machine indicates we should
-            if self.sidebar_machine.output.should_poll:
-                if not any(w.name == "status-poll" for w in self.workers if w.is_running):
-                    sidebar.run_worker(sidebar.refresh_entities(), exclusive=True)
-                    self.run_worker(self._poll_until_complete(), exclusive=True, name="status-poll")
+            if current_visible:
+                # Hide sidebar
+                self.sidebar_machine.send("hide")
+                self._sync_machine_output()
+                self.active_processing = False  # No spinner when hidden
+                sidebar.display = False
+                # IMPORTANT: Cancel ALL workers when hiding to prevent race conditions.
+                # Workers started on child widgets (sidebar.run_worker) continue running
+                # even when the widget is hidden. If not cancelled, they race with the
+                # next "show" operation, corrupting state. Always cancel child widget
+                # workers when hiding/destroying the parent context.
+                self.workers.cancel_group(self, "status-poll")
+                sidebar.workers.cancel_all()
             else:
-                # Machine indicates we shouldn't poll - check cache anyway
-                sidebar.run_worker(sidebar.refresh_entities(), exclusive=True)
+                # Show sidebar - refresh context and route event
+                sidebar.display = True
 
-            if sidebar.entities:
-                try:
-                    list_view = sidebar.query_one(ListView)
-                    if list_view.index is None:
-                        list_view.index = 0
-                    self.set_focus(list_view)
-                except Exception:
-                    pass
+                # Batch all Redis reads into a single call for minimal latency
+                inferred_enabled, status, active_uuid = await self._fetch_sidebar_context_batched()
+
+                self._apply_sidebar_context(inferred_enabled, status)
+                self.sidebar_machine.send("show", status=self.sidebar_machine.output.status)
+                self._sync_machine_output()
+
+                # Update active processing state
+                self.active_episode_uuid = active_uuid
+                self.active_processing = bool(active_uuid and active_uuid == self.episode_uuid)
+
+                sidebar._update_content()
+
+                # Start polling if machine indicates we should
+                if self.sidebar_machine.output.should_poll:
+                    if not any(w.name == "status-poll" for w in self.workers if w.is_running):
+                        sidebar.run_worker(sidebar.refresh_entities(), exclusive=True)
+                        self.run_worker(self._poll_until_complete(), exclusive=True, name="status-poll")
+                else:
+                    # Machine indicates we shouldn't poll - check cache anyway
+                    sidebar.run_worker(sidebar.refresh_entities(), exclusive=True)
+
+                if sidebar.entities:
+                    try:
+                        list_view = sidebar.query_one(ListView)
+                        if list_view.index is None:
+                            list_view.index = 0
+                        self.set_focus(list_view)
+                    except Exception:
+                        pass
+                else:
+                    # No entities yet - keep focus on markdown to avoid focus limbo
+                    try:
+                        markdown = self.query_one("#journal-content", Markdown)
+                        self.set_focus(markdown)
+                    except Exception:
+                        pass
+        finally:
+            self._toggling = False
 
     def action_show_logs(self) -> None:
         """Navigate to log viewer."""
