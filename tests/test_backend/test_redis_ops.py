@@ -526,41 +526,25 @@ def test_cleanup_if_no_work_checks_pending_nodes_only(falkordb_test_context, red
 
 
 def test_append_unresolved_entities(falkordb_test_context):
-    """Append unresolved entities to batch dedup queue."""
+    """Append unresolved entity UUIDs to batch dedup queue."""
     from backend.database.redis_ops import (
         append_unresolved_entities,
         pop_unresolved_entities,
         get_unresolved_entities_count,
     )
 
-    entities = [
-        {
-            "uuid": str(uuid4()),
-            "name": "Sarah",
-            "labels": ["Entity", "Person"],
-            "episode_uuid": str(uuid4()),
-            "journal": DEFAULT_JOURNAL,
-            "extracted_at": "2024-01-01T00:00:00",
-        },
-        {
-            "uuid": str(uuid4()),
-            "name": "Coffee Shop",
-            "labels": ["Entity", "Location"],
-            "episode_uuid": str(uuid4()),
-            "journal": DEFAULT_JOURNAL,
-            "extracted_at": "2024-01-01T00:00:00",
-        },
-    ]
+    uuid1 = str(uuid4())
+    uuid2 = str(uuid4())
 
-    append_unresolved_entities(DEFAULT_JOURNAL, entities)
+    append_unresolved_entities(DEFAULT_JOURNAL, [uuid1, uuid2])
 
     count = get_unresolved_entities_count(DEFAULT_JOURNAL)
     assert count == 2
 
     retrieved = pop_unresolved_entities(DEFAULT_JOURNAL, count=10)
     assert len(retrieved) == 2
-    assert retrieved[0]["name"] == "Sarah"
-    assert retrieved[1]["name"] == "Coffee Shop"
+    assert retrieved[0] == uuid1
+    assert retrieved[1] == uuid2
 
     # Queue should be empty now
     count_after = get_unresolved_entities_count(DEFAULT_JOURNAL)
@@ -587,12 +571,9 @@ def test_pop_unresolved_entities_respects_count(falkordb_test_context):
         get_unresolved_entities_count,
     )
 
-    entities = [
-        {"uuid": str(uuid4()), "name": f"Entity{i}", "labels": ["Entity"], "episode_uuid": str(uuid4()), "journal": DEFAULT_JOURNAL, "extracted_at": "2024-01-01T00:00:00"}
-        for i in range(5)
-    ]
+    uuids = [str(uuid4()) for _ in range(5)]
 
-    append_unresolved_entities(DEFAULT_JOURNAL, entities)
+    append_unresolved_entities(DEFAULT_JOURNAL, uuids)
     assert get_unresolved_entities_count(DEFAULT_JOURNAL) == 5
 
     # Pop only 2

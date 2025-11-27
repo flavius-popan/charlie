@@ -462,8 +462,8 @@ def is_episode_actively_processing(episode_uuid: str) -> bool:
 # Unresolved Entities Queue (for batch dedup)
 
 
-def append_unresolved_entities(journal: str, entities: list[dict]) -> None:
-    """Append unresolved entities to batch dedup queue.
+def append_unresolved_entities(journal: str, entity_uuids: list[str]) -> None:
+    """Append unresolved entity UUIDs to batch dedup queue.
 
     Unresolved entities are those that MinHash deduplication couldn't match
     to existing entities. They become new entities in the graph but are also
@@ -472,35 +472,34 @@ def append_unresolved_entities(journal: str, entities: list[dict]) -> None:
 
     Args:
         journal: Journal name
-        entities: List of entity dicts with uuid, name, labels, episode_uuid,
-                  journal, and extracted_at fields
+        entity_uuids: List of entity UUIDs (entity data is in the graph)
     """
-    if not entities:
+    if not entity_uuids:
         return
     with redis_ops() as r:
         key = f"dedup:unresolved:{journal}"
-        r.rpush(key, *[json.dumps(e) for e in entities])
+        r.rpush(key, *entity_uuids)
 
 
-def pop_unresolved_entities(journal: str, count: int = 100) -> list[dict]:
-    """Pop unresolved entities from batch dedup queue.
+def pop_unresolved_entities(journal: str, count: int = 100) -> list[str]:
+    """Pop unresolved entity UUIDs from batch dedup queue.
 
     Args:
         journal: Journal name
         count: Max entities to pop
 
     Returns:
-        List of entity dicts
+        List of entity UUIDs
     """
     with redis_ops() as r:
         key = f"dedup:unresolved:{journal}"
-        entities = []
+        uuids = []
         for _ in range(count):
             item = r.lpop(key)
             if item is None:
                 break
-            entities.append(json.loads(item))
-        return entities
+            uuids.append(item.decode() if isinstance(item, bytes) else item)
+        return uuids
 
 
 def get_unresolved_entities_count(journal: str) -> int:

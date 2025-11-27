@@ -421,25 +421,18 @@ async def extract_nodes(
         dedupe_enabled,
     )
 
-    # Cache unresolved entities for future batch dedup
+    # Cache unresolved entity UUIDs for future batch dedup
     # These are entities that MinHash couldn't match to existing ones
-    unresolved_for_batch = []
+    unresolved_uuids = []
     for prov_node in provisional_nodes:
         canonical_uuid = uuid_map.get(prov_node.uuid, prov_node.uuid)
         # If it mapped to itself AND wasn't in existing entities, it's truly new
         if canonical_uuid == prov_node.uuid and canonical_uuid not in existing_uuid_set:
-            unresolved_for_batch.append({
-                "uuid": prov_node.uuid,
-                "name": prov_node.name,
-                "labels": prov_node.labels,
-                "episode_uuid": episode_uuid,
-                "journal": journal,
-                "extracted_at": utc_now().isoformat(),
-            })
+            unresolved_uuids.append(prov_node.uuid)
 
-    if unresolved_for_batch:
-        append_unresolved_entities(journal, unresolved_for_batch)
-        logger.info("Queued %d unresolved entities for batch dedup", len(unresolved_for_batch))
+    if unresolved_uuids:
+        append_unresolved_entities(journal, unresolved_uuids)
+        logger.info("Queued %d unresolved entities for batch dedup", len(unresolved_uuids))
 
     from backend.database.redis_ops import redis_ops
 
