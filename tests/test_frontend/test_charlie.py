@@ -72,14 +72,7 @@ async def app_test_context(app):
     """
     try:
         async with app.run_test() as pilot:
-            # Allow multiple event loop cycles for screen initialization:
-            # 1. CharlieApp.on_mount() runs
-            # 2. HomeScreen is pushed
-            # 3. HomeScreen.compose() creates widgets
-            # 4. Widgets are mounted and on_mount() is called
-            # 5. Workers start and may update reactive attributes
-            for _ in range(3):
-                await pilot.pause()
+            await pilot.pause()
             yield pilot
     except asyncio.CancelledError:
         pass
@@ -400,7 +393,6 @@ class TestViewScreen:
 
             await pilot.press("space")
             await pilot.pause()
-            await pilot.pause()
 
             assert isinstance(app.screen, ViewScreen)
 
@@ -425,7 +417,6 @@ class TestViewScreen:
             await pilot.pause()
             await pilot.press("space")
             await pilot.pause()
-            await pilot.pause()
 
             from textual.widgets import Header
             headers = app.screen.query(Header)
@@ -447,7 +438,6 @@ class TestViewScreen:
         async with app_test_context(app) as pilot:
             await pilot.pause()
             await pilot.press("space")
-            await pilot.pause()
             await pilot.pause()
 
             await pilot.press("e")
@@ -472,7 +462,6 @@ class TestViewScreen:
         async with app_test_context(app) as pilot:
             await pilot.pause()
             await pilot.press("space")
-            await pilot.pause()
             await pilot.pause()
 
             await pilot.press("escape")
@@ -732,7 +721,6 @@ class TestIntegration:
 
             await pilot.press("escape")
             await pilot.pause()
-            await pilot.pause()
 
             assert isinstance(app.screen, ViewScreen)
 
@@ -762,7 +750,6 @@ class TestIntegration:
 
             # Open existing entry
             await pilot.press("space")
-            await pilot.pause()
             await pilot.pause()
 
             # Edit the entry
@@ -804,7 +791,7 @@ class TestIntegration:
             await pilot.pause()
 
             await pilot.press("space")
-            await pilot.pause(); await pilot.pause()
+            await pilot.pause()
 
             await pilot.press("e")
             await pilot.pause()
@@ -814,7 +801,7 @@ class TestIntegration:
             editor.text = "# Title\nUpdated"
 
             await pilot.press("escape")
-            await pilot.pause(); await pilot.pause()
+            await pilot.pause()
 
             # Viewer should be active and polling
             from charlie import ViewScreen
@@ -983,7 +970,6 @@ async def test_edit_screen_enqueues_extraction_when_content_changes(mock_databas
 
             await pilot.press("space")
             await pilot.pause()
-            await pilot.pause()
 
             await pilot.press("e")
             await pilot.pause()
@@ -1021,7 +1007,6 @@ async def test_edit_screen_skips_extraction_when_content_unchanged(mock_database
             await pilot.pause()
 
             await pilot.press("space")
-            await pilot.pause()
             await pilot.pause()
 
             await pilot.press("e")
@@ -1217,7 +1202,6 @@ class TestConnectionsPaneVisibility:
 
                 await pilot.press("space")
                 await pilot.pause()
-                await pilot.pause()
 
                 await pilot.press("e")
                 await pilot.pause()
@@ -1295,7 +1279,6 @@ class TestConnectionsPaneVisibility:
 
             await pilot.press("space")
             await pilot.pause()
-            await pilot.pause()
 
             from textual.widgets import ListView
             view = app.screen
@@ -1339,7 +1322,6 @@ async def test_edit_entry_title_only_no_extraction_integration(mock_database):
             await pilot.pause()
 
             await pilot.press("space")
-            await pilot.pause()
             await pilot.pause()
 
             await pilot.press("e")
