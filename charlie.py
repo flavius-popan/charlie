@@ -121,12 +121,12 @@ class CharlieApp(App):
     """A minimal journal TUI application."""
 
     TITLE = "Charlie"
+    theme = "catppuccin-mocha"
 
     def __init__(self):
         super().__init__()
 
     async def on_mount(self):
-        self.theme = "catppuccin-mocha"
         self.push_screen(HomeScreen())
         # Worker is started after DB readiness in HomeScreen._init_and_load.
 
@@ -255,6 +255,11 @@ Screen {
 
 #editor {
     height: 100%;
+    scrollbar-size-vertical: 0;
+    scrollbar-size-horizontal: 0;
+}
+
+#episodes-list {
     scrollbar-size-vertical: 0;
     scrollbar-size-horizontal: 0;
 }
