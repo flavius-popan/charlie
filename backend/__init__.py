@@ -16,7 +16,7 @@ from backend.database import (
     validate_journal_name,
 )
 from backend.database.persistence import persist_entities_and_edges
-from backend.database.redis_ops import get_inference_enabled, set_episode_status
+from backend.database.redis_ops import add_pending_episode, get_inference_enabled, set_episode_status
 from backend.graph import extract_nodes, ExtractNodesResult
 
 # Content validation limits
@@ -179,8 +179,10 @@ async def add_journal_entry(
     # Persist to database (also ensures author entity "I" exists)
     await persist_episode(episode, journal=journal)
 
-    # Mark episode as pending node extraction (task will be enqueued by caller)
+    # Set status hash for UI state machine (spinners, status display)
     await asyncio.to_thread(set_episode_status, episode_uuid, "pending_nodes", journal)
+    # Add to chronologically-sorted pending queue (oldest-first for better dedup)
+    await asyncio.to_thread(add_pending_episode, episode_uuid, journal, reference_time)
 
     return episode_uuid
 

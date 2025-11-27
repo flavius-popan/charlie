@@ -21,6 +21,32 @@ def test_extract_nodes_exported():
     assert ExtractNodesResult is not None
 
 
+def test_should_use_llm_dedupe_logic():
+    """Test automatic dedupe mode detection logic.
+
+    Mode switching rules:
+    - Queue has items -> queue mode (batch pending)
+    - Queue empty + no entities -> queue mode (new journal, accumulate first)
+    - Queue empty + has entities -> LLM per-episode mode
+    """
+    from unittest.mock import patch
+    from backend.graph.extract_nodes import should_use_llm_dedupe
+
+    # Case 1: Queue has items -> use queue mode (batch pending)
+    with patch("backend.graph.extract_nodes.get_unresolved_entities_count", return_value=5):
+        assert should_use_llm_dedupe("test_journal", existing_entity_count=10) is False
+        assert should_use_llm_dedupe("test_journal", existing_entity_count=0) is False
+
+    # Case 2: Queue empty + no entities -> use queue mode (new journal)
+    with patch("backend.graph.extract_nodes.get_unresolved_entities_count", return_value=0):
+        assert should_use_llm_dedupe("test_journal", existing_entity_count=0) is False
+
+    # Case 3: Queue empty + has entities -> use LLM per-episode mode
+    with patch("backend.graph.extract_nodes.get_unresolved_entities_count", return_value=0):
+        assert should_use_llm_dedupe("test_journal", existing_entity_count=10) is True
+        assert should_use_llm_dedupe("test_journal", existing_entity_count=1) is True
+
+
 @pytest.mark.inference
 @pytest.mark.asyncio
 async def test_extract_nodes_basic(isolated_graph, require_llm):

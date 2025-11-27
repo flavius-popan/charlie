@@ -269,13 +269,14 @@ def set_inference_enabled(enabled: bool) -> None:
 
 
 def enqueue_pending_episodes() -> int:
-    """Enqueue all pending episodes for processing.
+    """Enqueue all pending episodes for processing in chronological order.
 
     Returns:
         Number of episodes enqueued
 
     Note:
         Only enqueues if inference is enabled.
+        Episodes are processed oldest-first (by valid_at) to improve entity dedup.
         Huey's unique=True on extract_nodes_task handles deduplication.
         Background tasks are enqueued with priority=0 (low priority).
     """
@@ -285,13 +286,14 @@ def enqueue_pending_episodes() -> int:
     # Import here to avoid circular dependency (tasks.py imports from redis_ops)
     from backend.services.tasks import extract_nodes_task
 
-    pending = get_episodes_by_status("pending_nodes")
-    for episode_uuid in pending:
-        data = get_episode_data(episode_uuid)
-        journal = data.get("journal", "")
-        extract_nodes_task(episode_uuid, journal, priority=0)
+    count = 0
+    for journal in get_journals_with_pending_episodes():
+        pending = get_pending_episodes(journal)  # Already sorted oldest-first
+        for episode_uuid in pending:
+            extract_nodes_task(episode_uuid, journal, priority=0)
+            count += 1
 
-    return len(pending)
+    return count
 
 
 def cleanup_orphaned_episode_keys() -> int:
@@ -455,3 +457,155 @@ def is_episode_actively_processing(episode_uuid: str) -> bool:
             # Corrupted data - clear it
             r.delete("task:active_episode")
             return False
+
+
+# =============================================================================
+# Unresolved Entities Queue (for Batch LLM Dedup)
+# =============================================================================
+#
+# Entities that MinHash deduplication couldn't confidently match are queued
+# here for future batch LLM deduplication. This enables fast bulk imports
+# by deferring expensive LLM calls.
+#
+# Queue: dedup:unresolved:{journal} (Redis List, per-journal)
+# Storage: UUIDs only - entity data fetched from graph when processing
+#
+# BATCH JOB CONTRACT (future implementation):
+# 1. Pop UUIDs via pop_unresolved_entities()
+# 2. Fetch entity data from graph (handle missing entities gracefully)
+# 3. Sort by name for small-LLM context efficiency
+# 4. Run DSPy LLM dedupe to identify duplicate groups
+# 5. For duplicates: merge in graph (redirect edges, delete duplicate node)
+# 6. For unique entities: no action needed (already in graph, just processed)
+#
+# Mode switching is automatic via should_use_llm_dedupe() in extract_nodes.py:
+# - Queue has items → queue mode (batch pending)
+# - Queue empty + has entities → LLM per-episode mode
+# =============================================================================
+
+
+def append_unresolved_entities(journal: str, entity_uuids: list[str]) -> None:
+    """Append unresolved entity UUIDs to batch dedup queue.
+
+    Unresolved entities are those that MinHash deduplication couldn't match
+    to existing entities. They become new entities in the graph but are also
+    queued here for a future batch LLM dedup job to review cross-episode
+    matches (e.g., "Sarah" from Episode 1 and "Sarah Chen" from Episode 50).
+
+    Args:
+        journal: Journal name
+        entity_uuids: List of entity UUIDs (entity data is in the graph)
+    """
+    if not entity_uuids:
+        return
+    with redis_ops() as r:
+        key = f"dedup:unresolved:{journal}"
+        r.rpush(key, *entity_uuids)
+
+
+def pop_unresolved_entities(journal: str, count: int = 100) -> list[str]:
+    """Pop unresolved entity UUIDs from batch dedup queue.
+
+    Args:
+        journal: Journal name
+        count: Max entities to pop
+
+    Returns:
+        List of entity UUIDs
+    """
+    with redis_ops() as r:
+        key = f"dedup:unresolved:{journal}"
+        uuids = []
+        for _ in range(count):
+            item = r.lpop(key)
+            if item is None:
+                break
+            uuids.append(item.decode() if isinstance(item, bytes) else item)
+        return uuids
+
+
+def get_unresolved_entities_count(journal: str) -> int:
+    """Get count of unresolved entities in queue.
+
+    Args:
+        journal: Journal name
+
+    Returns:
+        Number of entities in queue
+    """
+    with redis_ops() as r:
+        return r.llen(f"dedup:unresolved:{journal}")
+
+
+# Pending Episodes Queue (Chronologically Ordered)
+
+
+def add_pending_episode(episode_uuid: str, journal: str, valid_at) -> None:
+    """Add episode to pending queue sorted by valid_at timestamp.
+
+    Uses a Redis Sorted Set to maintain chronological order (oldest first).
+    This ensures entities are extracted progressively, improving dedup quality.
+
+    Args:
+        episode_uuid: Episode UUID
+        journal: Journal name
+        valid_at: Episode reference time (datetime object)
+    """
+    with redis_ops() as r:
+        key = f"pending:nodes:{journal}"
+        score = valid_at.timestamp()
+        r.zadd(key, {episode_uuid: score})
+
+
+def get_pending_episodes(journal: str) -> list[str]:
+    """Get pending episodes in chronological order (oldest first).
+
+    Args:
+        journal: Journal name
+
+    Returns:
+        List of episode UUIDs sorted by valid_at (oldest first)
+    """
+    with redis_ops() as r:
+        key = f"pending:nodes:{journal}"
+        return [uuid.decode() for uuid in r.zrange(key, 0, -1)]
+
+
+def remove_pending_episode(episode_uuid: str, journal: str) -> None:
+    """Remove episode from pending queue.
+
+    Args:
+        episode_uuid: Episode UUID
+        journal: Journal name
+    """
+    with redis_ops() as r:
+        key = f"pending:nodes:{journal}"
+        r.zrem(key, episode_uuid)
+
+
+def get_pending_episodes_count(journal: str) -> int:
+    """Get count of pending episodes for a journal.
+
+    Args:
+        journal: Journal name
+
+    Returns:
+        Number of pending episodes
+    """
+    with redis_ops() as r:
+        return r.zcard(f"pending:nodes:{journal}")
+
+
+def get_journals_with_pending_episodes() -> list[str]:
+    """Get list of journals that have pending episodes.
+
+    Returns:
+        List of journal names with at least one pending episode
+    """
+    with redis_ops() as r:
+        journals = []
+        for key in r.scan_iter(match="pending:nodes:*"):
+            if r.zcard(key) > 0:
+                journal = key.decode().split(":")[-1]
+                journals.append(journal)
+        return journals

@@ -114,25 +114,23 @@ def test_orchestrator_enqueues_with_low_priority():
     """enqueue_pending_episodes should use priority=0 for background tasks."""
     from backend.database.redis_ops import redis_ops
 
-    with patch("backend.database.redis_ops.get_episode_status", return_value="pending_edges"):
-        with patch("backend.inference.manager.cleanup_if_no_work"):
-            with patch("backend.database.redis_ops.get_inference_enabled", return_value=True):
-                with patch("backend.database.redis_ops.get_episodes_by_status", return_value=["ep1"]):
-                    with patch("backend.database.redis_ops.get_episode_data", return_value={"journal": DEFAULT_JOURNAL}):
-                        from backend.database.redis_ops import enqueue_pending_episodes
+    with patch("backend.database.redis_ops.get_inference_enabled", return_value=True):
+        with patch("backend.database.redis_ops.get_journals_with_pending_episodes", return_value=[DEFAULT_JOURNAL]):
+            with patch("backend.database.redis_ops.get_pending_episodes", return_value=["ep1"]):
+                from backend.database.redis_ops import enqueue_pending_episodes
 
-                        count = enqueue_pending_episodes()
+                count = enqueue_pending_episodes()
 
-                        assert count == 1
+                assert count == 1
 
-                        # Verify in Redis - PriorityRedisHuey uses sorted sets with negative scores
-                        with redis_ops() as r:
-                            queue_key = "huey.redis.charlie"
-                            tasks = r.zrange(queue_key, 0, -1, withscores=True)
-                            assert len(tasks) > 0
-                            # Score should be 0 (negative of priority 0)
-                            _, score = tasks[0]
-                            assert score == 0.0
+                # Verify in Redis - PriorityRedisHuey uses sorted sets with negative scores
+                with redis_ops() as r:
+                    queue_key = "huey.redis.charlie"
+                    tasks = r.zrange(queue_key, 0, -1, withscores=True)
+                    assert len(tasks) > 0
+                    # Score should be 0 (negative of priority 0)
+                    _, score = tasks[0]
+                    assert score == 0.0
 
 
 def test_high_priority_tasks_jump_ahead_of_low_priority():

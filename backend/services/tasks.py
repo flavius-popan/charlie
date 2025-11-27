@@ -60,6 +60,7 @@ def extract_nodes_task(episode_uuid: str, journal: str):
         clear_active_episode,
         get_episode_status,
         get_inference_enabled,
+        remove_pending_episode,
         set_active_episode,
         set_episode_status,
     )
@@ -113,6 +114,9 @@ def extract_nodes_task(episode_uuid: str, journal: str):
             result.new_entities,
             result.resolved_count,
         )
+
+        # Remove from pending queue (ZSET) now that extraction is complete
+        remove_pending_episode(episode_uuid, journal)
 
         # Edges extraction task is not implemented yet. We mark episodes as DONE
         # immediately after node extraction so the UI stops showing spinners.

@@ -461,7 +461,10 @@ async def delete_episode(episode_uuid: str, journal: str = DEFAULT_JOURNAL) -> N
 
     # Keep Redis in sync (idempotent if already removed)
     try:
+        from backend.database.redis_ops import remove_pending_episode
+
         remove_episode_from_queue(episode_uuid, journal)
+        remove_pending_episode(episode_uuid, journal)
     except Exception:
         logger.warning(
             "Failed to remove episode %s from Redis queue after deletion", episode_uuid, exc_info=True

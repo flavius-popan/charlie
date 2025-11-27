@@ -22,9 +22,14 @@ def clean_redis_queue(isolated_graph):
 
     def _clean():
         with redis_ops() as r:
+            # Clean journal hash keys
             keys = list(r.scan_iter(match="journal:*"))
             if keys:
                 r.delete(*keys)
+            # Clean pending episode ZSET keys
+            pending_keys = list(r.scan_iter(match="pending:*"))
+            if pending_keys:
+                r.delete(*pending_keys)
 
     _clean()
     yield
@@ -74,23 +79,26 @@ def test_start_consumer_is_idempotent(huey_consumer):
 
 
 def test_delete_episode_cleans_redis_and_skips_reenqueue(clean_redis_queue):
-    """Deleting an episode should remove its Redis hash and prevent re-enqueue."""
+    """Deleting an episode should remove from pending queue and prevent re-enqueue."""
     from backend import add_journal_entry
     from backend.database.persistence import delete_episode
     from backend.database.redis_ops import (
         enqueue_pending_episodes,
-        get_episode_status,
-        set_episode_status,
+        get_pending_episodes,
+        remove_pending_episode,
     )
 
     content = "Short entry to test deletion cleanup."
     episode_uuid = asyncio.run(add_journal_entry(content))
 
-    set_episode_status(episode_uuid, "pending_nodes", DEFAULT_JOURNAL)
+    # Episode is added to pending queue by add_journal_entry
+    assert episode_uuid in get_pending_episodes(DEFAULT_JOURNAL)
 
+    # Delete episode (also removes from pending queue)
     asyncio.run(delete_episode(episode_uuid, DEFAULT_JOURNAL))
 
-    assert get_episode_status(episode_uuid, DEFAULT_JOURNAL) is None
+    # Should be removed from pending queue
+    assert episode_uuid not in get_pending_episodes(DEFAULT_JOURNAL)
 
     with patch("backend.services.tasks.extract_nodes_task"):
         enqueued = enqueue_pending_episodes()
@@ -99,17 +107,19 @@ def test_delete_episode_cleans_redis_and_skips_reenqueue(clean_redis_queue):
 
 def test_inference_toggle_defers_work_to_orchestrator(clean_redis_queue):
     """Toggle only flips the flag; unload happens via cleanup, enqueue via orchestrator."""
+    from datetime import datetime, timezone
     from backend.database.redis_ops import (
-        set_episode_status,
+        add_pending_episode,
         set_inference_enabled,
-        remove_episode_from_queue,
+        remove_pending_episode,
     )
     from backend.inference import manager
     from backend.services.tasks import orchestrate_inference_work
 
     episode_uuid = "episode-toggle-test"
+    valid_at = datetime(2024, 1, 1, tzinfo=timezone.utc)
 
-    set_episode_status(episode_uuid, "pending_nodes", DEFAULT_JOURNAL)
+    add_pending_episode(episode_uuid, DEFAULT_JOURNAL, valid_at)
     set_inference_enabled(False)
 
     with patch("backend.inference.manager.unload_all_models") as mock_unload:
@@ -123,7 +133,7 @@ def test_inference_toggle_defers_work_to_orchestrator(clean_redis_queue):
         mock_task.assert_called_once_with(episode_uuid, DEFAULT_JOURNAL, priority=0)
 
     set_inference_enabled(True)
-    remove_episode_from_queue(episode_uuid, DEFAULT_JOURNAL)
+    remove_pending_episode(episode_uuid, DEFAULT_JOURNAL)
 
 
 def test_start_huey_consumer_schedules_orchestrator_once(monkeypatch):
