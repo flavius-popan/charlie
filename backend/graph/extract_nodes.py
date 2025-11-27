@@ -21,9 +21,39 @@ from graphiti_core.utils.maintenance.dedup_helpers import (
 )
 from graphiti_core.utils.maintenance.edge_operations import filter_existing_duplicate_of_edges
 
-from backend.database.redis_ops import get_suppressed_entities, append_unresolved_entities
+from backend.database.redis_ops import (
+    get_suppressed_entities,
+    append_unresolved_entities,
+    get_unresolved_entities_count,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def should_use_llm_dedupe(journal: str, existing_entity_count: int) -> bool:
+    """Determine whether to use LLM dedupe based on journal state.
+
+    Automatic switching logic:
+    - Queue has items -> batch job hasn't run yet -> use queue mode (fast)
+    - Queue empty + no entities -> new journal -> use queue mode (accumulate first)
+    - Queue empty + has entities -> mature journal -> use LLM per-episode
+
+    This ensures:
+    - Bulk imports stay fast (queue mode, defers LLM calls to batch job)
+    - After batch job completes, incremental entries get LLM dedupe
+    - New journals accumulate entities before expensive LLM calls
+
+    Args:
+        journal: Journal name
+        existing_entity_count: Number of entities already in graph for this journal
+
+    Returns:
+        True if LLM dedupe should be used, False to queue for batch
+    """
+    queue_count = get_unresolved_entities_count(journal)
+    queue_empty = queue_count == 0
+    has_entities = existing_entity_count > 0
+    return queue_empty and has_entities
 
 
 class ExtractedEntity(BaseModel):
@@ -322,21 +352,44 @@ async def extract_nodes(
     entity_types: dict | None = None,
     dedupe_enabled: bool = True,
 ) -> ExtractNodesResult:
-    """Extract and resolve entities from existing episode.
+    """Extract and resolve entities from an episode.
 
     Pipeline:
     1. Fetch episode from database
-    2. Check if LLM is configured (skip if not)
-    3. Extract entities via EntityExtractor
-    4. Fetch existing entities for deduplication
-    5. Resolve duplicates (MinHash LSH + exact matching)
+    2. Extract entities via EntityExtractor (DSPy LLM)
+    3. Fetch existing entities for deduplication
+    4. Resolve duplicates (MinHash LSH + exact matching)
+    5. Queue unresolved entities for batch LLM dedupe (or call LLM inline)
     6. Create MENTIONS edges (episode -> entities)
-    7. Persist entities and edges (using NullEmbedder)
-    8. Store uuid_map in episode.attributes
-    9. Return metadata
+    7. Persist entities and edges
+    8. Return metadata
 
-    LLM Configuration:
-        Uses dspy.settings.lm for LLM access. If not configured, raises RuntimeError.
+    Deduplication Strategy
+    ----------------------
+    1. DETERMINISTIC PHASE (always runs when dedupe_enabled=True):
+       - MinHash/LSH similarity matching (Jaccard >= 0.9)
+       - Exact name matching (case-insensitive)
+       - High-confidence matches resolved immediately
+
+    2. UNRESOLVED HANDLING (depends on should_use_llm_dedupe()):
+       - Queue mode: Entities that MinHash can't match are queued to Redis
+         (dedup:unresolved:{journal}) for future batch LLM deduplication.
+         Used during bulk imports for speed.
+
+       - LLM mode: When queue is empty and graph has entities, will call
+         LLM dedupe inline for unresolved entities (NOT YET IMPLEMENTED).
+         Used after batch job completes for incremental entries.
+
+    The same DSPy LLM dedupe module will be used by both:
+    - Per-episode: Called inline after MinHash fails
+    - Batch job: Called on entities fetched from graph via queued UUIDs
+
+    Batch Job Contract (see redis_ops.pop_unresolved_entities):
+    1. Pop UUIDs from Redis queue
+    2. Fetch entity data from graph (handle missing gracefully)
+    3. Sort by name for LLM context efficiency
+    4. Run DSPy LLM dedupe to identify duplicate groups
+    5. Merge duplicates in graph (redirect edges, delete duplicate nodes)
 
     Args:
         episode_uuid: Episode UUID string
@@ -421,8 +474,7 @@ async def extract_nodes(
         dedupe_enabled,
     )
 
-    # Cache unresolved entity UUIDs for future batch dedup
-    # These are entities that MinHash couldn't match to existing ones
+    # Identify unresolved entities (MinHash couldn't match to existing ones)
     unresolved_uuids = []
     for prov_node in provisional_nodes:
         canonical_uuid = uuid_map.get(prov_node.uuid, prov_node.uuid)
@@ -430,9 +482,20 @@ async def extract_nodes(
         if canonical_uuid == prov_node.uuid and canonical_uuid not in existing_uuid_set:
             unresolved_uuids.append(prov_node.uuid)
 
+    # Handle unresolved entities based on automatic mode detection
     if unresolved_uuids:
-        append_unresolved_entities(journal, unresolved_uuids)
-        logger.info("Queued %d unresolved entities for batch dedup", len(unresolved_uuids))
+        use_llm = should_use_llm_dedupe(journal, len(existing_nodes))
+        if use_llm:
+            # TODO: Call LLM dedupe inline (future implementation)
+            # For now, still queue - LLM dedupe module not yet built
+            append_unresolved_entities(journal, unresolved_uuids)
+            logger.info(
+                "Queued %d unresolved entities (LLM per-episode mode, pending implementation)",
+                len(unresolved_uuids),
+            )
+        else:
+            append_unresolved_entities(journal, unresolved_uuids)
+            logger.info("Queued %d unresolved entities for batch dedup", len(unresolved_uuids))
 
     from backend.database.redis_ops import redis_ops
 

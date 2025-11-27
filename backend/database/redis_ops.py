@@ -459,7 +459,29 @@ def is_episode_actively_processing(episode_uuid: str) -> bool:
             return False
 
 
-# Unresolved Entities Queue (for batch dedup)
+# =============================================================================
+# Unresolved Entities Queue (for Batch LLM Dedup)
+# =============================================================================
+#
+# Entities that MinHash deduplication couldn't confidently match are queued
+# here for future batch LLM deduplication. This enables fast bulk imports
+# by deferring expensive LLM calls.
+#
+# Queue: dedup:unresolved:{journal} (Redis List, per-journal)
+# Storage: UUIDs only - entity data fetched from graph when processing
+#
+# BATCH JOB CONTRACT (future implementation):
+# 1. Pop UUIDs via pop_unresolved_entities()
+# 2. Fetch entity data from graph (handle missing entities gracefully)
+# 3. Sort by name for small-LLM context efficiency
+# 4. Run DSPy LLM dedupe to identify duplicate groups
+# 5. For duplicates: merge in graph (redirect edges, delete duplicate node)
+# 6. For unique entities: no action needed (already in graph, just processed)
+#
+# Mode switching is automatic via should_use_llm_dedupe() in extract_nodes.py:
+# - Queue has items → queue mode (batch pending)
+# - Queue empty + has entities → LLM per-episode mode
+# =============================================================================
 
 
 def append_unresolved_entities(journal: str, entity_uuids: list[str]) -> None:
