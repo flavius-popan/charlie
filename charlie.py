@@ -124,19 +124,13 @@ class CharlieApp(App):
 
     def __init__(self):
         super().__init__()
+        from frontend.settings import get_theme
+        self.theme = get_theme()
 
     def watch_theme(self, theme: str) -> None:
-        """Persist theme changes to Redis when user picks a new theme."""
-        from backend.database.redis_ops import get_app_theme, set_app_theme
-
-        def _persist():
-            try:
-                if get_app_theme() != theme:
-                    set_app_theme(theme)
-            except RuntimeError:
-                pass  # DB not ready yet
-
-        asyncio.create_task(asyncio.to_thread(_persist))
+        """Persist theme changes to file."""
+        from frontend.settings import set_theme
+        set_theme(theme)
 
     async def on_mount(self):
         self.push_screen(HomeScreen())

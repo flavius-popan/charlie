@@ -273,41 +273,6 @@ def set_inference_enabled(enabled: bool) -> None:
         r.set("app:inference_enabled", "true" if enabled else "false")
 
 
-def get_app_theme() -> str:
-    """Get the user's chosen app theme.
-
-    Returns:
-        Theme name string (default: catppuccin-mocha)
-
-    Note:
-        Setting is persisted in Redis and survives app restarts.
-    """
-    from frontend.settings import DEFAULT_THEME
-
-    with redis_ops() as r:
-        theme = r.get("app:theme")
-        if theme:
-            try:
-                return theme.decode()
-            except (UnicodeDecodeError, AttributeError):
-                logger.warning("Corrupted theme value in Redis, using default")
-                return DEFAULT_THEME
-        return DEFAULT_THEME
-
-
-def set_app_theme(theme: str) -> None:
-    """Set the app theme.
-
-    Args:
-        theme: Theme name to persist
-
-    Note:
-        Setting is persisted in Redis and survives app restarts.
-    """
-    with redis_ops() as r:
-        r.set("app:theme", theme)
-
-
 def enqueue_pending_episodes() -> int:
     """Enqueue all pending episodes for processing in reverse chronological order.
 
