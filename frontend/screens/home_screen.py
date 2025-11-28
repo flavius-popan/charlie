@@ -71,7 +71,7 @@ class EntryLabel(Label):
     def set_processing(self, is_processing: bool) -> None:
         """Update the processing indicator."""
         if is_processing:
-            self.update(f"● {self._text}")
+            self.update(f"[bold cyan]●[/bold cyan] {self._text}")
             self.add_class("processing")
         else:
             self.update(self._text)
@@ -144,6 +144,9 @@ class HomeScreen(Screen):
         Binding("k", "cursor_up", "Up", show=False),
         Binding("left", "navigate_period_older", "Older", show=False),
         Binding("right", "navigate_period_newer", "Newer", show=False),
+        Binding("1", "focus_entries", "Entries", show=False),
+        Binding("2", "focus_connections", "Connections", show=False),
+        Binding("3", "focus_temporal", "Temporal", show=False),
     ]
 
     active_episode_uuid: reactive[str | None] = reactive(None)
@@ -166,6 +169,10 @@ class HomeScreen(Screen):
         self.episodes = []
         self.periods: list[dict] = []
         self.list_index_to_episode: dict[int, int] = {}  # Maps list index to episode index
+        # Track last selected index for each list view (for position memory on focus switch)
+        self._last_entries_index: int | None = None
+        self._last_connections_index: int | None = None
+        self._last_temporal_index: int | None = None
 
     def watch_active_episode_uuid(self, old_uuid: str | None, new_uuid: str | None) -> None:
         """Update processing indicator and refresh panes when processing completes."""
@@ -216,7 +223,9 @@ class HomeScreen(Screen):
 
         try:
             entities = await get_entry_entities(episode_uuid, DEFAULT_JOURNAL)
-            self.entry_entities = entities
+            # Verify entry is still selected before updating (prevents race with rapid navigation)
+            if self.selected_entry_uuid == episode_uuid:
+                self.entry_entities = entities
         except WorkerCancelled:
             raise  # Don't update state on cancellation
         except Exception as e:
@@ -253,6 +262,7 @@ class HomeScreen(Screen):
                 empty_msg.display = False
                 entity_list.display = True
                 entity_list.clear()
+                self._last_connections_index = None
                 for entity in self.entry_entities[:10]:
                     name = entity.get("name", "")
                     entity_list.append(ListItem(Label(name)))
@@ -269,7 +279,7 @@ class HomeScreen(Screen):
         # Update temporal pane title
         try:
             temporal_pane = self.query_one("#temporal-pane", Container)
-            temporal_pane.border_title = period["label"]
+            temporal_pane.border_title = f"{period['label']} (3)"
         except Exception as e:
             logger.debug(f"Failed to update temporal pane title: {e}")
 
@@ -287,7 +297,12 @@ class HomeScreen(Screen):
 
         try:
             stats = await get_period_entities(start, end, DEFAULT_JOURNAL)
-            self.period_stats = stats
+            # Verify period is still selected before updating (prevents race with rapid navigation)
+            if (self.periods and
+                0 <= self.selected_period_index < len(self.periods) and
+                self.periods[self.selected_period_index]["start"] == start and
+                self.periods[self.selected_period_index]["end"] == end):
+                self.period_stats = stats
         except WorkerCancelled:
             raise  # Don't update state on cancellation
         except Exception as e:
@@ -310,6 +325,7 @@ class HomeScreen(Screen):
                 empty_msg.display = False
                 entity_list.display = True
                 entity_list.clear()
+                self._last_temporal_index = None
                 for entity in top_entities[:25]:
                     name = entity.get("name", "")
                     entity_list.append(ListItem(Label(name)))
@@ -392,21 +408,21 @@ class HomeScreen(Screen):
             ListView(id="episodes-list"),
             id="entries-pane",
         )
-        entries_pane.border_title = "Entries"
+        entries_pane.border_title = "Entries (1)"
 
         connections_pane = Container(
             Static("Select an entry", classes="pane-content", id="connections-empty"),
             ListView(id="connections-list", classes="entity-list"),
             id="connections-pane",
         )
-        connections_pane.border_title = "Connections"
+        connections_pane.border_title = "Connections (2)"
 
         temporal_pane = Container(
             Static("", classes="pane-content", id="temporal-empty"),
             ListView(id="temporal-list", classes="entity-list"),
             id="temporal-pane",
         )
-        temporal_pane.border_title = "This Week"
+        temporal_pane.border_title = "This Week (3)"
 
         processing_pane = Container(
             Static("Idle", classes="pane-content"),
@@ -459,6 +475,10 @@ class HomeScreen(Screen):
         self.workers.cancel_group(self, "processing_poll")
         self.workers.cancel_group(self, "entities")
         self.workers.cancel_group(self, "period_stats")
+        # Clear saved positions since data may change while suspended
+        self._last_entries_index = None
+        self._last_connections_index = None
+        self._last_temporal_index = None
 
     def _start_processing_poll(self) -> None:
         """Start the processing status polling worker.
@@ -523,6 +543,29 @@ class HomeScreen(Screen):
         except Exception as e:
             logger.debug(f"Failed to update processing pane content: {e}")
 
+    def _save_current_list_positions(self) -> None:
+        """Save current index for all list views before switching focus."""
+        try:
+            entries = self.query_one("#episodes-list", ListView)
+            if entries.index is not None:
+                self._last_entries_index = entries.index
+        except NoMatches:
+            pass
+
+        try:
+            connections = self.query_one("#connections-list", ListView)
+            if connections.index is not None:
+                self._last_connections_index = connections.index
+        except NoMatches:
+            pass
+
+        try:
+            temporal = self.query_one("#temporal-list", ListView)
+            if temporal.index is not None:
+                self._last_temporal_index = temporal.index
+        except NoMatches:
+            pass
+
     def _get_period_for_episode(self, episode_idx: int) -> int:
         """Find which period contains the given episode index."""
         period_idx = 0
@@ -546,9 +589,12 @@ class HomeScreen(Screen):
 
     def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
         """Handle ListView cursor movement (↑↓ navigation)."""
+        # Only respond to entries list events, not connections/temporal lists
+        if event.list_view.id != "episodes-list":
+            return
         if self.episodes and event.list_view.index is not None:
             episode_idx = self.list_index_to_episode.get(event.list_view.index)
-            if episode_idx is not None:
+            if episode_idx is not None and 0 <= episode_idx < len(self.episodes):
                 episode = self.episodes[episode_idx]
                 self.selected_entry_uuid = episode["uuid"]
 
@@ -560,9 +606,12 @@ class HomeScreen(Screen):
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         """Handle ListView selection (Enter key)."""
+        # Only respond to entries list events, not connections/temporal lists
+        if event.list_view.id != "episodes-list":
+            return
         if self.episodes and event.list_view.index is not None:
             episode_idx = self.list_index_to_episode.get(event.list_view.index)
-            if episode_idx is not None:
+            if episode_idx is not None and 0 <= episode_idx < len(self.episodes):
                 episode = self.episodes[episode_idx]
                 self.app.push_screen(ViewScreen(episode["uuid"], DEFAULT_JOURNAL))
 
@@ -579,12 +628,14 @@ class HomeScreen(Screen):
                     self.periods = []
                     self.list_index_to_episode = {}
                     await list_view.clear()
+                    self._last_entries_index = None
                     main_container.display = False
                     empty_state.display = True
                     empty_state.focus()
                 else:
                     old_index = list_view.index if list_view.index is not None else 0
                     await list_view.clear()
+                    self._last_entries_index = None
 
                     grouped = group_entries_by_period(new_episodes)
                     items: list[ListItem] = []
@@ -596,7 +647,9 @@ class HomeScreen(Screen):
                         items.append(divider)
 
                         for episode in period_episodes:
-                            text = f"{self._format_date(episode['valid_at'])} · {get_display_title(episode)}"
+                            date_str = self._format_date(episode["valid_at"])
+                            preview = get_display_title(episode)
+                            text = f"[bold]{date_str}[/bold]  {preview}"
                             entry_label = EntryLabel(text, episode["uuid"])
                             if episode["uuid"] == self.active_episode_uuid:
                                 entry_label.set_processing(True)
@@ -634,7 +687,7 @@ class HomeScreen(Screen):
                         self.selected_period_index = period_idx
                         period = self.periods[period_idx]
                         temporal_pane = self.query_one("#temporal-pane", Container)
-                        temporal_pane.border_title = period["label"]
+                        temporal_pane.border_title = f"{period['label']} (3)"
                         self.run_worker(
                             self._fetch_period_stats(period["start"], period["end"]),
                             exclusive=True,
@@ -654,7 +707,7 @@ class HomeScreen(Screen):
             list_view = self.query_one("#episodes-list", ListView)
             if list_view.index is not None:
                 episode_idx = self.list_index_to_episode.get(list_view.index)
-                if episode_idx is not None:
+                if episode_idx is not None and 0 <= episode_idx < len(self.episodes):
                     episode = self.episodes[episode_idx]
                     self.app.push_screen(ViewScreen(episode["uuid"], DEFAULT_JOURNAL))
         except Exception as e:
@@ -667,7 +720,7 @@ class HomeScreen(Screen):
             list_view = self.query_one("#episodes-list", ListView)
             if list_view.index is not None:
                 episode_idx = self.list_index_to_episode.get(list_view.index)
-                if episode_idx is not None:
+                if episode_idx is not None and 0 <= episode_idx < len(self.episodes):
                     episode = self.episodes[episode_idx]
                     await delete_episode(episode["uuid"])
                     await self.load_episodes()
@@ -707,6 +760,56 @@ class HomeScreen(Screen):
             list_view.action_cursor_up()
         except Exception as e:
             logger.debug(f"cursor_up failed: {e}")
+
+    def action_focus_entries(self) -> None:
+        """Focus entries list (1) and restore position."""
+        try:
+            self._save_current_list_positions()
+            list_view = self.query_one("#episodes-list", ListView)
+            list_view.focus()
+            if self._last_entries_index is not None:
+                # Validate index is within current bounds
+                if 0 <= self._last_entries_index < len(list_view.children):
+                    list_view.index = self._last_entries_index
+            elif len(list_view.children) > 0:
+                # Select first item if no saved position
+                list_view.index = 0
+        except Exception as e:
+            logger.debug(f"focus_entries failed: {e}")
+
+    def action_focus_connections(self) -> None:
+        """Focus connections list (2) and restore position."""
+        try:
+            self._save_current_list_positions()
+            entity_list = self.query_one("#connections-list", ListView)
+            # Only focus if list is visible and has items
+            if entity_list.display and len(entity_list.children) > 0:
+                entity_list.focus()
+                if self._last_connections_index is not None:
+                    if 0 <= self._last_connections_index < len(entity_list.children):
+                        entity_list.index = self._last_connections_index
+                else:
+                    # Select first item if no saved position
+                    entity_list.index = 0
+        except Exception as e:
+            logger.debug(f"focus_connections failed: {e}")
+
+    def action_focus_temporal(self) -> None:
+        """Focus temporal list (3) and restore position."""
+        try:
+            self._save_current_list_positions()
+            entity_list = self.query_one("#temporal-list", ListView)
+            # Only focus if list is visible and has items
+            if entity_list.display and len(entity_list.children) > 0:
+                entity_list.focus()
+                if self._last_temporal_index is not None:
+                    if 0 <= self._last_temporal_index < len(entity_list.children):
+                        entity_list.index = self._last_temporal_index
+                else:
+                    # Select first item if no saved position
+                    entity_list.index = 0
+        except Exception as e:
+            logger.debug(f"focus_temporal failed: {e}")
 
     def action_open_settings(self):
         self.app.push_screen(SettingsScreen())

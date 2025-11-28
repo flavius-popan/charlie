@@ -181,3 +181,403 @@ async def test_navigating_entries_updates_period_on_boundary_crossing(mock_home_
 
         # Period should have updated to Last Week
         assert home_screen.selected_period_index == 1
+
+
+@pytest.mark.asyncio
+async def test_pane_titles_show_key_hints(mock_home_db):
+    """Pane titles should display numerical key hints."""
+    mock_episodes = [
+        {
+            "uuid": "123",
+            "name": "Test Entry",
+            "preview": "Test content",
+            "valid_at": datetime(2025, 11, 27, 10, 0, 0),
+        }
+    ]
+    mock_home_db["get_home"].return_value = mock_episodes
+    mock_home_db["get_period_entities"].return_value = {
+        "entry_count": 1,
+        "connection_count": 0,
+        "top_entities": [],
+    }
+
+    app = HomeScreenTestApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        from textual.containers import Container
+        entries_pane = app.screen.query_one("#entries-pane", Container)
+        connections_pane = app.screen.query_one("#connections-pane", Container)
+        temporal_pane = app.screen.query_one("#temporal-pane", Container)
+
+        assert "(1)" in entries_pane.border_title
+        assert "(2)" in connections_pane.border_title
+        assert "(3)" in temporal_pane.border_title
+
+
+@pytest.mark.asyncio
+async def test_numerical_key_focuses_entries_list(mock_home_db):
+    """Pressing '1' should focus the entries list."""
+    mock_episodes = [
+        {
+            "uuid": "123",
+            "name": "Test Entry",
+            "preview": "Test content",
+            "valid_at": datetime(2025, 11, 27, 10, 0, 0),
+        }
+    ]
+    mock_home_db["get_home"].return_value = mock_episodes
+
+    app = HomeScreenTestApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        from textual.widgets import ListView
+        entries_list = app.screen.query_one("#episodes-list", ListView)
+
+        # Press 1 to focus entries
+        await pilot.press("1")
+        await pilot.pause()
+
+        assert entries_list.has_focus
+        # First item should be selected
+        assert entries_list.index == 1  # Index 1 because index 0 is the divider
+
+
+@pytest.mark.asyncio
+async def test_numerical_key_focuses_connections_list(mock_home_db):
+    """Pressing '2' should focus the connections list when it has items."""
+    mock_episodes = [
+        {
+            "uuid": "123",
+            "name": "Test Entry",
+            "preview": "Test content",
+            "valid_at": datetime(2025, 11, 27, 10, 0, 0),
+        }
+    ]
+    mock_home_db["get_home"].return_value = mock_episodes
+    mock_home_db["get_entry_entities"].return_value = [
+        {"name": "Entity 1"},
+        {"name": "Entity 2"},
+    ]
+
+    app = HomeScreenTestApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        from textual.widgets import ListView
+        connections_list = app.screen.query_one("#connections-list", ListView)
+
+        # Press 2 to focus connections
+        await pilot.press("2")
+        await pilot.pause()
+
+        assert connections_list.has_focus
+        # First item should be selected
+        assert connections_list.index == 0
+
+
+@pytest.mark.asyncio
+async def test_numerical_key_focuses_temporal_list(mock_home_db):
+    """Pressing '3' should focus the temporal list when it has items."""
+    mock_episodes = [
+        {
+            "uuid": "123",
+            "name": "Test Entry",
+            "preview": "Test content",
+            "valid_at": datetime(2025, 11, 27, 10, 0, 0),
+        }
+    ]
+    mock_home_db["get_home"].return_value = mock_episodes
+    mock_home_db["get_period_entities"].return_value = {
+        "entry_count": 1,
+        "connection_count": 2,
+        "top_entities": [{"name": "Entity 1"}, {"name": "Entity 2"}],
+    }
+
+    app = HomeScreenTestApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        from textual.widgets import ListView
+        temporal_list = app.screen.query_one("#temporal-list", ListView)
+
+        # Press 3 to focus temporal
+        await pilot.press("3")
+        await pilot.pause()
+
+        assert temporal_list.has_focus
+        # First item should be selected
+        assert temporal_list.index == 0
+
+
+@pytest.mark.asyncio
+async def test_position_memory_preserved_on_focus_switch(mock_home_db):
+    """List position should be remembered when switching focus between panes."""
+    mock_episodes = [
+        {
+            "uuid": "entry-1",
+            "name": "Entry 1",
+            "preview": "Content 1",
+            "valid_at": datetime(2025, 11, 27, 10, 0, 0),
+        },
+        {
+            "uuid": "entry-2",
+            "name": "Entry 2",
+            "preview": "Content 2",
+            "valid_at": datetime(2025, 11, 26, 10, 0, 0),
+        },
+        {
+            "uuid": "entry-3",
+            "name": "Entry 3",
+            "preview": "Content 3",
+            "valid_at": datetime(2025, 11, 25, 10, 0, 0),
+        },
+    ]
+    mock_home_db["get_home"].return_value = mock_episodes
+    mock_home_db["get_entry_entities"].return_value = [
+        {"name": "Entity 1"},
+        {"name": "Entity 2"},
+    ]
+
+    app = HomeScreenTestApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        from textual.widgets import ListView
+        entries_list = app.screen.query_one("#episodes-list", ListView)
+
+        # Navigate to a specific entry (down twice from divider)
+        await pilot.press("down")
+        await pilot.press("down")
+        await pilot.pause()
+        original_index = entries_list.index
+
+        # Switch to connections pane
+        await pilot.press("2")
+        await pilot.pause()
+
+        # Switch back to entries pane
+        await pilot.press("1")
+        await pilot.pause()
+
+        # Position should be preserved
+        assert entries_list.index == original_index
+
+
+@pytest.mark.asyncio
+async def test_entity_list_navigation_does_not_change_entry_selection(mock_home_db):
+    """Navigating in connections/temporal lists should not change selected entry."""
+    mock_episodes = [
+        {
+            "uuid": "entry-1",
+            "name": "Entry 1",
+            "preview": "Content 1",
+            "valid_at": datetime(2025, 11, 27, 10, 0, 0),
+        },
+    ]
+    mock_home_db["get_home"].return_value = mock_episodes
+    mock_home_db["get_entry_entities"].return_value = [
+        {"name": "Entity 1"},
+        {"name": "Entity 2"},
+        {"name": "Entity 3"},
+    ]
+
+    app = HomeScreenTestApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        home_screen = app.screen
+        original_entry_uuid = home_screen.selected_entry_uuid
+        original_period_index = home_screen.selected_period_index
+
+        # Focus connections list
+        await pilot.press("2")
+        await pilot.pause()
+
+        # Navigate within connections list
+        await pilot.press("down")
+        await pilot.press("down")
+        await pilot.pause()
+
+        # Entry selection should NOT have changed
+        assert home_screen.selected_entry_uuid == original_entry_uuid
+        assert home_screen.selected_period_index == original_period_index
+
+
+@pytest.mark.asyncio
+async def test_entity_list_selection_does_not_trigger_view(mock_home_db):
+    """Pressing enter on entity list should not push ViewScreen."""
+    mock_episodes = [
+        {
+            "uuid": "entry-1",
+            "name": "Entry 1",
+            "preview": "Content 1",
+            "valid_at": datetime(2025, 11, 27, 10, 0, 0),
+        },
+    ]
+    mock_home_db["get_home"].return_value = mock_episodes
+    mock_home_db["get_entry_entities"].return_value = [
+        {"name": "Entity 1"},
+        {"name": "Entity 2"},
+    ]
+
+    app = HomeScreenTestApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        # Focus connections list
+        await pilot.press("2")
+        await pilot.pause()
+
+        # Press enter on entity
+        await pilot.press("enter")
+        await pilot.pause()
+
+        # Should still be on HomeScreen, not ViewScreen
+        assert isinstance(app.screen, HomeScreen)
+
+
+@pytest.mark.asyncio
+async def test_entry_formatting_uses_bold_date(mock_home_db):
+    """Entry labels should use bold Rich markup for dates."""
+    mock_episodes = [
+        {
+            "uuid": "123",
+            "name": "Test Entry",
+            "preview": "Test content",
+            "valid_at": datetime(2025, 11, 27, 10, 0, 0),
+        }
+    ]
+    mock_home_db["get_home"].return_value = mock_episodes
+
+    app = HomeScreenTestApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        from frontend.screens.home_screen import EntryLabel
+        entry_labels = app.screen.query(EntryLabel)
+        assert len(entry_labels) == 1
+
+        label = entry_labels[0]
+        # The text should contain Rich markup for bold
+        assert "[bold]" in label._text
+        assert "[/bold]" in label._text
+
+
+@pytest.mark.asyncio
+async def test_entry_formatting_no_dot_separator(mock_home_db):
+    """Entry labels should not use dot separator between date and preview."""
+    mock_episodes = [
+        {
+            "uuid": "123",
+            "name": "Test Entry",
+            "preview": "Test content",
+            "valid_at": datetime(2025, 11, 27, 10, 0, 0),
+        }
+    ]
+    mock_home_db["get_home"].return_value = mock_episodes
+
+    app = HomeScreenTestApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        from frontend.screens.home_screen import EntryLabel
+        entry_labels = app.screen.query(EntryLabel)
+        assert len(entry_labels) == 1
+
+        label = entry_labels[0]
+        # Should NOT contain the old dot separator
+        assert " · " not in label._text
+
+
+@pytest.mark.asyncio
+async def test_focus_on_empty_connections_list_does_nothing(mock_home_db):
+    """Pressing '2' when connections list is empty should not crash."""
+    mock_episodes = [
+        {
+            "uuid": "123",
+            "name": "Test Entry",
+            "preview": "Test content",
+            "valid_at": datetime(2025, 11, 27, 10, 0, 0),
+        }
+    ]
+    mock_home_db["get_home"].return_value = mock_episodes
+    mock_home_db["get_entry_entities"].return_value = []  # No entities
+
+    app = HomeScreenTestApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        from textual.widgets import ListView
+        entries_list = app.screen.query_one("#episodes-list", ListView)
+        connections_list = app.screen.query_one("#connections-list", ListView)
+
+        # Press 2 to try to focus empty connections
+        await pilot.press("2")
+        await pilot.pause()
+
+        # Connections list should NOT have focus (it's empty/hidden)
+        assert not connections_list.has_focus
+        # Entries list should retain focus
+        assert entries_list.has_focus
+
+
+@pytest.mark.asyncio
+async def test_index_bounds_validation_after_list_shrinks(mock_home_db):
+    """Saved index should be validated when list has fewer items."""
+    mock_episodes = [
+        {
+            "uuid": "entry-1",
+            "name": "Entry 1",
+            "preview": "Content 1",
+            "valid_at": datetime(2025, 11, 27, 10, 0, 0),
+        },
+        {
+            "uuid": "entry-2",
+            "name": "Entry 2",
+            "preview": "Content 2",
+            "valid_at": datetime(2025, 11, 26, 10, 0, 0),
+        },
+    ]
+    mock_home_db["get_home"].return_value = mock_episodes
+    # Start with many entities
+    mock_home_db["get_entry_entities"].return_value = [
+        {"name": f"Entity {i}"} for i in range(10)
+    ]
+
+    app = HomeScreenTestApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        from textual.widgets import ListView
+        connections_list = app.screen.query_one("#connections-list", ListView)
+
+        # Focus connections and navigate to high index
+        await pilot.press("2")
+        await pilot.pause()
+        for _ in range(5):
+            await pilot.press("down")
+        await pilot.pause()
+
+        saved_index = connections_list.index
+        assert saved_index >= 5
+
+        # Now reduce the entity list
+        mock_home_db["get_entry_entities"].return_value = [{"name": "Only One"}]
+
+        # Switch away and back
+        await pilot.press("1")
+        await pilot.pause()
+
+        # Trigger connections refresh by navigating entries (which updates selected_entry_uuid)
+        # Need to navigate to a different entry to trigger the refresh
+        await pilot.press("down")
+        await pilot.pause()
+
+        # Now try to focus connections again
+        await pilot.press("2")
+        await pilot.pause()
+
+        # Should not crash, and index should be valid (0 for single item list)
+        assert connections_list.index == 0
