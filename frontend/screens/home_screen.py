@@ -611,6 +611,11 @@ class HomeScreen(Screen):
         self.workers.cancel_group(self, "entities")
         self.workers.cancel_group(self, "period_stats")
 
+        # Clear selected entry so watcher fires when load_episodes sets it again.
+        # This ensures entities are re-fetched (the previous fetch may have been
+        # cancelled by on_screen_suspend).
+        self.selected_entry_uuid = None
+
         await self.load_episodes()
         self._start_processing_poll()
 
