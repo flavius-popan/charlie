@@ -28,12 +28,18 @@ class HomeScreenTestApp(App):
 def mock_home_db():
     """Mock database operations for HomeScreen tests."""
     with patch("frontend.screens.home_screen.get_home_screen", new_callable=AsyncMock) as mock_get_home, \
-         patch("frontend.screens.home_screen.ensure_database_ready", new_callable=AsyncMock) as mock_ensure:
+         patch("frontend.screens.home_screen.ensure_database_ready", new_callable=AsyncMock) as mock_ensure, \
+         patch("frontend.screens.home_screen.get_entry_entities", new_callable=AsyncMock) as mock_entry_entities, \
+         patch("frontend.screens.home_screen.get_period_entities", new_callable=AsyncMock) as mock_period_entities:
         mock_get_home.return_value = []
         mock_ensure.return_value = None
+        mock_entry_entities.return_value = []
+        mock_period_entities.return_value = {"entry_count": 0, "connection_count": 0, "top_entities": []}
         yield {
             "get_home": mock_get_home,
             "ensure": mock_ensure,
+            "get_entry_entities": mock_entry_entities,
+            "get_period_entities": mock_period_entities,
         }
 
 
@@ -128,3 +134,50 @@ async def test_home_screen_displays_episode_list(mock_home_db):
         assert items[0].disabled is True
         assert items[1].disabled is False
         assert items[2].disabled is False
+
+
+@pytest.mark.asyncio
+async def test_navigating_entries_updates_period_on_boundary_crossing(mock_home_db):
+    """Temporal pane should update when navigating across period boundaries."""
+    from datetime import timedelta, timezone
+
+    now = datetime(2025, 11, 27, 12, 0, 0, tzinfo=timezone.utc)
+    this_week_start = now - timedelta(days=now.weekday())
+    last_week = this_week_start - timedelta(days=3)
+
+    mock_episodes = [
+        {
+            "uuid": "this-week-entry",
+            "name": "This Week Entry",
+            "preview": "Entry from this week",
+            "valid_at": now - timedelta(days=1),
+        },
+        {
+            "uuid": "last-week-entry",
+            "name": "Last Week Entry",
+            "preview": "Entry from last week",
+            "valid_at": last_week,
+        },
+    ]
+    mock_home_db["get_home"].return_value = mock_episodes
+
+    app = HomeScreenTestApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        home_screen = app.screen
+        assert isinstance(home_screen, HomeScreen)
+        assert len(home_screen.periods) == 2
+        assert home_screen.periods[0]["label"] == "This Week"
+        assert home_screen.periods[1]["label"] == "Last Week"
+
+        # Initially should be on first period (This Week)
+        assert home_screen.selected_period_index == 0
+
+        # Navigate down to Last Week entry (skip divider, skip This Week entry, land on Last Week)
+        await pilot.press("down")  # Move to Last Week divider (skipped)
+        await pilot.press("down")  # Move to Last Week entry
+        await pilot.pause()
+
+        # Period should have updated to Last Week
+        assert home_screen.selected_period_index == 1

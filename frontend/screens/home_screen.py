@@ -375,6 +375,16 @@ class HomeScreen(Screen):
         """Called when returning to this screen."""
         await self.load_episodes()
 
+    def _get_period_for_episode(self, episode_idx: int) -> int:
+        """Find which period contains the given episode index."""
+        period_idx = 0
+        for i, period in enumerate(self.periods):
+            if episode_idx >= period["first_episode_index"]:
+                period_idx = i
+            else:
+                break
+        return period_idx
+
     def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
         """Handle ListView cursor movement (↑↓ navigation)."""
         if self.episodes and event.list_view.index is not None:
@@ -382,6 +392,12 @@ class HomeScreen(Screen):
             if episode_idx is not None:
                 episode = self.episodes[episode_idx]
                 self.selected_entry_uuid = episode["uuid"]
+
+                # Update temporal pane if we crossed into a different period
+                if self.periods:
+                    new_period_idx = self._get_period_for_episode(episode_idx)
+                    if new_period_idx != self.selected_period_index:
+                        self.selected_period_index = new_period_idx
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         """Handle ListView selection (Enter key)."""
@@ -455,14 +471,7 @@ class HomeScreen(Screen):
 
                     # Set period based on selected entry's position
                     if self.periods and episode_idx is not None:
-                        # Find which period contains the selected episode
-                        period_idx = 0
-                        for i, period in enumerate(self.periods):
-                            if episode_idx >= period["first_episode_index"]:
-                                period_idx = i
-                            else:
-                                break
-
+                        period_idx = self._get_period_for_episode(episode_idx)
                         self.selected_period_index = period_idx
                         period = self.periods[period_idx]
                         temporal_pane = self.query_one("#temporal-pane", Container)
