@@ -143,8 +143,8 @@ class HomeScreen(Screen):
         try:
             for entry_label in self.query(EntryLabel):
                 entry_label.set_processing(entry_label.episode_uuid == new_uuid)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Failed to update processing indicators: {e}")
 
     @staticmethod
     def _format_date(valid_at) -> str:
