@@ -4,6 +4,7 @@
 
 ## Minor but important
 
+- Remove statemachine visualization dep and requirements to refresh. KISS.
 - Automate test runs in CI
 - Hide "d/up/down" labels in connections pane if no connections found
 - Improve readability/UI when no connections found/other valid statuses.
