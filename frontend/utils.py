@@ -79,3 +79,62 @@ def group_entries_by_period(
         groups[label].append(episode)
 
     return [(label, groups[label]) for label in period_order]
+
+
+def calculate_periods(
+    episodes: list[dict], now: datetime | None = None
+) -> list[dict]:
+    """Calculate period boundaries from episodes.
+
+    Args:
+        episodes: List of episode dicts with 'valid_at' datetime field
+        now: Reference datetime (defaults to current UTC time)
+
+    Returns:
+        List of period dicts with:
+        - label: Display name (e.g., "This Week", "November 2024")
+        - start: Period start datetime (inclusive)
+        - end: Period end datetime (exclusive)
+        - first_episode_index: Index of first episode in this period
+    """
+    if now is None:
+        now = datetime.now(timezone.utc)
+
+    if not episodes:
+        return []
+
+    now = _normalize_datetime(now)
+    this_week_start = _get_week_start(now)
+    last_week_start = this_week_start - timedelta(days=7)
+    next_week_start = this_week_start + timedelta(days=7)
+
+    grouped = group_entries_by_period(episodes, now)
+    periods: list[dict] = []
+    episode_index = 0
+
+    for label, period_episodes in grouped:
+        if label == "This Week":
+            start = this_week_start
+            end = next_week_start
+        elif label == "Last Week":
+            start = last_week_start
+            end = this_week_start
+        else:
+            # Monthly period - derive from first episode's date
+            first_valid_at = _normalize_datetime(period_episodes[0]["valid_at"])
+            start = first_valid_at.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+            # End is first day of next month
+            if start.month == 12:
+                end = start.replace(year=start.year + 1, month=1)
+            else:
+                end = start.replace(month=start.month + 1)
+
+        periods.append({
+            "label": label,
+            "start": start,
+            "end": end,
+            "first_episode_index": episode_index,
+        })
+        episode_index += len(period_episodes)
+
+    return periods

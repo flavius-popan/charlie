@@ -1,11 +1,19 @@
 """Tests for database query functions."""
 
-import pytest
-from backend.database.queries import delete_entity_mention
-from backend import add_journal_entry
-from backend.graph.extract_nodes import extract_nodes
-from backend.database.redis_ops import redis_ops, get_suppressed_entities
 import json
+from datetime import datetime, timezone
+
+import pytest
+
+from backend import add_journal_entry
+from backend.database.queries import (
+    delete_entity_mention,
+    get_entry_entities,
+    get_period_entities,
+)
+from backend.database.redis_ops import redis_ops, get_suppressed_entities
+from backend.graph.extract_nodes import extract_nodes
+from backend.settings import DEFAULT_JOURNAL
 
 
 @pytest.fixture(autouse=True)
@@ -182,3 +190,250 @@ async def test_delete_entity_mention_sets_done_when_only_self_remains(isolated_g
         nodes = json.loads(nodes_json.decode())
         assert len(nodes) == 1
         assert nodes[0]["name"] == "I"
+
+
+class TestGetEntryEntities:
+    """Tests for get_entry_entities query function."""
+
+    @pytest.mark.asyncio
+    async def test_returns_empty_when_no_cache(self, isolated_graph):
+        """Should return empty list when no cache exists."""
+        result = await get_entry_entities("nonexistent-uuid", DEFAULT_JOURNAL)
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_returns_entities_from_cache(self, isolated_graph, episode_uuid):
+        """Should return entities from Redis cache."""
+        # Setup cache with entities
+        with redis_ops() as r:
+            cache_key = f"journal:{DEFAULT_JOURNAL}:{episode_uuid}"
+            r.hset(cache_key, "nodes", json.dumps([
+                {"uuid": "e1", "name": "Alice", "type": "Person"},
+                {"uuid": "e2", "name": "Bob", "type": "Person"},
+            ]))
+
+        result = await get_entry_entities(episode_uuid, DEFAULT_JOURNAL)
+
+        assert len(result) == 2
+        assert result[0]["name"] == "Alice"
+        assert result[1]["name"] == "Bob"
+
+    @pytest.mark.asyncio
+    async def test_excludes_self_entity(self, isolated_graph, episode_uuid):
+        """Should filter out the 'I' (self) entity."""
+        with redis_ops() as r:
+            cache_key = f"journal:{DEFAULT_JOURNAL}:{episode_uuid}"
+            r.hset(cache_key, "nodes", json.dumps([
+                {"uuid": "self-uuid", "name": "I", "type": "Person"},
+                {"uuid": "e1", "name": "Alice", "type": "Person"},
+            ]))
+
+        result = await get_entry_entities(episode_uuid, DEFAULT_JOURNAL)
+
+        assert len(result) == 1
+        assert result[0]["name"] == "Alice"
+
+    @pytest.mark.asyncio
+    async def test_returns_empty_when_only_self(self, isolated_graph, episode_uuid):
+        """Should return empty list when only 'I' entity exists."""
+        with redis_ops() as r:
+            cache_key = f"journal:{DEFAULT_JOURNAL}:{episode_uuid}"
+            r.hset(cache_key, "nodes", json.dumps([
+                {"uuid": "self-uuid", "name": "I", "type": "Person"},
+            ]))
+
+        result = await get_entry_entities(episode_uuid, DEFAULT_JOURNAL)
+
+        assert result == []
+
+
+class TestGetPeriodEntities:
+    """Tests for get_period_entities query function."""
+
+    @pytest.mark.asyncio
+    async def test_returns_zeros_for_empty_period(self, isolated_graph):
+        """Should return zero counts when no episodes in date range."""
+        start = datetime(2020, 1, 1, tzinfo=timezone.utc)
+        end = datetime(2020, 2, 1, tzinfo=timezone.utc)
+
+        result = await get_period_entities(start, end, DEFAULT_JOURNAL)
+
+        assert result["entry_count"] == 0
+        assert result["connection_count"] == 0
+        assert result["top_entities"] == []
+
+    @pytest.mark.asyncio
+    async def test_counts_entries_in_period(self, isolated_graph):
+        """Should count episodes within the date range."""
+        journal = DEFAULT_JOURNAL
+
+        # Create episodes in the graph
+        isolated_graph.query(f"""
+            CREATE (:Episodic {{
+                uuid: 'ep1',
+                group_id: '{journal}',
+                valid_at: '2025-10-15T10:00:00Z',
+                content: 'Test 1',
+                name: 'Test 1'
+            }})
+        """)
+        isolated_graph.query(f"""
+            CREATE (:Episodic {{
+                uuid: 'ep2',
+                group_id: '{journal}',
+                valid_at: '2025-10-20T10:00:00Z',
+                content: 'Test 2',
+                name: 'Test 2'
+            }})
+        """)
+
+        start = datetime(2025, 10, 1, tzinfo=timezone.utc)
+        end = datetime(2025, 11, 1, tzinfo=timezone.utc)
+
+        result = await get_period_entities(start, end, journal)
+
+        assert result["entry_count"] == 2
+
+    @pytest.mark.asyncio
+    async def test_aggregates_entities_across_episodes(self, isolated_graph):
+        """Should aggregate entity mentions across all episodes in period."""
+        journal = DEFAULT_JOURNAL
+
+        # Create episodes
+        isolated_graph.query(f"""
+            CREATE (:Episodic {{
+                uuid: 'ep1',
+                group_id: '{journal}',
+                valid_at: '2025-10-15T10:00:00Z',
+                content: 'Test 1',
+                name: 'Test 1'
+            }})
+        """)
+        isolated_graph.query(f"""
+            CREATE (:Episodic {{
+                uuid: 'ep2',
+                group_id: '{journal}',
+                valid_at: '2025-10-20T10:00:00Z',
+                content: 'Test 2',
+                name: 'Test 2'
+            }})
+        """)
+
+        # Setup Redis cache with entities
+        with redis_ops() as r:
+            r.hset(f"journal:{journal}:ep1", "nodes", json.dumps([
+                {"uuid": "alice", "name": "Alice", "type": "Person"},
+                {"uuid": "bob", "name": "Bob", "type": "Person"},
+            ]))
+            r.hset(f"journal:{journal}:ep2", "nodes", json.dumps([
+                {"uuid": "alice", "name": "Alice", "type": "Person"},
+                {"uuid": "charlie", "name": "Charlie", "type": "Person"},
+            ]))
+
+        start = datetime(2025, 10, 1, tzinfo=timezone.utc)
+        end = datetime(2025, 11, 1, tzinfo=timezone.utc)
+
+        result = await get_period_entities(start, end, journal)
+
+        assert result["entry_count"] == 2
+        assert result["connection_count"] == 4  # Alice x2, Bob, Charlie
+
+    @pytest.mark.asyncio
+    async def test_ranks_entities_by_frequency(self, isolated_graph):
+        """Should rank top entities by mention frequency."""
+        journal = DEFAULT_JOURNAL
+
+        # Create episodes
+        for i in range(3):
+            isolated_graph.query(f"""
+                CREATE (:Episodic {{
+                    uuid: 'ep{i}',
+                    group_id: '{journal}',
+                    valid_at: '2025-10-{15+i}T10:00:00Z',
+                    content: 'Test',
+                    name: 'Test'
+                }})
+            """)
+
+        # Alice appears 3 times, Bob 2 times, Charlie 1 time
+        with redis_ops() as r:
+            r.hset(f"journal:{journal}:ep0", "nodes", json.dumps([
+                {"uuid": "alice", "name": "Alice", "type": "Person"},
+                {"uuid": "bob", "name": "Bob", "type": "Person"},
+            ]))
+            r.hset(f"journal:{journal}:ep1", "nodes", json.dumps([
+                {"uuid": "alice", "name": "Alice", "type": "Person"},
+                {"uuid": "bob", "name": "Bob", "type": "Person"},
+                {"uuid": "charlie", "name": "Charlie", "type": "Person"},
+            ]))
+            r.hset(f"journal:{journal}:ep2", "nodes", json.dumps([
+                {"uuid": "alice", "name": "Alice", "type": "Person"},
+            ]))
+
+        start = datetime(2025, 10, 1, tzinfo=timezone.utc)
+        end = datetime(2025, 11, 1, tzinfo=timezone.utc)
+
+        result = await get_period_entities(start, end, journal)
+
+        top_names = [e["name"] for e in result["top_entities"]]
+        assert top_names[0] == "Alice"  # Most frequent
+        assert top_names[1] == "Bob"    # Second most frequent
+        assert top_names[2] == "Charlie"  # Least frequent
+
+    @pytest.mark.asyncio
+    async def test_excludes_self_entity_from_counts(self, isolated_graph):
+        """Should not count 'I' (self) entity in aggregations."""
+        journal = DEFAULT_JOURNAL
+
+        isolated_graph.query(f"""
+            CREATE (:Episodic {{
+                uuid: 'ep1',
+                group_id: '{journal}',
+                valid_at: '2025-10-15T10:00:00Z',
+                content: 'Test',
+                name: 'Test'
+            }})
+        """)
+
+        with redis_ops() as r:
+            r.hset(f"journal:{journal}:ep1", "nodes", json.dumps([
+                {"uuid": "self", "name": "I", "type": "Person"},
+                {"uuid": "alice", "name": "Alice", "type": "Person"},
+            ]))
+
+        start = datetime(2025, 10, 1, tzinfo=timezone.utc)
+        end = datetime(2025, 11, 1, tzinfo=timezone.utc)
+
+        result = await get_period_entities(start, end, journal)
+
+        assert result["connection_count"] == 1  # Only Alice
+        assert len(result["top_entities"]) == 1
+        assert result["top_entities"][0]["name"] == "Alice"
+
+    @pytest.mark.asyncio
+    async def test_returns_max_twenty_five_top_entities(self, isolated_graph):
+        """Should return at most 25 top entities."""
+        journal = DEFAULT_JOURNAL
+
+        isolated_graph.query(f"""
+            CREATE (:Episodic {{
+                uuid: 'ep1',
+                group_id: '{journal}',
+                valid_at: '2025-10-15T10:00:00Z',
+                content: 'Test',
+                name: 'Test'
+            }})
+        """)
+
+        # Create 30 different entities
+        entities = [{"uuid": f"e{i}", "name": f"Entity{i}", "type": "Thing"} for i in range(30)]
+        with redis_ops() as r:
+            r.hset(f"journal:{journal}:ep1", "nodes", json.dumps(entities))
+
+        start = datetime(2025, 10, 1, tzinfo=timezone.utc)
+        end = datetime(2025, 11, 1, tzinfo=timezone.utc)
+
+        result = await get_period_entities(start, end, journal)
+
+        assert len(result["top_entities"]) == 25
+        assert result["connection_count"] == 30

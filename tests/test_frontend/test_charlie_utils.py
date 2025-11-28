@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from frontend.utils import get_display_title, group_entries_by_period
+from frontend.utils import calculate_periods, get_display_title, group_entries_by_period
 
 
 class TestGetDisplayTitle:
@@ -124,3 +124,103 @@ class TestGroupEntriesByPeriod:
         result = group_entries_by_period(episodes, now=now)
         assert result[0][1][0]["uuid"] == "first"
         assert result[0][1][1]["uuid"] == "second"
+
+
+class TestCalculatePeriods:
+    """Tests for calculate_periods function."""
+
+    def test_returns_empty_for_no_episodes(self):
+        """Empty episode list should return empty periods."""
+        result = calculate_periods([])
+        assert result == []
+
+    def test_this_week_period_boundaries(self):
+        """This Week period should have correct start/end boundaries."""
+        now = datetime(2025, 11, 27, 12, 0, 0, tzinfo=timezone.utc)  # Thursday
+        episodes = [
+            {"uuid": "1", "valid_at": datetime(2025, 11, 26, 10, 0, 0, tzinfo=timezone.utc)},
+        ]
+        result = calculate_periods(episodes, now=now)
+
+        assert len(result) == 1
+        assert result[0]["label"] == "This Week"
+        # Week starts Monday Nov 24
+        assert result[0]["start"] == datetime(2025, 11, 24, 0, 0, 0, tzinfo=timezone.utc)
+        # Week ends Monday Dec 1
+        assert result[0]["end"] == datetime(2025, 12, 1, 0, 0, 0, tzinfo=timezone.utc)
+        assert result[0]["first_episode_index"] == 0
+
+    def test_last_week_period_boundaries(self):
+        """Last Week period should have correct start/end boundaries."""
+        now = datetime(2025, 11, 27, 12, 0, 0, tzinfo=timezone.utc)
+        episodes = [
+            {"uuid": "1", "valid_at": datetime(2025, 11, 20, 10, 0, 0, tzinfo=timezone.utc)},
+        ]
+        result = calculate_periods(episodes, now=now)
+
+        assert len(result) == 1
+        assert result[0]["label"] == "Last Week"
+        # Last week starts Monday Nov 17
+        assert result[0]["start"] == datetime(2025, 11, 17, 0, 0, 0, tzinfo=timezone.utc)
+        # Last week ends Monday Nov 24
+        assert result[0]["end"] == datetime(2025, 11, 24, 0, 0, 0, tzinfo=timezone.utc)
+
+    def test_monthly_period_boundaries(self):
+        """Monthly periods should span entire month."""
+        now = datetime(2025, 11, 27, 12, 0, 0, tzinfo=timezone.utc)
+        episodes = [
+            {"uuid": "1", "valid_at": datetime(2025, 10, 15, 10, 0, 0, tzinfo=timezone.utc)},
+        ]
+        result = calculate_periods(episodes, now=now)
+
+        assert len(result) == 1
+        assert result[0]["label"] == "October 2025"
+        assert result[0]["start"] == datetime(2025, 10, 1, 0, 0, 0, tzinfo=timezone.utc)
+        assert result[0]["end"] == datetime(2025, 11, 1, 0, 0, 0, tzinfo=timezone.utc)
+
+    def test_december_to_january_boundary(self):
+        """December period should correctly roll over to January."""
+        now = datetime(2026, 2, 15, 12, 0, 0, tzinfo=timezone.utc)
+        episodes = [
+            {"uuid": "1", "valid_at": datetime(2025, 12, 20, 10, 0, 0, tzinfo=timezone.utc)},
+        ]
+        result = calculate_periods(episodes, now=now)
+
+        assert result[0]["label"] == "December 2025"
+        assert result[0]["start"] == datetime(2025, 12, 1, 0, 0, 0, tzinfo=timezone.utc)
+        assert result[0]["end"] == datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+
+    def test_first_episode_index_tracks_position(self):
+        """first_episode_index should track episode positions correctly."""
+        now = datetime(2025, 11, 27, 12, 0, 0, tzinfo=timezone.utc)
+        episodes = [
+            {"uuid": "1", "valid_at": datetime(2025, 11, 26, 10, 0, 0, tzinfo=timezone.utc)},  # This Week
+            {"uuid": "2", "valid_at": datetime(2025, 11, 25, 10, 0, 0, tzinfo=timezone.utc)},  # This Week
+            {"uuid": "3", "valid_at": datetime(2025, 11, 18, 10, 0, 0, tzinfo=timezone.utc)},  # Last Week
+            {"uuid": "4", "valid_at": datetime(2025, 10, 15, 10, 0, 0, tzinfo=timezone.utc)},  # October
+        ]
+        result = calculate_periods(episodes, now=now)
+
+        assert len(result) == 3
+        assert result[0]["first_episode_index"] == 0  # This Week starts at index 0
+        assert result[1]["first_episode_index"] == 2  # Last Week starts at index 2
+        assert result[2]["first_episode_index"] == 3  # October starts at index 3
+
+    def test_multiple_periods_all_have_boundaries(self):
+        """All periods should have start, end, label, and first_episode_index."""
+        now = datetime(2025, 11, 27, 12, 0, 0, tzinfo=timezone.utc)
+        episodes = [
+            {"uuid": "1", "valid_at": datetime(2025, 11, 26, 10, 0, 0, tzinfo=timezone.utc)},
+            {"uuid": "2", "valid_at": datetime(2025, 11, 18, 10, 0, 0, tzinfo=timezone.utc)},
+            {"uuid": "3", "valid_at": datetime(2025, 10, 15, 10, 0, 0, tzinfo=timezone.utc)},
+            {"uuid": "4", "valid_at": datetime(2025, 9, 5, 10, 0, 0, tzinfo=timezone.utc)},
+        ]
+        result = calculate_periods(episodes, now=now)
+
+        assert len(result) == 4
+        for period in result:
+            assert "label" in period
+            assert "start" in period
+            assert "end" in period
+            assert "first_episode_index" in period
+            assert period["start"] < period["end"]

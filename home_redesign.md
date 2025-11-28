@@ -294,31 +294,28 @@ If polling feels janky, investigate `app.call_from_thread()` for direct Huey →
 - *Proves: Fixed-width gutter, no layout shift*
 - *Can parallelize with 1.2*
 
-### Phase 2: Context Panes
+### Phase 2: Context Panes [DONE]
 
-**2.1 Create missing queries**
+**2.1 Create missing queries** [DONE]
 - `get_entry_entities(episode_uuid, journal)` - extract from EntitySidebar pattern
-- `get_period_entities(start_date, end_date, journal)` - NEW Cypher query
-- *Blocks: 2.2 and 2.3 - must complete before UI work*
+- `get_period_entities(start_date, end_date, journal)` - aggregates entities across time period
+- `calculate_periods(episodes)` - utility function for period boundaries
 
-**2.2 Connections pane**
+**2.2 Connections pane** [DONE]
 - Query entities for selected entry from Redis cache
-- Update on ↑↓ navigation
-- Clickable entities (stub navigation to future entity view)
-- *Proves: Entry-specific context updates*
-- *Do first - query pattern already exists in EntitySidebar*
+- Update on ↑↓ navigation via ListView
+- Shows up to 10 entities
 
-**2.3 Temporal pane**
+**2.3 Temporal pane** [DONE]
 - Query aggregate entities for time period
-- Update on ←→ navigation
-- Entry/connection counts + top entities
-- *Proves: Period-level aggregation queries work*
+- Update on ←→ navigation via ListView
+- Shows top 25 entities ranked by mention frequency
 
-**2.4 Time navigation coordination**
+**2.4 Time navigation coordination** [DONE]
 - Implement ←→ period jumping logic
 - Sync entry list scroll position to selected period
 - Update temporal pane title dynamically
-- *Proves: Dual-pane coordination*
+- Preserve selected period when returning from entry view
 
 ### Phase 3: Processing Integration (Polling)
 
