@@ -29,7 +29,11 @@ from backend.database.queries import (
     get_home_screen,
     get_period_entities,
 )
-from backend.database.redis_ops import redis_ops
+from backend.database.redis_ops import (
+    get_active_episode_uuid,
+    get_processing_status,
+    redis_ops,
+)
 from backend.database.utils import (
     SELF_ENTITY_LABELS,
     SELF_ENTITY_NAME,
@@ -67,6 +71,8 @@ __all__ = [
     "get_home_screen",
     "get_period_entities",
     # Redis operations
+    "get_active_episode_uuid",
+    "get_processing_status",
     "redis_ops",
     # Driver access
     "FalkorLiteDriver",

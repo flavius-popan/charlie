@@ -6,7 +6,8 @@ from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical
 from textual.reactive import reactive
 from textual.screen import Screen
-from textual.widgets import Footer, Header, Label, ListItem, ListView, Static
+from textual.css.query import NoMatches
+from textual.widgets import Footer, Header, Label, ListItem, ListView, LoadingIndicator, Static
 
 from backend.database import (
     delete_episode,
@@ -14,6 +15,7 @@ from backend.database import (
     get_entry_entities,
     get_home_screen,
     get_period_entities,
+    get_processing_status,
 )
 from backend.settings import DEFAULT_JOURNAL
 from frontend.screens.settings_screen import SettingsScreen
@@ -149,6 +151,15 @@ class HomeScreen(Screen):
     entry_entities: reactive[list[dict]] = reactive([])
     selected_period_index: reactive[int] = reactive(0)
     period_stats: reactive[dict | None] = reactive(None)
+    queue_count: reactive[int] = reactive(0)
+
+    @property
+    def connections_loading(self) -> bool:
+        """True if selected entry is currently being processed."""
+        return (
+            self.selected_entry_uuid is not None
+            and self.selected_entry_uuid == self.active_episode_uuid
+        )
 
     def __init__(self):
         super().__init__()
@@ -157,15 +168,43 @@ class HomeScreen(Screen):
         self.list_index_to_episode: dict[int, int] = {}  # Maps list index to episode index
 
     def watch_active_episode_uuid(self, old_uuid: str | None, new_uuid: str | None) -> None:
-        """Update processing indicator when active episode changes."""
+        """Update processing indicator and refresh panes when processing completes."""
+        # Update entry list indicators
         try:
             for entry_label in self.query(EntryLabel):
                 entry_label.set_processing(entry_label.episode_uuid == new_uuid)
         except Exception as e:
             logger.debug(f"Failed to update processing indicators: {e}")
 
+        # Refresh connections pane to update loading state (computed property changed)
+        self._refresh_connections_pane()
+
+        # If an entry just finished processing (old_uuid was set, now different)
+        if old_uuid and old_uuid != new_uuid:
+            # Refresh connections if the finished entry is selected
+            if old_uuid == self.selected_entry_uuid:
+                self.run_worker(
+                    self._fetch_entry_entities(self.selected_entry_uuid),
+                    exclusive=True,
+                    group="entities",
+                )
+
+            # Refresh temporal pane if finished entry is in current period
+            if self._is_episode_in_current_period(old_uuid):
+                # Guard against concurrent period list modification
+                if self.periods and 0 <= self.selected_period_index < len(self.periods):
+                    period = self.periods[self.selected_period_index]
+                    self.run_worker(
+                        self._fetch_period_stats(period["start"], period["end"]),
+                        exclusive=True,
+                        group="period_stats",
+                    )
+
     def watch_selected_entry_uuid(self, old_uuid: str | None, new_uuid: str | None) -> None:
         """Fetch entities when selected entry changes."""
+        # Refresh connections pane immediately (loading state may have changed)
+        self._refresh_connections_pane()
+
         if new_uuid:
             self.run_worker(self._fetch_entry_entities(new_uuid), exclusive=True, group="entities")
         else:
@@ -173,20 +212,40 @@ class HomeScreen(Screen):
 
     async def _fetch_entry_entities(self, episode_uuid: str) -> None:
         """Fetch entities for selected entry from cache."""
+        from textual.worker import WorkerCancelled
+
         try:
             entities = await get_entry_entities(episode_uuid, DEFAULT_JOURNAL)
             self.entry_entities = entities
+        except WorkerCancelled:
+            raise  # Don't update state on cancellation
         except Exception as e:
             logger.debug(f"Failed to fetch entry entities: {e}")
             self.entry_entities = []
 
     def watch_entry_entities(self, old_entities: list[dict], new_entities: list[dict]) -> None:
         """Update Connections pane when entities change."""
+        self._refresh_connections_pane()
+
+    def _refresh_connections_pane(self) -> None:
+        """Update Connections pane based on current state."""
         try:
+            connections_pane = self.query_one("#connections-pane", Container)
             empty_msg = self.query_one("#connections-empty", Static)
             entity_list = self.query_one("#connections-list", ListView)
 
-            if not new_entities:
+            # Remove all existing LoadingIndicators atomically
+            for indicator in connections_pane.query(LoadingIndicator):
+                indicator.remove()
+
+            # Show loading indicator when selected entry is being processed
+            if self.connections_loading and not self.entry_entities:
+                empty_msg.display = False
+                entity_list.display = False
+                connections_pane.mount(LoadingIndicator())
+                return
+
+            if not self.entry_entities:
                 empty_msg.update("No connections")
                 empty_msg.display = True
                 entity_list.display = False
@@ -194,7 +253,7 @@ class HomeScreen(Screen):
                 empty_msg.display = False
                 entity_list.display = True
                 entity_list.clear()
-                for entity in new_entities[:10]:
+                for entity in self.entry_entities[:10]:
                     name = entity.get("name", "")
                     entity_list.append(ListItem(Label(name)))
         except Exception as e:
@@ -224,10 +283,13 @@ class HomeScreen(Screen):
     async def _fetch_period_stats(self, start: "datetime", end: "datetime") -> None:
         """Fetch aggregate entities for the selected period."""
         from datetime import datetime  # noqa: F811
+        from textual.worker import WorkerCancelled
 
         try:
             stats = await get_period_entities(start, end, DEFAULT_JOURNAL)
             self.period_stats = stats
+        except WorkerCancelled:
+            raise  # Don't update state on cancellation
         except Exception as e:
             logger.debug(f"Failed to fetch period stats: {e}")
             self.period_stats = None
@@ -253,6 +315,21 @@ class HomeScreen(Screen):
                     entity_list.append(ListItem(Label(name)))
         except Exception as e:
             logger.debug(f"Failed to update temporal pane: {e}")
+
+    def watch_queue_count(self, old_count: int, new_count: int) -> None:
+        """Show/hide processing pane based on queue count."""
+        try:
+            processing_pane = self.query_one("#processing-pane", Container)
+            temporal_pane = self.query_one("#temporal-pane", Container)
+
+            if new_count > 0:
+                processing_pane.display = True
+                temporal_pane.styles.height = "1fr"
+            else:
+                processing_pane.display = False
+                temporal_pane.styles.height = "2fr"
+        except Exception as e:
+            logger.debug(f"Failed to update processing pane visibility: {e}")
 
     def action_navigate_period_older(self) -> None:
         """Navigate to older time period (←)."""
@@ -365,6 +442,7 @@ class HomeScreen(Screen):
             if hasattr(self.app, "_ensure_huey_worker_running"):
                 await asyncio.to_thread(self.app._ensure_huey_worker_running)
             await self.load_episodes()
+            self._start_processing_poll()
         except Exception as e:
             logger.error(f"Database initialization failed: {e}", exc_info=True)
             self.notify("Failed to initialize database. Exiting...", severity="error")
@@ -374,6 +452,76 @@ class HomeScreen(Screen):
     async def on_screen_resume(self):
         """Called when returning to this screen."""
         await self.load_episodes()
+        self._start_processing_poll()
+
+    def on_screen_suspend(self) -> None:
+        """Called when this screen is suspended (user navigates away)."""
+        self.workers.cancel_group(self, "processing_poll")
+        self.workers.cancel_group(self, "entities")
+        self.workers.cancel_group(self, "period_stats")
+
+    def _start_processing_poll(self) -> None:
+        """Start the processing status polling worker.
+
+        Worker lifecycle pattern:
+        - Workers are started with group="processing_poll"
+        - Cancel via self.workers.cancel_group(self, "processing_poll")
+        - exclusive=True ensures only one worker runs at a time in the group
+        - on_screen_suspend() cancels workers when navigating away
+        - on_screen_resume() restarts workers when returning
+        """
+        self.run_worker(
+            self._poll_processing_status(), exclusive=True, group="processing_poll"
+        )
+
+    async def _poll_processing_status(self) -> None:
+        """Poll Redis for processing status updates."""
+        from textual.worker import WorkerCancelled
+
+        while True:
+            try:
+                status = await asyncio.to_thread(get_processing_status, DEFAULT_JOURNAL)
+                new_uuid = status["active_uuid"]
+                new_count = status["pending_count"]
+
+                # Update reactive properties (triggers watchers)
+                if new_uuid != self.active_episode_uuid:
+                    self.active_episode_uuid = new_uuid
+                if new_count != self.queue_count:
+                    self.queue_count = new_count
+                    self._update_processing_pane_content(new_uuid, new_count)
+
+                # Poll faster during active processing, slower when idle
+                poll_interval = 0.3 if new_count > 0 else 2.0
+                await asyncio.sleep(poll_interval)
+            except WorkerCancelled:
+                logger.debug("Processing poll worker cancelled")
+                break
+            except Exception as e:
+                logger.debug(f"Processing poll error: {e}")
+                await asyncio.sleep(2.0)
+
+    def _update_processing_pane_content(self, active_uuid: str | None, pending_count: int) -> None:
+        """Update the processing pane content display."""
+        try:
+            pane_content = self.query_one("#processing-pane .pane-content", Static)
+            if pending_count == 0:
+                pane_content.update("Idle")
+            elif active_uuid:
+                # Find the episode name from our loaded episodes
+                episode_name = None
+                for ep in self.episodes:
+                    if ep["uuid"] == active_uuid:
+                        episode_name = get_display_title(ep)
+                        break
+                if episode_name:
+                    pane_content.update(f"Extracting: {episode_name}\nQueue: {pending_count}")
+                else:
+                    pane_content.update(f"Extracting...\nQueue: {pending_count}")
+            else:
+                pane_content.update(f"Queue: {pending_count}")
+        except Exception as e:
+            logger.debug(f"Failed to update processing pane content: {e}")
 
     def _get_period_for_episode(self, episode_idx: int) -> int:
         """Find which period contains the given episode index."""
@@ -384,6 +532,17 @@ class HomeScreen(Screen):
             else:
                 break
         return period_idx
+
+    def _is_episode_in_current_period(self, episode_uuid: str) -> bool:
+        """Check if an episode belongs to the currently selected period."""
+        if not self.periods or self.selected_period_index >= len(self.periods):
+            return False
+
+        for idx, ep in enumerate(self.episodes):
+            if ep["uuid"] == episode_uuid:
+                ep_period_idx = self._get_period_for_episode(idx)
+                return ep_period_idx == self.selected_period_index
+        return False
 
     def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
         """Handle ListView cursor movement (↑↓ navigation)."""
@@ -518,6 +677,8 @@ class HomeScreen(Screen):
 
     def action_quit(self):
         """Request graceful shutdown via unified async path (fire-and-forget)."""
+        self.workers.cancel_group(self, "processing_poll")
+
         def handle_shutdown_done(task):
             try:
                 exc = task.exception()

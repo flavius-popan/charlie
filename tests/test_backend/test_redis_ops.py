@@ -748,3 +748,67 @@ async def test_add_journal_entry_uses_pending_queue(isolated_graph):
     # Cleanup
     remove_pending_episode(uuid_old, DEFAULT_JOURNAL)
     remove_pending_episode(uuid_new, DEFAULT_JOURNAL)
+
+
+def test_get_active_episode_uuid_returns_none_when_no_active(redis_client):
+    """get_active_episode_uuid returns None when no episode is processing."""
+    from backend.database.redis_ops import get_active_episode_uuid
+
+    # Clear any existing active episode
+    redis_client.delete("task:active_episode")
+
+    result = get_active_episode_uuid()
+    assert result is None
+
+
+def test_get_active_episode_uuid_returns_uuid_when_active(redis_client):
+    """get_active_episode_uuid returns the UUID of the active episode."""
+    from backend.database.redis_ops import get_active_episode_uuid
+
+    test_uuid = str(uuid4())
+    redis_client.hset("task:active_episode", mapping={"uuid": test_uuid, "name": "Test Episode"})
+
+    result = get_active_episode_uuid()
+    assert result == test_uuid
+
+    # Cleanup
+    redis_client.delete("task:active_episode")
+
+
+def test_get_processing_status_returns_combined_data(redis_client):
+    """get_processing_status returns both active UUID and pending count."""
+    from datetime import datetime, timezone
+    from backend.database.redis_ops import (
+        add_pending_episode,
+        get_processing_status,
+        remove_pending_episode,
+    )
+
+    # Set up test data
+    test_uuid = str(uuid4())
+    pending_uuid = str(uuid4())
+    redis_client.hset("task:active_episode", mapping={"uuid": test_uuid, "name": "Test"})
+    add_pending_episode(pending_uuid, DEFAULT_JOURNAL, datetime.now(timezone.utc))
+
+    result = get_processing_status(DEFAULT_JOURNAL)
+
+    assert result["active_uuid"] == test_uuid
+    assert result["pending_count"] >= 1
+
+    # Cleanup
+    redis_client.delete("task:active_episode")
+    remove_pending_episode(pending_uuid, DEFAULT_JOURNAL)
+
+
+def test_get_processing_status_idle_state(redis_client):
+    """get_processing_status returns None and 0 when idle."""
+    from backend.database.redis_ops import get_processing_status
+
+    # Clear any existing state
+    redis_client.delete("task:active_episode")
+    redis_client.delete(f"pending:nodes:{DEFAULT_JOURNAL}")
+
+    result = get_processing_status(DEFAULT_JOURNAL)
+
+    assert result["active_uuid"] is None
+    assert result["pending_count"] == 0

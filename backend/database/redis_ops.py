@@ -459,6 +459,54 @@ def is_episode_actively_processing(episode_uuid: str) -> bool:
             return False
 
 
+def get_active_episode_uuid() -> str | None:
+    """Get UUID of the currently processing episode.
+
+    Returns:
+        Episode UUID if one is being processed, None otherwise
+    """
+    with redis_ops() as r:
+        data = r.hgetall("task:active_episode")
+        if not data:
+            return None
+        try:
+            uuid = data.get(b"uuid", b"").decode()
+            return uuid if uuid else None
+        except (UnicodeDecodeError, AttributeError):
+            r.delete("task:active_episode")
+            return None
+
+
+def get_processing_status(journal: str) -> dict:
+    """Get processing status for home screen polling.
+
+    Returns active episode UUID and queue count in a single call for efficiency.
+
+    Args:
+        journal: Journal name
+
+    Returns:
+        Dict with 'active_uuid' (str|None) and 'pending_count' (int)
+    """
+    with redis_ops() as r:
+        # Get active episode
+        active_uuid = None
+        data = r.hgetall("task:active_episode")
+        if data:
+            try:
+                active_uuid = data.get(b"uuid", b"").decode() or None
+            except (UnicodeDecodeError, AttributeError):
+                r.delete("task:active_episode")
+
+        # Get pending count
+        pending_count = r.zcard(f"pending:nodes:{journal}")
+
+        return {
+            "active_uuid": active_uuid,
+            "pending_count": pending_count,
+        }
+
+
 # =============================================================================
 # Unresolved Entities Queue (for Batch LLM Dedup)
 # =============================================================================
