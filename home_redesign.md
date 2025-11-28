@@ -273,22 +273,22 @@ If polling feels janky, investigate `app.call_from_thread()` for direct Huey →
 - Enables realistic testing throughout development
 - *Note: Will need to update tests that assume oldest-first order*
 
-### Phase 1: Layout Foundation
+### Phase 1: Layout Foundation [DONE]
 
-**1.1 Three-pane layout skeleton**
+**1.1 Three-pane layout skeleton** [DONE]
 - Horizontal split: entries (2fr) | context stack (1fr)
 - Vertical stack on right: connections | temporal | processing
 - Fieldset-style borders with titles
 - *Proves: Layout proportions, border styling*
 - *Must come first - establishes the canvas for all other work*
 
-**1.2 Temporal grouping with dividers**
+**1.2 Temporal grouping with dividers** [DONE]
 - Add grouping logic to `get_home_screen()` query
 - Render groups with divider headers in left pane
 - Test ↑↓ navigation skipping dividers
 - *Proves: Mixed ListView content works*
 
-**1.3 Processing indicator gutter**
+**1.3 Processing indicator gutter** [DONE]
 - Create custom EntryListItem with 2-char left margin
 - Toggle indicator via reactive property (mock data)
 - *Proves: Fixed-width gutter, no layout shift*

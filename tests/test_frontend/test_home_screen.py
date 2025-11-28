@@ -121,6 +121,10 @@ async def test_home_screen_displays_episode_list(mock_home_db):
         from textual.widgets import ListView
         list_view = app.screen.query_one(ListView)
         assert list_view is not None
-        # Should have 2 items
+        # Should have 3 items: 1 period divider + 2 entries
         items = list(list_view.children)
-        assert len(items) == 2
+        assert len(items) == 3
+        # First item is divider (disabled), next two are entries
+        assert items[0].disabled is True
+        assert items[1].disabled is False
+        assert items[2].disabled is False

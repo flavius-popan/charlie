@@ -3,6 +3,8 @@ import logging
 
 from textual.app import ComposeResult
 from textual.binding import Binding
+from textual.containers import Container, Horizontal, Vertical
+from textual.reactive import reactive
 from textual.screen import Screen
 from textual.widgets import Footer, Header, Label, ListItem, ListView, Static
 
@@ -16,7 +18,7 @@ from frontend.screens.settings_screen import SettingsScreen
 from frontend.screens.view_screen import ViewScreen
 from frontend.screens.log_screen import LogScreen
 from frontend.screens.edit_screen import EditScreen
-from frontend.utils import get_display_title
+from frontend.utils import get_display_title, group_entries_by_period
 
 EMPTY_STATE_CAT = r"""
          /\_/\
@@ -30,8 +32,93 @@ EMPTY_STATE_CAT = r"""
 logger = logging.getLogger("charlie")
 
 
+class PeriodDivider(Static):
+    """Non-selectable divider showing period label."""
+
+    DEFAULT_CSS = """
+    PeriodDivider {
+        height: 1;
+        color: $text-muted;
+        padding: 0 1;
+    }
+    """
+
+    def __init__(self, label: str):
+        super().__init__(f"── {label} ──")
+
+
+class EntryLabel(Label):
+    """Entry label with processing indicator gutter."""
+
+    DEFAULT_CSS = """
+    EntryLabel {
+        padding-left: 2;
+    }
+    EntryLabel.processing {
+        padding-left: 0;
+    }
+    """
+
+    def __init__(self, text: str, episode_uuid: str):
+        super().__init__(text)
+        self.episode_uuid = episode_uuid
+        self._text = text
+
+    def set_processing(self, is_processing: bool) -> None:
+        """Update the processing indicator."""
+        if is_processing:
+            self.update(f"● {self._text}")
+            self.add_class("processing")
+        else:
+            self.update(self._text)
+            self.remove_class("processing")
+
+
 class HomeScreen(Screen):
     """Main screen showing list of journal entries."""
+
+    DEFAULT_CSS = """
+    HomeScreen #main-container {
+        height: 100%;
+    }
+
+    HomeScreen #entries-pane {
+        width: 2fr;
+        border: solid $accent;
+        border-title-align: left;
+    }
+
+    HomeScreen #context-stack {
+        width: 1fr;
+    }
+
+    HomeScreen #connections-pane {
+        height: 1fr;
+        border: solid $accent;
+        border-title-align: left;
+    }
+
+    HomeScreen #temporal-pane {
+        height: 2fr;
+        border: solid $accent;
+        border-title-align: left;
+    }
+
+    HomeScreen #processing-pane {
+        height: 1fr;
+        border: solid $accent;
+        border-title-align: left;
+    }
+
+    HomeScreen #episodes-list {
+        height: 100%;
+    }
+
+    HomeScreen .pane-content {
+        padding: 0 1;
+        color: $text-muted;
+    }
+    """
 
     BINDINGS = [
         Binding("n", "new_entry", "New", show=True),
@@ -44,27 +131,77 @@ class HomeScreen(Screen):
         Binding("k", "cursor_up", "Up", show=False),
     ]
 
+    active_episode_uuid: reactive[str | None] = reactive(None)
+
     def __init__(self):
         super().__init__()
         self.episodes = []
+        self.list_index_to_episode: dict[int, int] = {}  # Maps list index to episode index
+
+    def watch_active_episode_uuid(self, old_uuid: str | None, new_uuid: str | None) -> None:
+        """Update processing indicator when active episode changes."""
+        try:
+            for entry_label in self.query(EntryLabel):
+                entry_label.set_processing(entry_label.episode_uuid == new_uuid)
+        except Exception:
+            pass
 
     @staticmethod
     def _format_date(valid_at) -> str:
-        """Handle datetime or string dates gracefully for list rendering."""
+        """Format date as 'Day Mon DD' for list rendering."""
         try:
-            return valid_at.strftime("%Y-%m-%d")  # type: ignore[arg-type]
+            return valid_at.strftime("%a %b %d")  # type: ignore[arg-type]
         except Exception:
             return str(valid_at)
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False, icon="")
+
         empty = Static(EMPTY_STATE_CAT, id="empty-state")
         empty.can_focus = True
         empty.display = False
         yield empty
-        list_view = ListView(id="episodes-list")
-        list_view.display = False
-        yield list_view
+
+        entries_pane = Container(
+            ListView(id="episodes-list"),
+            id="entries-pane",
+        )
+        entries_pane.border_title = "Entries"
+
+        connections_pane = Container(
+            Static("Select an entry", classes="pane-content"),
+            id="connections-pane",
+        )
+        connections_pane.border_title = "Connections"
+
+        temporal_pane = Container(
+            Static("", classes="pane-content"),
+            id="temporal-pane",
+        )
+        temporal_pane.border_title = "This Week"
+
+        processing_pane = Container(
+            Static("Idle", classes="pane-content"),
+            id="processing-pane",
+        )
+        processing_pane.border_title = "Processing"
+        processing_pane.display = False
+
+        context_stack = Vertical(
+            connections_pane,
+            temporal_pane,
+            processing_pane,
+            id="context-stack",
+        )
+
+        main_container = Horizontal(
+            entries_pane,
+            context_stack,
+            id="main-container",
+        )
+        main_container.display = False
+        yield main_container
+
         yield Footer()
 
     async def on_mount(self):
@@ -90,41 +227,63 @@ class HomeScreen(Screen):
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         """Handle ListView selection (Enter key)."""
         if self.episodes and event.list_view.index is not None:
-            episode = self.episodes[event.list_view.index]
-            self.app.push_screen(ViewScreen(episode["uuid"], DEFAULT_JOURNAL))
+            episode_idx = self.list_index_to_episode.get(event.list_view.index)
+            if episode_idx is not None:
+                episode = self.episodes[episode_idx]
+                self.app.push_screen(ViewScreen(episode["uuid"], DEFAULT_JOURNAL))
 
     async def load_episodes(self):
         try:
             new_episodes = await get_home_screen()
             list_view = self.query_one("#episodes-list", ListView)
             empty_state = self.query_one("#empty-state", Static)
+            main_container = self.query_one("#main-container", Horizontal)
 
             with self.app.batch_update():
                 if not new_episodes:
                     self.episodes = []
+                    self.list_index_to_episode = {}
                     await list_view.clear()
-                    list_view.display = False
+                    main_container.display = False
                     empty_state.display = True
                     empty_state.focus()
                 else:
                     old_index = list_view.index if list_view.index is not None else 0
                     await list_view.clear()
 
-                    items = [
-                        ListItem(
-                            Label(
-                                f"{self._format_date(episode['valid_at'])} - {get_display_title(episode)}"
-                            )
-                        )
-                        for episode in new_episodes
-                    ]
+                    grouped = group_entries_by_period(new_episodes)
+                    items: list[ListItem] = []
+                    self.list_index_to_episode = {}
+                    episode_idx = 0
+
+                    for period_label, period_episodes in grouped:
+                        divider = ListItem(PeriodDivider(period_label), disabled=True)
+                        items.append(divider)
+
+                        for episode in period_episodes:
+                            text = f"{self._format_date(episode['valid_at'])} · {get_display_title(episode)}"
+                            entry_label = EntryLabel(text, episode["uuid"])
+                            if episode["uuid"] == self.active_episode_uuid:
+                                entry_label.set_processing(True)
+                            item = ListItem(entry_label)
+                            self.list_index_to_episode[len(items)] = episode_idx
+                            items.append(item)
+                            episode_idx += 1
+
                     await list_view.extend(items)
                     self.episodes = new_episodes
 
                     empty_state.display = False
-                    list_view.display = True
+                    main_container.display = True
 
-                    new_index = min(old_index, len(self.episodes) - 1)
+                    # Find first selectable index
+                    new_index = 0
+                    if self.list_index_to_episode:
+                        first_selectable = min(self.list_index_to_episode.keys())
+                        new_index = first_selectable
+                        if old_index in self.list_index_to_episode:
+                            new_index = old_index
+
                     list_view.index = new_index
                     list_view.focus()
         except Exception as e:
@@ -140,8 +299,10 @@ class HomeScreen(Screen):
                 return
             list_view = self.query_one("#episodes-list", ListView)
             if list_view.index is not None:
-                episode = self.episodes[list_view.index]
-                self.app.push_screen(ViewScreen(episode["uuid"], DEFAULT_JOURNAL))
+                episode_idx = self.list_index_to_episode.get(list_view.index)
+                if episode_idx is not None:
+                    episode = self.episodes[episode_idx]
+                    self.app.push_screen(ViewScreen(episode["uuid"], DEFAULT_JOURNAL))
         except Exception as e:
             logger.error(f"Failed to open view screen: {e}", exc_info=True)
 
@@ -150,10 +311,12 @@ class HomeScreen(Screen):
             if not self.episodes:
                 return
             list_view = self.query_one("#episodes-list", ListView)
-            if list_view.index is not None and self.episodes:
-                episode = self.episodes[list_view.index]
-                await delete_episode(episode["uuid"])
-                await self.load_episodes()
+            if list_view.index is not None:
+                episode_idx = self.list_index_to_episode.get(list_view.index)
+                if episode_idx is not None:
+                    episode = self.episodes[episode_idx]
+                    await delete_episode(episode["uuid"])
+                    await self.load_episodes()
         except Exception as e:
             logger.error(f"Failed to delete entry: {e}", exc_info=True)
             self.notify("Failed to delete entry", severity="error")
