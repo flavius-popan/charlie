@@ -252,8 +252,9 @@ class HomeScreen(Screen):
                 and self.active_episode_uuid is not None
             )
             target_uuid = self.active_episode_uuid if should_show_dot else None
-            for entry_label in self.query(EntryLabel):
-                entry_label.set_processing(entry_label.episode_uuid == target_uuid)
+            with self.app.batch_update():
+                for entry_label in self.query(EntryLabel):
+                    entry_label.set_processing(entry_label.episode_uuid == target_uuid)
         except Exception as e:
             logger.debug(f"Failed to update processing indicators: {e}")
 
@@ -330,37 +331,30 @@ class HomeScreen(Screen):
             empty_msg = self.query_one("#connections-empty", Static)
             entity_list = self.query_one("#connections-list", ListView)
 
-            # Remove all existing LoadingIndicators atomically
-            for indicator in connections_pane.query(LoadingIndicator):
-                indicator.remove()
+            with self.app.batch_update():
+                for indicator in connections_pane.query(LoadingIndicator):
+                    indicator.remove()
 
-            # State 1: Currently being processed (show loading indicator)
-            if self.connections_loading and not self.entry_entities:
-                empty_msg.display = False
-                entity_list.display = False
-                connections_pane.mount(LoadingIndicator())
-                return
-
-            # State 2: In queue awaiting processing
-            if self.selected_entry_status == "pending_nodes" and not self.entry_entities:
-                empty_msg.update("Awaiting processing...")
-                empty_msg.display = True
-                entity_list.display = False
-                return
-
-            # State 3 & 4: Processed (with or without entities)
-            if not self.entry_entities:
-                empty_msg.update("No connections")
-                empty_msg.display = True
-                entity_list.display = False
-            else:
-                empty_msg.display = False
-                entity_list.display = True
-                entity_list.clear()
-                self._last_connections_index = None
-                for entity in self.entry_entities[:10]:
-                    name = entity.get("name", "")
-                    entity_list.append(ListItem(Label(name)))
+                if self.connections_loading and not self.entry_entities:
+                    empty_msg.display = False
+                    entity_list.display = False
+                    connections_pane.mount(LoadingIndicator())
+                elif self.selected_entry_status == "pending_nodes" and not self.entry_entities:
+                    empty_msg.update("Awaiting processing...")
+                    empty_msg.display = True
+                    entity_list.display = False
+                elif not self.entry_entities:
+                    empty_msg.update("No connections")
+                    empty_msg.display = True
+                    entity_list.display = False
+                else:
+                    empty_msg.display = False
+                    entity_list.display = True
+                    entity_list.clear()
+                    self._last_connections_index = None
+                    for entity in self.entry_entities[:10]:
+                        name = entity.get("name", "")
+                        entity_list.append(ListItem(Label(name)))
         except Exception as e:
             logger.debug(f"Failed to update connections pane: {e}")
 
@@ -412,18 +406,19 @@ class HomeScreen(Screen):
 
             top_entities = new_stats.get("top_entities", []) if new_stats else []
 
-            if not top_entities:
-                empty_msg.update("No connections")
-                empty_msg.display = True
-                entity_list.display = False
-            else:
-                empty_msg.display = False
-                entity_list.display = True
-                entity_list.clear()
-                self._last_temporal_index = None
-                for entity in top_entities[:25]:
-                    name = entity.get("name", "")
-                    entity_list.append(ListItem(Label(name)))
+            with self.app.batch_update():
+                if not top_entities:
+                    empty_msg.update("No connections")
+                    empty_msg.display = True
+                    entity_list.display = False
+                else:
+                    empty_msg.display = False
+                    entity_list.display = True
+                    entity_list.clear()
+                    self._last_temporal_index = None
+                    for entity in top_entities[:25]:
+                        name = entity.get("name", "")
+                        entity_list.append(ListItem(Label(name)))
         except Exception as e:
             logger.debug(f"Failed to update temporal pane: {e}")
 
@@ -437,15 +432,16 @@ class HomeScreen(Screen):
             processing_pane = self.query_one("#processing-pane", Container)
             temporal_pane = self.query_one("#temporal-pane", Container)
 
-            # Only show when model is actually active - not just because queue has work
-            # This prevents pane from showing during startup grace period
-            should_show = self.model_state != "idle"
-            if should_show:
-                processing_pane.display = True
-                temporal_pane.styles.height = "1fr"
-            else:
-                processing_pane.display = False
-                temporal_pane.styles.height = "2fr"
+            with self.app.batch_update():
+                # Only show when model is actually active - not just because queue has work
+                # This prevents pane from showing during startup grace period
+                should_show = self.model_state != "idle"
+                if should_show:
+                    processing_pane.display = True
+                    temporal_pane.styles.height = "1fr"
+                else:
+                    processing_pane.display = False
+                    temporal_pane.styles.height = "2fr"
         except Exception as e:
             logger.debug(f"Failed to update processing pane visibility: {e}")
 
@@ -655,15 +651,16 @@ class HomeScreen(Screen):
                 new_model_state = status.get("model_state", "idle")
                 new_inference_enabled = status.get("inference_enabled", True)
 
-                # Update reactive properties (triggers watchers)
-                if new_uuid != self.active_episode_uuid:
-                    self.active_episode_uuid = new_uuid
-                if new_count != self.queue_count:
-                    self.queue_count = new_count
-                if new_model_state != self.model_state:
-                    self.model_state = new_model_state
-                if new_inference_enabled != self.inference_enabled:
-                    self.inference_enabled = new_inference_enabled
+                # Batch reactive property updates to prevent cascading watcher renders
+                with self.app.batch_update():
+                    if new_uuid != self.active_episode_uuid:
+                        self.active_episode_uuid = new_uuid
+                    if new_count != self.queue_count:
+                        self.queue_count = new_count
+                    if new_model_state != self.model_state:
+                        self.model_state = new_model_state
+                    if new_inference_enabled != self.inference_enabled:
+                        self.inference_enabled = new_inference_enabled
 
                 # Update pane content when there's work or state changed
                 if new_count > 0 or new_model_state != "idle":
@@ -694,42 +691,43 @@ class HomeScreen(Screen):
             entry_widget = self.query_one("#processing-entry", Static)
             queue_widget = self.query_one("#processing-queue", Static)
 
-            # Toggle .active class to show/hide ProcessingDot
-            is_active = model_state in ("loading", "inferring", "unloading")
-            if is_active:
-                processing_pane.add_class("active")
-            else:
-                processing_pane.remove_class("active")
-
-            # Status line based on model state
-            if model_state == "loading":
-                status_widget.update("Loading model...")
-                entry_widget.update("")
-            elif model_state == "unloading":
-                status_widget.update("Unloading model...")
-                entry_widget.update("")
-            elif model_state == "inferring" and active_uuid:
-                # Show "Finishing extracting:" if inference disabled while extracting
-                if not self.inference_enabled:
-                    status_widget.update("Finishing extracting:")
+            with self.app.batch_update():
+                # Toggle .active class to show/hide ProcessingDot
+                is_active = model_state in ("loading", "inferring", "unloading")
+                if is_active:
+                    processing_pane.add_class("active")
                 else:
-                    status_widget.update("Extracting:")
-                # Find the episode name from our loaded episodes
-                episode_name = None
-                for ep in self.episodes:
-                    if ep["uuid"] == active_uuid:
-                        episode_name = get_display_title(ep)
-                        break
-                entry_widget.update(episode_name or "")
-            else:
-                status_widget.update("")
-                entry_widget.update("")
+                    processing_pane.remove_class("active")
 
-            # Queue count
-            if pending_count > 0:
-                queue_widget.update(f"Queue: {pending_count} remaining")
-            else:
-                queue_widget.update("")
+                # Status line based on model state
+                if model_state == "loading":
+                    status_widget.update("Loading model...")
+                    entry_widget.update("")
+                elif model_state == "unloading":
+                    status_widget.update("Unloading model...")
+                    entry_widget.update("")
+                elif model_state == "inferring" and active_uuid:
+                    # Show "Finishing extracting:" if inference disabled while extracting
+                    if not self.inference_enabled:
+                        status_widget.update("Finishing extracting:")
+                    else:
+                        status_widget.update("Extracting:")
+                    # Find the episode name from our loaded episodes
+                    episode_name = None
+                    for ep in self.episodes:
+                        if ep["uuid"] == active_uuid:
+                            episode_name = get_display_title(ep)
+                            break
+                    entry_widget.update(episode_name or "")
+                else:
+                    status_widget.update("")
+                    entry_widget.update("")
+
+                # Queue count
+                if pending_count > 0:
+                    queue_widget.update(f"Queue: {pending_count} remaining")
+                else:
+                    queue_widget.update("")
 
         except Exception as e:
             logger.debug(f"Failed to update processing pane content: {e}")
