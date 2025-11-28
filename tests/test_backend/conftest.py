@@ -24,11 +24,13 @@ def falkordb_test_context(tmp_path_factory: pytest.TempPathFactory) -> Iterator[
     # Disable TCP listener in tests to avoid clashing with a running app instance.
     backend_settings.REDIS_TCP_ENABLED = False
     import backend.database.lifecycle as lifecycle
-    lifecycle.REDIS_TCP_ENABLED = False  # type: ignore[misc]
+    lifecycle._tcp_server["enabled"] = False  # type: ignore[index]
+    lifecycle._tcp_server["port"] = 0  # type: ignore[index]
 
     backend_settings.DB_PATH = db_path
-    # Update DB_PATH in lifecycle module
-    lifecycle.DB_PATH = db_path  # type: ignore[misc]
+    # Update DB_PATH in lifecycle module (required because lifecycle imports DB_PATH
+    # at module load time, creating a local binding unaffected by backend_settings patch)
+    lifecycle.DB_PATH = db_path
 
     # Reset cached connections before opening a new graph
     db_utils.shutdown_database()
