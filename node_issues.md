@@ -16,3 +16,4 @@
 - "C/Zig/Zig Day/CtF/Soldering ", can't sub-extract, extra space (handle extra spaces in code?)
 - "Aaktun in Durham", should be two locations
 - "morning walk" + "evening walk", should be "walking/walks/walk"?
+- Ensure "Suecia's mom" and "talked to mom" don't get confused

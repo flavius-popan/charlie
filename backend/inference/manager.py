@@ -85,10 +85,20 @@ def unload_all_models() -> None:
 
 def cleanup_if_no_work() -> None:
     """Unload models when editing (for UI responsiveness) OR when no work remains."""
-    from backend.database.redis_ops import get_episodes_by_status, get_inference_enabled, redis_ops
+    from backend.database.redis_ops import (
+        clear_model_state,
+        get_episodes_by_status,
+        get_inference_enabled,
+        redis_ops,
+        set_model_state,
+    )
 
     if not get_inference_enabled():
+        # Show "unloading" state in UI if models are loaded
+        if any(model is not None for model in MODELS.values()):
+            set_model_state("unloading")
         unload_all_models()
+        clear_model_state()
         return
 
     # Unload when editing to keep UI snappy

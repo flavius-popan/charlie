@@ -8,6 +8,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Footer, Label, Switch
 
 from backend.database.redis_ops import (
+    clear_model_state,
     get_inference_enabled,
     set_inference_enabled,
 )
@@ -94,6 +95,9 @@ class SettingsScreen(ModalScreen):
         self, switch: Switch, desired: bool, previous: bool
     ):
         try:
+            # Clear stale model state when re-enabling for clean state transition
+            if desired:
+                await asyncio.to_thread(clear_model_state)
             # Persist toggle and enqueue in a thread to keep UI responsive
             await asyncio.to_thread(set_inference_enabled, desired)
             self.inference_enabled = desired

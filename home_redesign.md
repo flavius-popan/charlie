@@ -317,7 +317,7 @@ If polling feels janky, investigate `app.call_from_thread()` for direct Huey →
 - Update temporal pane title dynamically
 - Preserve selected period when returning from entry view
 
-### Phase 3: Processing Integration (Polling)
+### Phase 3: Processing Integration (Polling) [DONE]
 
 **3.1 Live indicator from Redis**
 - Poll `task:active_episode` (infrastructure exists in redis_ops.py)
@@ -350,7 +350,6 @@ If polling feels janky, investigate `app.call_from_thread()` for direct Huey →
 - Error states
 
 **4.3 Keyboard shortcuts**
-- Number keys (1-9) for quick entity access
 - Tune polling frequencies based on usage
 
 ## Technical Notes

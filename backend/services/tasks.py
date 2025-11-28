@@ -58,11 +58,13 @@ def extract_nodes_task(episode_uuid: str, journal: str):
     """
     from backend.database.redis_ops import (
         clear_active_episode,
+        clear_model_state,
         get_episode_status,
         get_inference_enabled,
         remove_pending_episode,
         set_active_episode,
         set_episode_status,
+        set_model_state,
     )
     from backend.graph.extract_nodes import extract_nodes
     from backend.inference.manager import cleanup_if_no_work, get_model, is_model_loading_blocked
@@ -79,16 +81,21 @@ def extract_nodes_task(episode_uuid: str, journal: str):
             )
             return {"already_processed": True, "status": current_status}
 
+        # Check inference enabled BEFORE marking active to avoid state leakage
+        if not get_inference_enabled():
+            logger.debug("Inference disabled, skipping episode %s (queue preserved)", episode_uuid)
+            return {"inference_disabled": True}
+
         # Mark this episode as actively processing (for spinner display)
+        # Only after all early-return checks pass
         set_active_episode(episode_uuid, journal)
 
         logger.info("extract_nodes_task started for episode %s", episode_uuid)
 
-        if not get_inference_enabled():
-            logger.info("Inference disabled, leaving episode %s in pending_nodes", episode_uuid)
-            return {"inference_disabled": True}
-
         check_cancellation()  # Before expensive model load
+
+        # Set loading state for UI display
+        set_model_state("loading")
 
         # Wait for editing to end before loading model
         wait_logged = False
@@ -100,6 +107,10 @@ def extract_nodes_task(episode_uuid: str, journal: str):
             time.sleep(1)
 
         lm = get_model("llm")
+
+        # Transition to inferring state after model is loaded
+        set_model_state("inferring")
+
         with dspy.context(lm=lm):
             extraction = extract_nodes(episode_uuid, journal)
             if inspect.isawaitable(extraction):
@@ -169,6 +180,10 @@ def extract_nodes_task(episode_uuid: str, journal: str):
         logger.exception("extract_nodes_task failed for episode %s", episode_uuid)
         raise
     finally:
+        try:
+            clear_model_state()
+        except Exception:
+            logger.warning("Failed to clear model state", exc_info=True)
         try:
             clear_active_episode()
         except Exception:
