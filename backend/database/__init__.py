@@ -31,6 +31,7 @@ from backend.database.queries import (
 )
 from backend.database.redis_ops import (
     get_active_episode_uuid,
+    get_episode_status,
     get_processing_status,
     redis_ops,
 )
@@ -72,6 +73,7 @@ __all__ = [
     "get_period_entities",
     # Redis operations
     "get_active_episode_uuid",
+    "get_episode_status",
     "get_processing_status",
     "redis_ops",
     # Driver access

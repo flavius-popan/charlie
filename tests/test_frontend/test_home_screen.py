@@ -30,16 +30,19 @@ def mock_home_db():
     with patch("frontend.screens.home_screen.get_home_screen", new_callable=AsyncMock) as mock_get_home, \
          patch("frontend.screens.home_screen.ensure_database_ready", new_callable=AsyncMock) as mock_ensure, \
          patch("frontend.screens.home_screen.get_entry_entities", new_callable=AsyncMock) as mock_entry_entities, \
-         patch("frontend.screens.home_screen.get_period_entities", new_callable=AsyncMock) as mock_period_entities:
+         patch("frontend.screens.home_screen.get_period_entities", new_callable=AsyncMock) as mock_period_entities, \
+         patch("frontend.screens.home_screen.get_episode_status") as mock_episode_status:
         mock_get_home.return_value = []
         mock_ensure.return_value = None
         mock_entry_entities.return_value = []
         mock_period_entities.return_value = {"entry_count": 0, "connection_count": 0, "top_entities": []}
+        mock_episode_status.return_value = None
         yield {
             "get_home": mock_get_home,
             "ensure": mock_ensure,
             "get_entry_entities": mock_entry_entities,
             "get_period_entities": mock_period_entities,
+            "get_episode_status": mock_episode_status,
         }
 
 
@@ -581,3 +584,81 @@ async def test_index_bounds_validation_after_list_shrinks(mock_home_db):
 
         # Should not crash, and index should be valid (0 for single item list)
         assert connections_list.index == 0
+
+
+@pytest.mark.asyncio
+async def test_connections_pane_shows_awaiting_processing_for_pending_entry(mock_home_db):
+    """Connections pane should show 'Awaiting processing...' for entries in queue."""
+    mock_episodes = [
+        {
+            "uuid": "pending-entry",
+            "name": "Pending Entry",
+            "preview": "Content",
+            "valid_at": datetime(2025, 11, 27, 10, 0, 0),
+        }
+    ]
+    mock_home_db["get_home"].return_value = mock_episodes
+    mock_home_db["get_entry_entities"].return_value = []
+    mock_home_db["get_episode_status"].return_value = "pending_nodes"
+
+    app = HomeScreenTestApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        from textual.widgets import Static
+        empty_msg = app.screen.query_one("#connections-empty", Static)
+        assert "Awaiting processing" in empty_msg.render().plain
+
+
+@pytest.mark.asyncio
+async def test_connections_pane_shows_no_connections_for_processed_entry(mock_home_db):
+    """Connections pane should show 'No connections' for processed entries without entities."""
+    mock_episodes = [
+        {
+            "uuid": "done-entry",
+            "name": "Done Entry",
+            "preview": "Content",
+            "valid_at": datetime(2025, 11, 27, 10, 0, 0),
+        }
+    ]
+    mock_home_db["get_home"].return_value = mock_episodes
+    mock_home_db["get_entry_entities"].return_value = []
+    mock_home_db["get_episode_status"].return_value = "done"
+
+    app = HomeScreenTestApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        from textual.widgets import Static
+        empty_msg = app.screen.query_one("#connections-empty", Static)
+        assert "No connections" in empty_msg.render().plain
+
+
+@pytest.mark.asyncio
+async def test_connections_pane_shows_loading_for_actively_processing_entry(mock_home_db):
+    """Connections pane should show LoadingIndicator when entry is being processed."""
+    mock_episodes = [
+        {
+            "uuid": "active-entry",
+            "name": "Active Entry",
+            "preview": "Content",
+            "valid_at": datetime(2025, 11, 27, 10, 0, 0),
+        }
+    ]
+    mock_home_db["get_home"].return_value = mock_episodes
+    mock_home_db["get_entry_entities"].return_value = []
+    mock_home_db["get_episode_status"].return_value = "pending_nodes"
+
+    app = HomeScreenTestApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        home_screen = app.screen
+        # Simulate that this entry is actively being processed
+        home_screen.active_episode_uuid = "active-entry"
+        home_screen.model_state = "inferring"
+        await pilot.pause()
+
+        from textual.widgets import LoadingIndicator
+        indicators = app.screen.query(LoadingIndicator)
+        assert len(indicators) > 0

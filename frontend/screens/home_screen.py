@@ -13,6 +13,7 @@ from backend.database import (
     delete_episode,
     ensure_database_ready,
     get_entry_entities,
+    get_episode_status,
     get_home_screen,
     get_period_entities,
     get_processing_status,
@@ -212,6 +213,7 @@ class HomeScreen(Screen):
 
     active_episode_uuid: reactive[str | None] = reactive(None)
     selected_entry_uuid: reactive[str | None] = reactive(None)
+    selected_entry_status: reactive[str | None] = reactive(None)
     entry_entities: reactive[list[dict]] = reactive([])
     selected_period_index: reactive[int] = reactive(0)
     period_stats: reactive[dict | None] = reactive(None)
@@ -292,25 +294,33 @@ class HomeScreen(Screen):
         if new_uuid:
             self.run_worker(self._fetch_entry_entities(new_uuid), exclusive=True, group="entities")
         else:
+            self.selected_entry_status = None
             self.entry_entities = []
 
     async def _fetch_entry_entities(self, episode_uuid: str) -> None:
-        """Fetch entities for selected entry from cache."""
+        """Fetch entities and processing status for selected entry."""
         from textual.worker import WorkerCancelled
 
         try:
+            status = await asyncio.to_thread(get_episode_status, episode_uuid, DEFAULT_JOURNAL)
             entities = await get_entry_entities(episode_uuid, DEFAULT_JOURNAL)
             # Verify entry is still selected before updating (prevents race with rapid navigation)
             if self.selected_entry_uuid == episode_uuid:
+                self.selected_entry_status = status
                 self.entry_entities = entities
         except WorkerCancelled:
             raise  # Don't update state on cancellation
         except Exception as e:
             logger.debug(f"Failed to fetch entry entities: {e}")
+            self.selected_entry_status = None
             self.entry_entities = []
 
     def watch_entry_entities(self, old_entities: list[dict], new_entities: list[dict]) -> None:
         """Update Connections pane when entities change."""
+        self._refresh_connections_pane()
+
+    def watch_selected_entry_status(self, old_status: str | None, new_status: str | None) -> None:
+        """Refresh connections pane when entry processing status changes."""
         self._refresh_connections_pane()
 
     def _refresh_connections_pane(self) -> None:
@@ -324,13 +334,21 @@ class HomeScreen(Screen):
             for indicator in connections_pane.query(LoadingIndicator):
                 indicator.remove()
 
-            # Show loading indicator when selected entry is being processed
+            # State 1: Currently being processed (show loading indicator)
             if self.connections_loading and not self.entry_entities:
                 empty_msg.display = False
                 entity_list.display = False
                 connections_pane.mount(LoadingIndicator())
                 return
 
+            # State 2: In queue awaiting processing
+            if self.selected_entry_status == "pending_nodes" and not self.entry_entities:
+                empty_msg.update("Awaiting processing...")
+                empty_msg.display = True
+                entity_list.display = False
+                return
+
+            # State 3 & 4: Processed (with or without entities)
             if not self.entry_entities:
                 empty_msg.update("No connections")
                 empty_msg.display = True
