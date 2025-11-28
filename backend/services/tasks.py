@@ -59,6 +59,7 @@ def extract_nodes_task(episode_uuid: str, journal: str):
     from backend.database.redis_ops import (
         clear_active_episode,
         clear_model_state,
+        get_active_episode_uuid,
         get_episode_status,
         get_inference_enabled,
         remove_pending_episode,
@@ -90,21 +91,41 @@ def extract_nodes_task(episode_uuid: str, journal: str):
         # Only after all early-return checks pass
         set_active_episode(episode_uuid, journal)
 
+        # Verify state hasn't changed during async operation
+        if not get_inference_enabled():
+            clear_active_episode()
+            logger.debug("Inference disabled after set_active_episode, aborting %s", episode_uuid)
+            return {"inference_disabled": True}
+
         logger.info("extract_nodes_task started for episode %s", episode_uuid)
 
         check_cancellation()  # Before expensive model load
 
-        # Set loading state for UI display
-        set_model_state("loading")
-
-        # Wait for editing to end before loading model
+        # Wait for grace period/editing to end before loading model
+        # Don't set model_state yet - processing pane should stay hidden during wait
         wait_logged = False
         while is_model_loading_blocked():
             check_cancellation()  # Allow graceful shutdown
             if not wait_logged:
-                logger.info("Waiting for editing to end before loading model for episode %s", episode_uuid)
+                logger.info("Waiting for grace period/editing to end for episode %s", episode_uuid)
                 wait_logged = True
             time.sleep(1)
+
+        # Verify state hasn't changed during blocking operation
+        if not get_inference_enabled():
+            clear_active_episode()
+            logger.debug("Inference disabled during wait, aborting %s", episode_uuid)
+            return {"inference_disabled": True}
+
+        # Verify still active episode after blocking operation
+        current_active = get_active_episode_uuid()
+        if current_active != episode_uuid:
+            logger.debug("Episode %s no longer active after wait (current: %s), aborting",
+                         episode_uuid, current_active)
+            return {"no_longer_active": True}
+
+        # NOW set loading state - we're actually about to load
+        set_model_state("loading")
 
         lm = get_model("llm")
 
@@ -180,6 +201,7 @@ def extract_nodes_task(episode_uuid: str, journal: str):
         logger.exception("extract_nodes_task failed for episode %s", episode_uuid)
         raise
     finally:
+        # Clear in reverse dependency order to minimize inconsistency window
         try:
             clear_model_state()
         except Exception:

@@ -238,17 +238,27 @@ class HomeScreen(Screen):
         self._last_connections_index: int | None = None
         self._last_temporal_index: int | None = None
 
-    def watch_active_episode_uuid(self, old_uuid: str | None, new_uuid: str | None) -> None:
-        """Update processing indicator and refresh panes when processing completes."""
-        # Update entry list indicators (only show dot when actively inferring)
+    def _update_entry_processing_dots(self) -> None:
+        """Update processing dots on all entry labels based on current state.
+
+        Consolidates dot update logic to prevent race conditions from watchers
+        reading stale sibling reactive property values.
+        """
         try:
-            is_inferring = self.model_state == "inferring"
+            should_show_dot = (
+                self.model_state == "inferring"
+                and self.active_episode_uuid is not None
+            )
+            target_uuid = self.active_episode_uuid if should_show_dot else None
             for entry_label in self.query(EntryLabel):
-                entry_label.set_processing(
-                    is_inferring and entry_label.episode_uuid == new_uuid
-                )
+                entry_label.set_processing(entry_label.episode_uuid == target_uuid)
         except Exception as e:
             logger.debug(f"Failed to update processing indicators: {e}")
+
+    def watch_active_episode_uuid(self, old_uuid: str | None, new_uuid: str | None) -> None:
+        """Update processing indicator and refresh panes when processing completes."""
+        # Update entry list indicators via consolidated method
+        self._update_entry_processing_dots()
 
         # Refresh connections pane to update loading state (computed property changed)
         self._refresh_connections_pane()
@@ -404,18 +414,14 @@ class HomeScreen(Screen):
         self._update_processing_pane_visibility()
 
     def _update_processing_pane_visibility(self) -> None:
-        """Update processing pane visibility based on queue count, model state, and inference enabled."""
+        """Update processing pane visibility based on model state."""
         try:
             processing_pane = self.query_one("#processing-pane", Container)
             temporal_pane = self.query_one("#temporal-pane", Container)
 
-            # Show pane when:
-            # - Model is active (loading/inferring/unloading), OR
-            # - Queue has items AND inference is enabled (will process soon)
-            should_show = (
-                self.model_state != "idle"
-                or (self.queue_count > 0 and self.inference_enabled)
-            )
+            # Only show when model is actually active - not just because queue has work
+            # This prevents pane from showing during startup grace period
+            should_show = self.model_state != "idle"
             if should_show:
                 processing_pane.display = True
                 temporal_pane.styles.height = "1fr"
@@ -427,20 +433,8 @@ class HomeScreen(Screen):
 
     def watch_model_state(self, old_state: str, new_state: str) -> None:
         """Update processing pane and entry indicators when model state changes."""
-        # Update entry list indicators when transitioning to/from inferring
-        try:
-            if new_state == "inferring":
-                # Show dot on active entry when inference starts
-                for entry_label in self.query(EntryLabel):
-                    entry_label.set_processing(
-                        entry_label.episode_uuid == self.active_episode_uuid
-                    )
-            elif old_state == "inferring":
-                # Clear all dots when leaving inferring state
-                for entry_label in self.query(EntryLabel):
-                    entry_label.set_processing(False)
-        except Exception as e:
-            logger.debug(f"Failed to update entry indicators on state change: {e}")
+        # Update entry list indicators via consolidated method
+        self._update_entry_processing_dots()
 
         # Refresh connections pane (loading indicator depends on model_state)
         self._refresh_connections_pane()
@@ -594,6 +588,11 @@ class HomeScreen(Screen):
 
     async def on_screen_resume(self):
         """Called when returning to this screen."""
+        # Cancel any stale workers first to prevent duplicates on rapid navigation
+        self.workers.cancel_group(self, "processing_poll")
+        self.workers.cancel_group(self, "entities")
+        self.workers.cancel_group(self, "period_stats")
+
         await self.load_episodes()
         self._start_processing_poll()
 
@@ -647,8 +646,13 @@ class HomeScreen(Screen):
                 if new_count > 0 or new_model_state != "idle":
                     self._update_processing_pane_content(new_uuid, new_count, new_model_state)
 
-                # Poll faster during active processing, slower when idle
-                poll_interval = 0.3 if new_count > 0 else 2.0
+                # Poll faster during state transitions, slower when inference disabled
+                if new_inference_enabled and (new_count > 0 or new_model_state in ("loading", "inferring", "unloading")):
+                    poll_interval = 0.3  # Active processing
+                elif new_count > 0 and not new_inference_enabled:
+                    poll_interval = 5.0  # Queue has work but waiting for re-enable
+                else:
+                    poll_interval = 2.0  # Idle
                 await asyncio.sleep(poll_interval)
             except WorkerCancelled:
                 logger.debug("Processing poll worker cancelled")

@@ -486,6 +486,7 @@ def get_processing_status(journal: str) -> dict:
     """Get processing status for home screen polling.
 
     Returns active episode UUID, queue count, and model state in a single call.
+    Uses a Redis pipeline for atomic reads to prevent inconsistent state.
 
     Args:
         journal: Journal name
@@ -498,24 +499,35 @@ def get_processing_status(journal: str) -> dict:
         - 'inference_enabled' (bool): Whether inference is enabled
     """
     with redis_ops() as r:
-        # Get active episode
+        # Use pipeline for atomic reads - all values are from the same point in time
+        pipe = r.pipeline()
+        pipe.hgetall("task:active_episode")
+        pipe.zcard(f"pending:nodes:{journal}")
+        pipe.hgetall("task:model_state")
+        pipe.get("app:inference_enabled")
+        results = pipe.execute()
+
+        # Parse active episode (result 0)
         active_uuid = None
-        data = r.hgetall("task:active_episode")
-        if data:
+        active_data = results[0]
+        if active_data:
             try:
-                active_uuid = data.get(b"uuid", b"").decode() or None
+                active_uuid = active_data.get(b"uuid", b"").decode() or None
             except (UnicodeDecodeError, AttributeError):
-                r.delete("task:active_episode")
+                pass  # Can't write during pipeline read; startup cleanup handles stale data
 
-        # Get pending count
-        pending_count = r.zcard(f"pending:nodes:{journal}")
+        # Parse pending count (result 1)
+        pending_count = results[1]
 
-        # Get model state (uses staleness detection)
-        model_state = _get_model_state_internal(r)
+        # Parse model state (result 2)
+        model_state_data = results[2]
+        model_state = "idle"
+        if model_state_data:
+            model_state = model_state_data.get(b"state", b"idle").decode()
 
-        # Get inference enabled flag
-        inference_enabled = r.get("app:inference_enabled")
-        inference_enabled = inference_enabled != b"false" if inference_enabled else True
+        # Parse inference enabled (result 3)
+        inference_enabled_raw = results[3]
+        inference_enabled = inference_enabled_raw != b"false" if inference_enabled_raw else True
 
         return {
             "active_uuid": active_uuid,
@@ -530,21 +542,9 @@ def get_processing_status(journal: str) -> dict:
 # =============================================================================
 #
 # Tracks whether the LLM model is currently loading or running inference.
-# This enables the UI to show different states:
-# - "Loading model..." during cold start
-# - "Extracting: <entry>" during inference
-#
 # Key: task:model_state (Redis Hash)
-# Fields: state ("loading" | "inferring"), started_at (timestamp)
-#
-# Robustness features:
-# - Staleness detection: auto-clear state older than TTL (crash recovery)
-# - TTL safety net: key auto-expires even if staleness check not called
-# - Episode info from task:active_episode (no duplication)
+# Fields: state ("loading" | "inferring" | "unloading"), started_at (timestamp)
 # =============================================================================
-
-MODEL_STATE_TTL_SECONDS = 300  # 5 minutes max before considered stale
-
 
 def set_model_state(state: str) -> None:
     """Set current model state for UI display.
@@ -561,39 +561,24 @@ def set_model_state(state: str) -> None:
                 "task:model_state",
                 mapping={"state": state, "started_at": str(time.time())},
             )
-            r.expire("task:model_state", MODEL_STATE_TTL_SECONDS)
 
 
 def _get_model_state_internal(r) -> str:
-    """Get model state with staleness detection (internal, takes redis client).
+    """Get model state (internal, takes redis client).
 
-    Returns "idle" if not set or stale (crash recovery).
+    Returns "idle" if not set, otherwise returns the actual state.
     """
     data = r.hgetall("task:model_state")
     if not data:
         return "idle"
 
-    state = data.get(b"state", b"idle").decode()
-
-    # Check for stale state (process may have crashed)
-    started_at = data.get(b"started_at")
-    if started_at:
-        try:
-            elapsed = time.time() - float(started_at.decode())
-            if elapsed > MODEL_STATE_TTL_SECONDS:
-                logger.warning("Model state stale (%.0fs), clearing", elapsed)
-                r.delete("task:model_state")
-                return "idle"
-        except (ValueError, UnicodeDecodeError):
-            pass
-
-    return state
+    return data.get(b"state", b"idle").decode()
 
 
 def get_model_state() -> dict:
-    """Get current model state with staleness detection.
+    """Get current model state.
 
-    Returns {"state": "idle"} if not set or stale (crash recovery).
+    Returns {"state": "idle"} if not set, otherwise the actual state.
     """
     with redis_ops() as r:
         return {"state": _get_model_state_internal(r)}
@@ -612,8 +597,9 @@ def clear_transient_state() -> None:
     Preserves user data (pending queue) and preferences (inference_enabled).
     """
     with redis_ops() as r:
-        r.delete("task:model_state")      # Model loading/inferring state
-        r.delete("task:active_episode")   # Currently processing episode
+        r.delete("task:model_state")
+        r.delete("task:active_episode")
+        r.delete("editing:active")
     logger.info("Cleared transient processing state on startup")
 
 
