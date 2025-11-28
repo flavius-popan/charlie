@@ -17,6 +17,7 @@ import json
 import re
 import zipfile
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from rich.console import Console
 
@@ -50,10 +51,20 @@ def clean_dayone_markdown(text: str) -> str:
     return text
 
 
-def parse_dayone_date(iso_string: str) -> datetime:
-    """Parse Day One ISO 8601 date string to UTC datetime."""
-    # Day One uses format: 2025-11-26T18:50:20Z
+def parse_dayone_date(iso_string: str, tz_name: str | None = None) -> datetime:
+    """Parse Day One ISO 8601 date string to datetime in entry's local timezone.
+
+    Day One exports timestamps in UTC with a separate timeZone field. To display
+    entries under the correct local date, we convert UTC to the entry's timezone.
+
+    Falls back to UTC if timezone name is invalid or missing.
+    """
     dt = datetime.fromisoformat(iso_string.replace("Z", "+00:00"))
+    if tz_name:
+        try:
+            return dt.astimezone(ZoneInfo(tz_name))
+        except ZoneInfoNotFoundError:
+            pass  # Fall through to UTC
     return dt.astimezone(timezone.utc)
 
 
@@ -90,7 +101,8 @@ def parse_entries(raw_entries: list[dict], source_journal: str) -> list[tuple[st
     for entry in raw_entries:
         uuid = convert_dayone_uuid(entry["uuid"])
         content = clean_dayone_markdown(entry.get("text", ""))
-        entry_time = parse_dayone_date(entry["creationDate"])
+        tz_name = entry.get("timeZone")
+        entry_time = parse_dayone_date(entry["creationDate"], tz_name)
 
         if not content.strip():
             continue
