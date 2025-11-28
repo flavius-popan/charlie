@@ -599,7 +599,7 @@ def test_pop_unresolved_entities_empty_queue(falkordb_test_context):
 
 
 def test_pending_episodes_chronological_order(falkordb_test_context):
-    """Pending episodes are returned in chronological order (oldest first)."""
+    """Pending episodes are returned in reverse chronological order (newest first)."""
     from datetime import datetime, timezone
     from backend.database.redis_ops import (
         add_pending_episode,
@@ -620,9 +620,9 @@ def test_pending_episodes_chronological_order(falkordb_test_context):
     add_pending_episode(episode_old, DEFAULT_JOURNAL, time_old)
     add_pending_episode(episode_new, DEFAULT_JOURNAL, time_new)
 
-    # Should return oldest first
+    # Should return newest first
     pending = get_pending_episodes(DEFAULT_JOURNAL)
-    assert pending == [episode_old, episode_mid, episode_new]
+    assert pending == [episode_new, episode_mid, episode_old]
 
     # Cleanup
     remove_pending_episode(episode_old, DEFAULT_JOURNAL)
@@ -739,11 +739,11 @@ async def test_add_journal_entry_uses_pending_queue(isolated_graph):
         reference_time=time_old,
     )
 
-    # Should be sorted oldest first
+    # Should be sorted newest first
     pending = get_pending_episodes(DEFAULT_JOURNAL)
     assert uuid_old in pending
     assert uuid_new in pending
-    assert pending.index(uuid_old) < pending.index(uuid_new)
+    assert pending.index(uuid_new) < pending.index(uuid_old)
 
     # Cleanup
     remove_pending_episode(uuid_old, DEFAULT_JOURNAL)

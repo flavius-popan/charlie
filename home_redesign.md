@@ -267,7 +267,7 @@ If polling feels janky, investigate `app.call_from_thread()` for direct Huey →
 
 ### Phase 0: Backend Prep
 
-**0.1 Newest-first processing**
+**0.1 Newest-first processing** [DONE]
 - Flip `pending:nodes:{journal}` query from `ZRANGE` to `ZREVRANGE`
 - Processing starts with most recent entries, works backward
 - Enables realistic testing throughout development

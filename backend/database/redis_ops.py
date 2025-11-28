@@ -269,14 +269,14 @@ def set_inference_enabled(enabled: bool) -> None:
 
 
 def enqueue_pending_episodes() -> int:
-    """Enqueue all pending episodes for processing in chronological order.
+    """Enqueue all pending episodes for processing in reverse chronological order.
 
     Returns:
         Number of episodes enqueued
 
     Note:
         Only enqueues if inference is enabled.
-        Episodes are processed oldest-first (by valid_at) to improve entity dedup.
+        Episodes are processed newest-first (by valid_at) for better UX.
         Huey's unique=True on extract_nodes_task handles deduplication.
         Background tasks are enqueued with priority=0 (low priority).
     """
@@ -288,7 +288,7 @@ def enqueue_pending_episodes() -> int:
 
     count = 0
     for journal in get_journals_with_pending_episodes():
-        pending = get_pending_episodes(journal)  # Already sorted oldest-first
+        pending = get_pending_episodes(journal)  # Already sorted newest-first
         for episode_uuid in pending:
             extract_nodes_task(episode_uuid, journal, priority=0)
             count += 1
@@ -558,17 +558,17 @@ def add_pending_episode(episode_uuid: str, journal: str, valid_at) -> None:
 
 
 def get_pending_episodes(journal: str) -> list[str]:
-    """Get pending episodes in chronological order (oldest first).
+    """Get pending episodes in reverse chronological order (newest first).
 
     Args:
         journal: Journal name
 
     Returns:
-        List of episode UUIDs sorted by valid_at (oldest first)
+        List of episode UUIDs sorted by valid_at (newest first)
     """
     with redis_ops() as r:
         key = f"pending:nodes:{journal}"
-        return [uuid.decode() for uuid in r.zrange(key, 0, -1)]
+        return [uuid.decode() for uuid in r.zrevrange(key, 0, -1)]
 
 
 def remove_pending_episode(episode_uuid: str, journal: str) -> None:
