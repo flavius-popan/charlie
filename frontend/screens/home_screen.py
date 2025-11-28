@@ -583,10 +583,12 @@ class HomeScreen(Screen):
         self.run_worker(self._init_and_load(), exclusive=True)
 
     async def _init_and_load(self):
-        from backend.database.redis_ops import clear_transient_state
+        from backend.database.redis_ops import clear_transient_state, get_app_theme
 
         try:
             await ensure_database_ready(DEFAULT_JOURNAL)
+            theme = await asyncio.to_thread(get_app_theme)
+            self.app.theme = theme
             # Clear any stale state from previous crashes before starting worker
             await asyncio.to_thread(clear_transient_state)
             # Start Huey worker after database is ready to avoid startup races
