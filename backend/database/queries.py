@@ -321,6 +321,51 @@ async def get_entry_entities(
     return [n for n in nodes if n.get("name") != "I"]
 
 
+async def get_entry_entities_with_counts(
+    episode_uuid: str, journal: str = DEFAULT_JOURNAL
+) -> list[dict]:
+    """Get entities for an episode with their global mention counts.
+
+    Like get_entry_entities but adds 'mention_count' field showing how many
+    episodes mention each entity across the journal. Useful for filtering
+    low-value entities that only appear once.
+
+    Args:
+        episode_uuid: Episode UUID to fetch entities for
+        journal: Journal name (defaults to DEFAULT_JOURNAL)
+
+    Returns:
+        List of entity dicts with 'uuid', 'name', 'type', 'mention_count' fields.
+        Excludes the "I" (self) entity. Returns empty list if no cache data.
+    """
+    # First get entities from cache
+    entities = await get_entry_entities(episode_uuid, journal)
+    if not entities:
+        return []
+
+    # Get mention counts from graph
+    driver = get_driver(journal)
+    entity_uuids = [e["uuid"] for e in entities]
+
+    query = f"""
+    UNWIND {to_cypher_literal(entity_uuids)} AS uuid
+    MATCH (e:Entity {{uuid: uuid, group_id: {to_cypher_literal(journal)}}})
+    OPTIONAL MATCH (ep:Episodic)-[:MENTIONS]->(e)
+    RETURN e.uuid AS uuid, count(DISTINCT ep) AS mention_count
+    """
+
+    records, _, _ = await driver.execute_query(query)
+
+    # Build uuid -> count map
+    counts = {r["uuid"]: r["mention_count"] for r in records}
+
+    # Enrich entities with counts
+    for entity in entities:
+        entity["mention_count"] = counts.get(entity["uuid"], 0)
+
+    return entities
+
+
 async def get_period_entities(
     start_date: datetime, end_date: datetime, journal: str = DEFAULT_JOURNAL
 ) -> dict:
@@ -632,6 +677,7 @@ __all__ = [
     "get_home_screen",
     "delete_entity_mention",
     "get_entry_entities",
+    "get_entry_entities_with_counts",
     "get_period_entities",
     "get_entity_browser_data",
     "truncate_quote",

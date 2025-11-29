@@ -10,9 +10,10 @@ from textual.reactive import reactive
 from textual.screen import Screen
 from textual.widgets import Footer, Header, ListItem, ListView, Markdown, Static
 
-from backend.database import get_entity_browser_data
+from backend.database import get_entity_browser_data, get_entry_entities_with_counts
 from backend.database.queries import extract_entity_sentences, ENTITY_QUOTE_TARGET_LENGTH
 from backend.settings import DEFAULT_JOURNAL
+from frontend.utils import inject_entity_links
 
 logger = logging.getLogger("charlie")
 
@@ -239,7 +240,7 @@ class EntityBrowserScreen(Screen):
                 ),
                 VerticalScroll(
                     Static("", id="reader-date"),
-                    Markdown("", id="reader-content"),
+                    Markdown("", id="reader-content", open_links=False),
                     id="reader-panel",
                 ),
                 id="content-area",
@@ -383,7 +384,14 @@ class EntityBrowserScreen(Screen):
                 date_str = str(valid_at)
 
             reader_date.update(date_str)
-            reader_content.update(entry["content"])
+
+            # Inject entity links into content
+            content = entry["content"]
+            self.run_worker(
+                self._load_linked_content(episode_uuid, content, reader_content),
+                exclusive=True,
+                group="reader-links",
+            )
 
             # Responsive: narrow mode if terminal < 100 columns
             if self.app.size.width < 100:
@@ -395,6 +403,32 @@ class EntityBrowserScreen(Screen):
             reader_content.focus()
         except Exception as e:
             logger.error("Failed to open reader: %s", e, exc_info=True)
+
+    async def _load_linked_content(
+        self, episode_uuid: str, content: str, reader_content: Markdown
+    ) -> None:
+        """Load content with entity links injected."""
+        try:
+            entities = await get_entry_entities_with_counts(episode_uuid, self.journal)
+            if entities:
+                # Exclude current entity to avoid self-referential links
+                content = inject_entity_links(
+                    content, entities, min_mentions=2, exclude_uuids={self.entity_uuid}
+                )
+            await reader_content.update(content)
+        except Exception as e:
+            logger.error("Failed to load linked content: %s", e, exc_info=True)
+            await reader_content.update(content)
+
+    def on_markdown_link_clicked(self, event: Markdown.LinkClicked) -> None:
+        """Handle link clicks, including custom entity:// protocol."""
+        href = event.href
+
+        if href.startswith("entity://"):
+            entity_uuid = href.replace("entity://", "")
+            self.app.push_screen(EntityBrowserScreen(entity_uuid, self.journal))
+        elif href.startswith(("http://", "https://")):
+            self.app.open_url(href)
 
     def action_back(self) -> None:
         if self.reader_open:

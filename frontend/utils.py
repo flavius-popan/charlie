@@ -138,3 +138,90 @@ def calculate_periods(
         episode_index += len(period_episodes)
 
     return periods
+
+
+def inject_entity_links(
+    content: str,
+    entities: list[dict],
+    min_mentions: int = 1,
+    exclude_uuids: set[str] | None = None,
+) -> str:
+    """Inject entity:// links into markdown content.
+
+    Wraps entity name mentions with markdown links pointing to entity:// protocol.
+    Handles possessives, case-insensitive matching, and avoids double-linking.
+
+    Args:
+        content: Raw markdown text
+        entities: List of dicts with 'name', 'uuid', and optionally 'mention_count' keys
+        min_mentions: Minimum mention count to create a link (default 1).
+                      Entities with fewer mentions are skipped. Requires
+                      'mention_count' field in entity dicts.
+        exclude_uuids: Set of entity UUIDs to skip (e.g., current entity being viewed)
+
+    Returns:
+        Markdown with injected entity links
+    """
+    import re
+
+    if not entities:
+        return content
+
+    result = content
+    exclude_uuids = exclude_uuids or set()
+
+    # Filter by minimum mentions if specified and mention_count is available
+    if min_mentions > 1:
+        entities = [
+            e for e in entities
+            if e.get("mention_count", min_mentions) >= min_mentions
+        ]
+
+    # Filter out excluded entities
+    entities = [e for e in entities if e["uuid"] not in exclude_uuids]
+
+    if not entities:
+        return content
+
+    # Sort by name length descending to avoid substring issues
+    # ("Bobby" should be matched before "Bob")
+    sorted_entities = sorted(entities, key=lambda e: len(e["name"]), reverse=True)
+
+    for entity in sorted_entities:
+        name = entity["name"]
+        uuid = entity["uuid"]
+
+        # Skip very short names (likely to cause false positives)
+        if len(name) < 2:
+            continue
+
+        # Build pattern that:
+        # - Uses word boundaries
+        # - Handles possessives ('s, ')
+        # - Is case-insensitive
+        # - Avoids text already in markdown links [text](url)
+        escaped_name = re.escape(name)
+
+        # Pattern: word boundary + name + optional possessive + word boundary
+        # Negative lookbehind to avoid already-linked text
+        # (?<!\[) - not preceded by [
+        # (?!\]) - not followed by ]
+        # (?!\() - not followed by ( (would be part of link URL)
+        pattern = (
+            r"(?<!\[)"  # Not after [
+            r"(?<![/])"  # Not after / (in URLs)
+            r"\b(" + escaped_name + r")"  # Capture the name
+            r"(?:'s|')?"  # Optional possessive (not captured)
+            r"\b"
+            r"(?!\])"  # Not before ]
+            r"(?!\()"  # Not before (
+        )
+
+        def make_replacement(match: re.Match, _uuid: str = uuid) -> str:
+            matched_text = match.group(0)
+            # Preserve the original case and any possessive
+            return f"[{matched_text}](entity://{_uuid})"
+
+        result = re.sub(pattern, make_replacement, result, flags=re.IGNORECASE)
+
+    return result
