@@ -97,6 +97,9 @@ def mock_database():
         mock_get_episode_status = MagicMock(return_value=None)
         mock_get_theme = MagicMock(return_value="catppuccin-mocha")
         mock_set_theme = MagicMock()
+        mock_get_processing_status = MagicMock(return_value=None)
+        mock_get_entry_entities = AsyncMock(return_value=[])
+        mock_get_period_entities = AsyncMock(return_value=[])
 
         # Patch shared functions across modules to the same mocks
         stack.enter_context(patch('charlie.get_home_screen', mock_get_home))
@@ -142,6 +145,10 @@ def mock_database():
 
         stack.enter_context(patch('frontend.settings.get_theme', mock_get_theme))
         stack.enter_context(patch('frontend.settings.set_theme', mock_set_theme))
+
+        stack.enter_context(patch('frontend.screens.home_screen.get_processing_status', mock_get_processing_status))
+        stack.enter_context(patch('frontend.screens.home_screen.get_entry_entities', mock_get_entry_entities))
+        stack.enter_context(patch('frontend.screens.home_screen.get_period_entities', mock_get_period_entities))
 
         # Keep EditScreen redis_ops in sync with charlie.redis_ops (so test patches propagate)
         def current_redis_ops():
