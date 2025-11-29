@@ -7,8 +7,12 @@ storage that coexists with graph operations in the same .db file.
 from __future__ import annotations
 
 import json
+import logging
+import time
 from contextlib import contextmanager
 from typing import Iterator
+
+logger = logging.getLogger(__name__)
 
 from backend.settings import DEFAULT_JOURNAL
 
@@ -269,14 +273,14 @@ def set_inference_enabled(enabled: bool) -> None:
 
 
 def enqueue_pending_episodes() -> int:
-    """Enqueue all pending episodes for processing in chronological order.
+    """Enqueue all pending episodes for processing in reverse chronological order.
 
     Returns:
         Number of episodes enqueued
 
     Note:
         Only enqueues if inference is enabled.
-        Episodes are processed oldest-first (by valid_at) to improve entity dedup.
+        Episodes are processed newest-first (by valid_at) for better UX.
         Huey's unique=True on extract_nodes_task handles deduplication.
         Background tasks are enqueued with priority=0 (low priority).
     """
@@ -288,7 +292,7 @@ def enqueue_pending_episodes() -> int:
 
     count = 0
     for journal in get_journals_with_pending_episodes():
-        pending = get_pending_episodes(journal)  # Already sorted oldest-first
+        pending = get_pending_episodes(journal)  # Already sorted newest-first
         for episode_uuid in pending:
             extract_nodes_task(episode_uuid, journal, priority=0)
             count += 1
@@ -459,6 +463,149 @@ def is_episode_actively_processing(episode_uuid: str) -> bool:
             return False
 
 
+def get_active_episode_uuid() -> str | None:
+    """Get UUID of the currently processing episode.
+
+    Returns:
+        Episode UUID if one is being processed, None otherwise
+    """
+    with redis_ops() as r:
+        data = r.hgetall("task:active_episode")
+        if not data:
+            return None
+        try:
+            uuid = data.get(b"uuid", b"").decode()
+            return uuid if uuid else None
+        except (UnicodeDecodeError, AttributeError):
+            r.delete("task:active_episode")
+            return None
+
+
+def get_processing_status(journal: str) -> dict:
+    """Get processing status for home screen polling.
+
+    Returns active episode UUID, queue count, and model state in a single call.
+    Uses a Redis pipeline for atomic reads to prevent inconsistent state.
+
+    Args:
+        journal: Journal name
+
+    Returns:
+        Dict with:
+        - 'active_uuid' (str|None): Currently processing episode UUID
+        - 'pending_count' (int): Number of episodes in queue
+        - 'model_state' (str): "idle", "loading", "inferring", or "unloading"
+        - 'inference_enabled' (bool): Whether inference is enabled
+    """
+    with redis_ops() as r:
+        # Use pipeline for atomic reads - all values are from the same point in time
+        pipe = r.pipeline()
+        pipe.hgetall("task:active_episode")
+        pipe.zcard(f"pending:nodes:{journal}")
+        pipe.hgetall("task:model_state")
+        pipe.get("app:inference_enabled")
+        results = pipe.execute()
+
+        # Parse active episode (result 0)
+        active_uuid = None
+        active_data = results[0]
+        if active_data:
+            try:
+                active_uuid = active_data.get(b"uuid", b"").decode() or None
+            except (UnicodeDecodeError, AttributeError):
+                pass  # Can't write during pipeline read; startup cleanup handles stale data
+
+        # Parse pending count (result 1)
+        pending_count = results[1]
+
+        # Parse model state (result 2)
+        model_state_data = results[2]
+        model_state = "idle"
+        if model_state_data:
+            model_state = model_state_data.get(b"state", b"idle").decode()
+
+        # Parse inference enabled (result 3)
+        inference_enabled_raw = results[3]
+        inference_enabled = inference_enabled_raw != b"false" if inference_enabled_raw else True
+
+        # Check if model loading is blocked (grace period or editing)
+        from backend.inference.manager import is_model_loading_blocked
+
+        return {
+            "active_uuid": active_uuid,
+            "pending_count": pending_count,
+            "model_state": model_state,
+            "inference_enabled": inference_enabled,
+            "model_loading_blocked": is_model_loading_blocked(),
+        }
+
+
+# =============================================================================
+# Model State Tracking (for UI display)
+# =============================================================================
+#
+# Tracks whether the LLM model is currently loading or running inference.
+# Key: task:model_state (Redis Hash)
+# Fields: state ("loading" | "inferring" | "unloading"), started_at (timestamp)
+# =============================================================================
+
+def set_model_state(state: str) -> None:
+    """Set current model state for UI display.
+
+    Args:
+        state: One of "idle", "loading", "inferring", "unloading"
+               "idle" deletes the key; others set state with timestamp
+    """
+    with redis_ops() as r:
+        if state == "idle":
+            r.delete("task:model_state")
+        else:
+            r.hset(
+                "task:model_state",
+                mapping={"state": state, "started_at": str(time.time())},
+            )
+
+
+def _get_model_state_internal(r) -> str:
+    """Get model state (internal, takes redis client).
+
+    Returns "idle" if not set, otherwise returns the actual state.
+    """
+    data = r.hgetall("task:model_state")
+    if not data:
+        return "idle"
+
+    return data.get(b"state", b"idle").decode()
+
+
+def get_model_state() -> dict:
+    """Get current model state.
+
+    Returns {"state": "idle"} if not set, otherwise the actual state.
+    """
+    with redis_ops() as r:
+        return {"state": _get_model_state_internal(r)}
+
+
+def clear_model_state() -> None:
+    """Clear model state (called on task completion or error)."""
+    with redis_ops() as r:
+        r.delete("task:model_state")
+
+
+def clear_transient_state() -> None:
+    """Clear all transient processing state on startup (crash recovery).
+
+    Call this on app initialization to ensure clean state after crashes.
+    Preserves user data (pending queue) and preferences (inference_enabled).
+    """
+    with redis_ops() as r:
+        r.delete("task:model_state")
+        r.delete("task:active_episode")
+        r.delete("editing:active")
+    logger.info("Cleared transient processing state on startup")
+
+
 # =============================================================================
 # Unresolved Entities Queue (for Batch LLM Dedup)
 # =============================================================================
@@ -558,17 +705,17 @@ def add_pending_episode(episode_uuid: str, journal: str, valid_at) -> None:
 
 
 def get_pending_episodes(journal: str) -> list[str]:
-    """Get pending episodes in chronological order (oldest first).
+    """Get pending episodes in reverse chronological order (newest first).
 
     Args:
         journal: Journal name
 
     Returns:
-        List of episode UUIDs sorted by valid_at (oldest first)
+        List of episode UUIDs sorted by valid_at (newest first)
     """
     with redis_ops() as r:
         key = f"pending:nodes:{journal}"
-        return [uuid.decode() for uuid in r.zrange(key, 0, -1)]
+        return [uuid.decode() for uuid in r.zrevrange(key, 0, -1)]
 
 
 def remove_pending_episode(episode_uuid: str, journal: str) -> None:

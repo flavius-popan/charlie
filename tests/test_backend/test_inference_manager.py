@@ -100,12 +100,14 @@ def test_orchestrator_calls_cleanup():
 
 def test_is_model_loading_blocked_during_editing():
     """Model loading should be blocked when editing:active key exists."""
+    import time
+
     with patch("backend.database.redis_ops.redis_ops") as mock_redis_ops:
         mock_redis = mock_redis_ops.return_value.__enter__.return_value
         mock_redis.exists.return_value = True
 
-        # Reset startup time so grace period doesn't interfere
-        manager._app_startup_time = None
+        # Set startup time far enough in past that grace period has expired
+        manager._app_startup_time = time.monotonic() - 100
 
         result = manager.is_model_loading_blocked()
 

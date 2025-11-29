@@ -23,7 +23,7 @@ pipeline/prompts/.dspy_cache/
 importers/custom/*
 !importers/custom/.gitkeep
 
-# Database files (FalkorDB/Redis/SQLite)
+# Database files (FalkorDB/Redis)
 data/*.db
 data/*.rdb
 data/dump.rdb
@@ -31,6 +31,9 @@ data/*.db.settings
 
 # Debug output
 debug/
+
+# Settings files
+data/theme.txt
 
 # Logs
 logs/*.log

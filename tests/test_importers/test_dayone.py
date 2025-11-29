@@ -1,6 +1,7 @@
 """Tests for Day One importer."""
 
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -148,7 +149,7 @@ class TestParseDayoneDate:
         result = parse_dayone_date("2025-11-26T18:50:20Z")
         assert result == datetime(2025, 11, 26, 18, 50, 20, tzinfo=timezone.utc)
 
-    def test_result_is_utc(self):
+    def test_result_is_utc_when_no_timezone(self):
         result = parse_dayone_date("2025-01-01T00:00:00Z")
         assert result.tzinfo == timezone.utc
 
@@ -160,6 +161,40 @@ class TestParseDayoneDate:
         assert result.hour == 9
         assert result.minute == 30
         assert result.second == 45
+
+    def test_converts_to_local_timezone_when_provided(self):
+        # 2025-09-03T01:36:57Z (UTC) = 2025-09-02T21:36:57 (America/New_York, -4 DST)
+        result = parse_dayone_date("2025-09-03T01:36:57Z", "America/New_York")
+        assert result.tzinfo == ZoneInfo("America/New_York")
+        assert result.day == 2  # Sep 2 in local time, not Sep 3
+        assert result.hour == 21  # 9:36 PM local
+
+    def test_timezone_conversion_preserves_instant(self):
+        # Same instant, different representations
+        utc_result = parse_dayone_date("2025-09-03T01:36:57Z")
+        local_result = parse_dayone_date("2025-09-03T01:36:57Z", "America/New_York")
+        # Both should represent the same point in time
+        assert utc_result == local_result
+
+    def test_handles_various_timezones(self):
+        # Test with different timezone
+        result = parse_dayone_date("2025-01-01T08:00:00Z", "America/Los_Angeles")
+        assert result.tzinfo == ZoneInfo("America/Los_Angeles")
+        assert result.day == 1  # Still Jan 1 (midnight UTC = midnight-8 = Dec 31 4pm? No, 8am UTC = midnight PST)
+        assert result.hour == 0  # Midnight PST
+
+    def test_invalid_timezone_falls_back_to_utc(self):
+        result = parse_dayone_date("2025-01-01T10:00:00Z", "Invalid/Zone")
+        assert result.tzinfo == timezone.utc
+
+    def test_empty_string_timezone_falls_back_to_utc(self):
+        result = parse_dayone_date("2025-01-01T10:00:00Z", "")
+        assert result.tzinfo == timezone.utc
+
+    def test_timezone_abbreviation_falls_back_to_utc(self):
+        # ZoneInfo doesn't accept abbreviations like "PST"
+        result = parse_dayone_date("2025-01-01T10:00:00Z", "PST")
+        assert result.tzinfo == timezone.utc
 
 
 class TestLoadDayoneJson:
@@ -201,11 +236,36 @@ class TestParseEntries:
         assert r"\." not in content
         assert "park." in content
 
-    def test_parses_datetime(self, dayone_entry):
+    def test_parses_datetime_with_timezone(self, dayone_entry):
+        # Fixture has timeZone: "America/New_York"
         entries = parse_entries([dayone_entry], "TestJournal")
         content, dt, uuid = entries[0]
-        assert dt.tzinfo == timezone.utc
+        assert dt.tzinfo == ZoneInfo("America/New_York")
         assert dt.year == 2025
+
+    def test_falls_back_to_utc_without_timezone(self):
+        entry_no_tz = {
+            "uuid": "AAAA0000BBBB1111CCCC2222DDDD3333",
+            "text": "No timezone entry",
+            "creationDate": "2025-01-01T10:00:00Z",
+            # No timeZone field
+        }
+        entries = parse_entries([entry_no_tz], "TestJournal")
+        content, dt, uuid = entries[0]
+        assert dt.tzinfo == timezone.utc
+
+    def test_handles_invalid_timezone_gracefully(self):
+        entry_bad_tz = {
+            "uuid": "AAAA0000BBBB1111CCCC2222DDDD3333",
+            "text": "Entry with invalid timezone",
+            "creationDate": "2025-01-01T10:00:00Z",
+            "timeZone": "InvalidTimezone",
+        }
+        # Should not crash - should import with UTC fallback
+        entries = parse_entries([entry_bad_tz], "TestJournal")
+        assert len(entries) == 1
+        content, dt, uuid = entries[0]
+        assert dt.tzinfo == timezone.utc
 
     def test_skips_empty_content(self, dayone_multi_entry_json):
         from importers.dayone import load_dayone_json

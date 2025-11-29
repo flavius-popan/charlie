@@ -95,6 +95,11 @@ def mock_database():
         mock_get_inference_enabled = MagicMock(return_value=False)
         mock_set_inference_enabled = MagicMock()
         mock_get_episode_status = MagicMock(return_value=None)
+        mock_get_theme = MagicMock(return_value="catppuccin-mocha")
+        mock_set_theme = MagicMock()
+        mock_get_processing_status = MagicMock(return_value=None)
+        mock_get_entry_entities = AsyncMock(return_value=[])
+        mock_get_period_entities = AsyncMock(return_value=[])
 
         # Patch shared functions across modules to the same mocks
         stack.enter_context(patch('charlie.get_home_screen', mock_get_home))
@@ -137,6 +142,13 @@ def mock_database():
         stack.enter_context(patch('frontend.screens.view_screen.get_episode_status', mock_get_episode_status))
         stack.enter_context(patch('frontend.screens.edit_screen.get_episode_status', mock_get_episode_status))
         stack.enter_context(patch('backend.database.redis_ops.get_episode_status', mock_get_episode_status))
+
+        stack.enter_context(patch('frontend.settings.get_theme', mock_get_theme))
+        stack.enter_context(patch('frontend.settings.set_theme', mock_set_theme))
+
+        stack.enter_context(patch('frontend.screens.home_screen.get_processing_status', mock_get_processing_status))
+        stack.enter_context(patch('frontend.screens.home_screen.get_entry_entities', mock_get_entry_entities))
+        stack.enter_context(patch('frontend.screens.home_screen.get_period_entities', mock_get_period_entities))
 
         # Keep EditScreen redis_ops in sync with charlie.redis_ops (so test patches propagate)
         def current_redis_ops():
@@ -222,6 +234,8 @@ def mock_database():
             'backend_start_huey': mock_start_huey,
             'backend_huey_running': mock_huey_running,
             'extract_task': mock_extract_task,
+            'get_theme': mock_get_theme,
+            'set_theme': mock_set_theme,
         }
 
 
@@ -254,6 +268,32 @@ class TestCharlieApp:
                 await pilot.pause()  # allow call_after_refresh to run
 
             mock_start.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_app_loads_theme_from_file_on_startup(self, mock_database):
+        """Theme should be loaded from file in __init__ before UI renders."""
+        mock_database['get_theme'].return_value = "textual-dark"
+
+        app = CharlieApp()
+        async with app_test_context(app) as pilot:
+            await pilot.pause()
+
+            assert app.theme == "textual-dark"
+            mock_database['get_theme'].assert_called()
+
+    @pytest.mark.asyncio
+    async def test_app_persists_theme_changes_to_file(self, mock_database):
+        """Changing theme should persist to file via watch_theme."""
+        app = CharlieApp()
+        async with app_test_context(app) as pilot:
+            await pilot.pause()
+
+            mock_database['set_theme'].reset_mock()
+
+            app.theme = "textual-light"
+            await pilot.pause()
+
+            mock_database['set_theme'].assert_called_with("textual-light")
 
 
 class TestHomeScreen:

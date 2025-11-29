@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+from collections import Counter
 from datetime import datetime
 
 from graphiti_core.errors import NodeNotFoundError
@@ -175,7 +177,6 @@ async def delete_entity_mention(
             # Entity still exists in other episodes
             pass
     """
-    import asyncio
     from backend.database.driver import get_driver
     from backend.database.utils import to_cypher_literal, _decode_value
 
@@ -279,14 +280,121 @@ async def delete_entity_mention(
     return was_deleted
 
 
-# Future query operations:
-# - Time-range queries
-# - Entity timelines
-# - Search operations
+async def get_entry_entities(
+    episode_uuid: str, journal: str = DEFAULT_JOURNAL
+) -> list[dict]:
+    """Get entities connected to a specific episode from Redis cache.
+
+    Args:
+        episode_uuid: Episode UUID to fetch entities for
+        journal: Journal name (defaults to DEFAULT_JOURNAL)
+
+    Returns:
+        List of entity dicts with 'uuid', 'name', 'type' fields.
+        Excludes the "I" (self) entity. Returns empty list if no cache data.
+    """
+    cache_key = f"journal:{journal}:{episode_uuid}"
+
+    def _fetch_nodes():
+        with redis_ops() as r:
+            return r.hget(cache_key, "nodes")
+
+    nodes_json = await asyncio.to_thread(_fetch_nodes)
+
+    if not nodes_json:
+        return []
+
+    nodes = json.loads(nodes_json.decode())
+    return [n for n in nodes if n.get("name") != "I"]
+
+
+async def get_period_entities(
+    start_date: datetime, end_date: datetime, journal: str = DEFAULT_JOURNAL
+) -> dict:
+    """Get aggregated entities for a time period.
+
+    Args:
+        start_date: Start of period (inclusive)
+        end_date: End of period (exclusive)
+        journal: Journal name
+
+    Returns:
+        Dict with:
+        - entry_count: Number of entries in period
+        - connection_count: Total entity connections
+        - top_entities: List of most frequently mentioned entities
+    """
+    driver = get_driver(journal)
+
+    # Query episodes in date range
+    records, _, _ = await driver.execute_query(
+        """
+        MATCH (e:Episodic)
+        WHERE e.group_id = $group_id
+          AND e.valid_at >= $start_date
+          AND e.valid_at < $end_date
+        RETURN e.uuid AS uuid
+        ORDER BY e.valid_at DESC
+        """,
+        group_id=journal,
+        start_date=start_date.isoformat(),
+        end_date=end_date.isoformat(),
+    )
+
+    episode_uuids = [r.get("uuid") for r in records]
+    entry_count = len(episode_uuids)
+
+    if entry_count == 0:
+        return {"entry_count": 0, "connection_count": 0, "top_entities": []}
+
+    # Fetch entities from Redis cache for each episode
+    entity_counts: Counter[str] = Counter()
+    entity_info: dict[str, dict] = {}
+    total_connections = 0
+
+    def _fetch_all_nodes():
+        results = []
+        with redis_ops() as r:
+            for uuid in episode_uuids:
+                cache_key = f"journal:{journal}:{uuid}"
+                nodes_json = r.hget(cache_key, "nodes")
+                if nodes_json:
+                    results.append(json.loads(nodes_json.decode()))
+        return results
+
+    all_nodes = await asyncio.to_thread(_fetch_all_nodes)
+
+    for nodes in all_nodes:
+        for node in nodes:
+            if node.get("name") == "I":
+                continue
+            total_connections += 1
+            name = node.get("name", "")
+            entity_counts[name] += 1
+            if name not in entity_info:
+                entity_info[name] = {
+                    "uuid": node.get("uuid"),
+                    "name": name,
+                    "type": node.get("type", "Entity"),
+                }
+
+    # Get top 25 entities by mention frequency
+    top_entities = [
+        entity_info[name] for name, _ in entity_counts.most_common(25)
+    ]
+
+    return {
+        "entry_count": entry_count,
+        "connection_count": total_connections,
+        "top_entities": top_entities,
+    }
+
 
 __all__ = [
     "get_episode",
     "episode_exists",
     "get_home_screen",
     "delete_entity_mention",
+    "get_entry_entities",
+    "get_period_entities",
 ]

@@ -24,11 +24,13 @@ def falkordb_test_context(tmp_path_factory: pytest.TempPathFactory) -> Iterator[
     # Disable TCP listener in tests to avoid clashing with a running app instance.
     backend_settings.REDIS_TCP_ENABLED = False
     import backend.database.lifecycle as lifecycle
-    lifecycle.REDIS_TCP_ENABLED = False  # type: ignore[misc]
+    lifecycle._tcp_server["enabled"] = False  # type: ignore[index]
+    lifecycle._tcp_server["port"] = 0  # type: ignore[index]
 
     backend_settings.DB_PATH = db_path
-    # Update DB_PATH in lifecycle module
-    lifecycle.DB_PATH = db_path  # type: ignore[misc]
+    # Update DB_PATH in lifecycle module (required because lifecycle imports DB_PATH
+    # at module load time, creating a local binding unaffected by backend_settings patch)
+    lifecycle.DB_PATH = db_path
 
     # Reset cached connections before opening a new graph
     db_utils.shutdown_database()
@@ -51,9 +53,13 @@ def isolated_graph(falkordb_test_context) -> Iterator[object]:
     """
     from backend.settings import DEFAULT_JOURNAL
     import backend.database.lifecycle as lifecycle
+    from backend.inference import manager as inference_manager
 
     # Reset lifecycle state BEFORE test (in case previous test left dirty state)
     lifecycle.reset_lifecycle_state()
+
+    # Mark app as started so is_model_loading_blocked() doesn't block forever
+    inference_manager.mark_app_started()
 
     graph = db_utils.get_falkordb_graph(DEFAULT_JOURNAL)
 
@@ -70,6 +76,8 @@ def isolated_graph(falkordb_test_context) -> Iterator[object]:
     finally:
         # Reset lifecycle state AFTER test
         lifecycle.reset_lifecycle_state()
+        # Reset app startup time for test isolation
+        inference_manager._app_startup_time = None
         # Clear all data after test
         graph.query("MATCH (n) DETACH DELETE n")
         persistence._graph_initialized.clear()

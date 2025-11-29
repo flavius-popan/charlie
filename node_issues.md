@@ -1,5 +1,8 @@
 # Node Extraction Failures
 
+NOTE: When adding these, validate that a given prompt currently reproduces the issues listed,
+then ensure the positive examples show the intended results!
+
 - Special characters like ! after a name, "Good luck Charlie!". No Charlie.
 - Too literal "90m nap" instead of "nap", pulls direct quotes, uses adjectives.
 - Place is too narrow for home rooms ("living room", "closet", "balcony").
@@ -16,3 +19,4 @@
 - "C/Zig/Zig Day/CtF/Soldering ", can't sub-extract, extra space (handle extra spaces in code?)
 - "Aaktun in Durham", should be two locations
 - "morning walk" + "evening walk", should be "walking/walks/walk"?
+- Ensure "Suecia's mom" and "talked to mom" don't get confused

@@ -22,8 +22,19 @@ from backend.database.persistence import (
     reset_persistence_state,
     update_episode,
 )
-from backend.database.queries import episode_exists, get_episode, get_home_screen
-from backend.database.redis_ops import redis_ops
+from backend.database.queries import (
+    episode_exists,
+    get_entry_entities,
+    get_episode,
+    get_home_screen,
+    get_period_entities,
+)
+from backend.database.redis_ops import (
+    get_active_episode_uuid,
+    get_episode_status,
+    get_processing_status,
+    redis_ops,
+)
 from backend.database.utils import (
     SELF_ENTITY_LABELS,
     SELF_ENTITY_NAME,
@@ -56,9 +67,14 @@ __all__ = [
     "delete_episode",
     # Query operations
     "episode_exists",
+    "get_entry_entities",
     "get_episode",
     "get_home_screen",
+    "get_period_entities",
     # Redis operations
+    "get_active_episode_uuid",
+    "get_episode_status",
+    "get_processing_status",
     "redis_ops",
     # Driver access
     "FalkorLiteDriver",

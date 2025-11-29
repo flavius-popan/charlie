@@ -41,7 +41,11 @@ backend_settings.TCP_PORT = 0
 import backend.database.lifecycle as lifecycle
 # Update the module-level _tcp_server dict that was already created
 lifecycle._tcp_server["enabled"] = False  # type: ignore[index]
-lifecycle.REDIS_TCP_ENABLED = False  # type: ignore[misc]
+lifecycle._tcp_server["port"] = 0  # type: ignore[index]
+# Patch lifecycle.DB_PATH to ensure tests use test database, not production.
+# Without this, lifecycle's local binding (from `from backend.settings import DB_PATH`)
+# would still point to production path, causing socket conflicts with running app.
+lifecycle.DB_PATH = backend_settings.DB_PATH
 
 # Patch Textual's Header._on_mount to handle NoMatches exception
 # The original code only catches NoScreen but not NoMatches, causing test failures

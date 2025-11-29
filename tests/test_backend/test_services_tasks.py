@@ -55,32 +55,43 @@ def test_extract_nodes_task_with_entities_extracted(episode_uuid):
         uuid_map={"prov1": "canon1", "prov2": "canon2"},
     )
 
-    with patch("backend.database.redis_ops.get_episode_status") as mock_status:
-        with patch("backend.database.redis_ops.get_inference_enabled", create=True) as mock_enabled:
-            with patch("backend.database.redis_ops.set_episode_status") as mock_set_status:
-                with patch("backend.inference.manager.get_model") as mock_get_model:
-                    with patch("backend.graph.extract_nodes.extract_nodes") as mock_extract:
-                        with patch("backend.inference.manager.cleanup_if_no_work") as mock_cleanup:
-                            mock_status.return_value = "pending_nodes"
-                            mock_enabled.return_value = True
-                            mock_model = Mock()
-                            mock_get_model.return_value = mock_model
-                            mock_extract.return_value = mock_result
+    with (
+        patch("backend.database.redis_ops.get_episode_status") as mock_status,
+        patch("backend.database.redis_ops.get_inference_enabled", create=True) as mock_enabled,
+        patch("backend.database.redis_ops.set_episode_status") as mock_set_status,
+        patch("backend.database.redis_ops.set_active_episode"),
+        patch("backend.database.redis_ops.get_active_episode_uuid") as mock_get_active,
+        patch("backend.database.redis_ops.clear_active_episode"),
+        patch("backend.database.redis_ops.set_model_state"),
+        patch("backend.database.redis_ops.clear_model_state"),
+        patch("backend.database.redis_ops.remove_pending_episode"),
+        patch("backend.inference.manager.get_model") as mock_get_model,
+        patch("backend.inference.manager.is_model_loading_blocked") as mock_blocked,
+        patch("backend.graph.extract_nodes.extract_nodes") as mock_extract,
+        patch("backend.inference.manager.cleanup_if_no_work") as mock_cleanup,
+    ):
+        mock_status.return_value = "pending_nodes"
+        mock_enabled.return_value = True
+        mock_blocked.return_value = False
+        mock_get_active.return_value = episode_uuid
+        mock_model = Mock()
+        mock_get_model.return_value = mock_model
+        mock_extract.return_value = mock_result
 
-                            result = extract_nodes_task.call_local(episode_uuid, DEFAULT_JOURNAL)
+        result = extract_nodes_task.call_local(episode_uuid, DEFAULT_JOURNAL)
 
-                            assert result["episode_uuid"] == episode_uuid
-                            assert result["extracted_count"] == 3
-                            assert result["new_entities"] == 1
-                            assert result["resolved_count"] == 2
+        assert result["episode_uuid"] == episode_uuid
+        assert result["extracted_count"] == 3
+        assert result["new_entities"] == 1
+        assert result["resolved_count"] == 2
 
-                            mock_get_model.assert_called_once_with("llm")
-                            mock_extract.assert_called_once_with(episode_uuid, DEFAULT_JOURNAL)
-                            # With entities extracted, should transition to done (edges task TBD)
-                            mock_set_status.assert_called_once_with(
-                                episode_uuid, "done", DEFAULT_JOURNAL, uuid_map=mock_result.uuid_map
-                            )
-                            mock_cleanup.assert_called_once()
+        mock_get_model.assert_called_once_with("llm")
+        mock_extract.assert_called_once_with(episode_uuid, DEFAULT_JOURNAL)
+        # With entities extracted, should transition to done (edges task TBD)
+        mock_set_status.assert_called_once_with(
+            episode_uuid, "done", DEFAULT_JOURNAL, uuid_map=mock_result.uuid_map
+        )
+        mock_cleanup.assert_called_once()
 
 
 def test_extract_nodes_task_no_entities_marks_done(episode_uuid):
@@ -98,23 +109,34 @@ def test_extract_nodes_task_no_entities_marks_done(episode_uuid):
         uuid_map={},
     )
 
-    with patch("backend.database.redis_ops.get_episode_status") as mock_status:
-        with patch("backend.database.redis_ops.get_inference_enabled", create=True) as mock_enabled:
-            with patch("backend.database.redis_ops.set_episode_status") as mock_set_status:
-                with patch("backend.inference.manager.get_model") as mock_get_model:
-                    with patch("backend.graph.extract_nodes.extract_nodes") as mock_extract:
-                        with patch("backend.inference.manager.cleanup_if_no_work") as mock_cleanup:
-                            mock_status.return_value = "pending_nodes"
-                            mock_enabled.return_value = True
-                            mock_model = Mock()
-                            mock_get_model.return_value = mock_model
-                            mock_extract.return_value = mock_result
+    with (
+        patch("backend.database.redis_ops.get_episode_status") as mock_status,
+        patch("backend.database.redis_ops.get_inference_enabled", create=True) as mock_enabled,
+        patch("backend.database.redis_ops.set_episode_status") as mock_set_status,
+        patch("backend.database.redis_ops.set_active_episode"),
+        patch("backend.database.redis_ops.get_active_episode_uuid") as mock_get_active,
+        patch("backend.database.redis_ops.clear_active_episode"),
+        patch("backend.database.redis_ops.set_model_state"),
+        patch("backend.database.redis_ops.clear_model_state"),
+        patch("backend.database.redis_ops.remove_pending_episode"),
+        patch("backend.inference.manager.get_model") as mock_get_model,
+        patch("backend.inference.manager.is_model_loading_blocked") as mock_blocked,
+        patch("backend.graph.extract_nodes.extract_nodes") as mock_extract,
+        patch("backend.inference.manager.cleanup_if_no_work") as mock_cleanup,
+    ):
+        mock_status.return_value = "pending_nodes"
+        mock_enabled.return_value = True
+        mock_blocked.return_value = False
+        mock_get_active.return_value = episode_uuid
+        mock_model = Mock()
+        mock_get_model.return_value = mock_model
+        mock_extract.return_value = mock_result
 
-                            result = extract_nodes_task.call_local(episode_uuid, DEFAULT_JOURNAL)
+        result = extract_nodes_task.call_local(episode_uuid, DEFAULT_JOURNAL)
 
-                            assert result["extracted_count"] == 0
-                            mock_set_status.assert_called_once_with(episode_uuid, "done", DEFAULT_JOURNAL)
-                            mock_cleanup.assert_called_once()
+        assert result["extracted_count"] == 0
+        mock_set_status.assert_called_once_with(episode_uuid, "done", DEFAULT_JOURNAL)
+        mock_cleanup.assert_called_once()
 
 
 def test_extract_nodes_task_uses_dspy_context(episode_uuid):
@@ -133,29 +155,40 @@ def test_extract_nodes_task_uses_dspy_context(episode_uuid):
         uuid_map={"p1": "c1"},
     )
 
-    with patch("backend.database.redis_ops.get_episode_status") as mock_status:
-        with patch("backend.database.redis_ops.get_inference_enabled", create=True) as mock_enabled:
-            with patch("backend.database.redis_ops.set_episode_status"):
-                with patch("backend.inference.manager.get_model") as mock_get_model:
-                    with patch("backend.graph.extract_nodes.extract_nodes") as mock_extract:
-                        with patch("backend.inference.manager.cleanup_if_no_work"):
-                            mock_status.return_value = "pending_nodes"
-                            mock_enabled.return_value = True
-                            mock_model = Mock()
-                            mock_get_model.return_value = mock_model
+    with (
+        patch("backend.database.redis_ops.get_episode_status") as mock_status,
+        patch("backend.database.redis_ops.get_inference_enabled", create=True) as mock_enabled,
+        patch("backend.database.redis_ops.set_episode_status"),
+        patch("backend.database.redis_ops.set_active_episode"),
+        patch("backend.database.redis_ops.get_active_episode_uuid") as mock_get_active,
+        patch("backend.database.redis_ops.clear_active_episode"),
+        patch("backend.database.redis_ops.set_model_state"),
+        patch("backend.database.redis_ops.clear_model_state"),
+        patch("backend.database.redis_ops.remove_pending_episode"),
+        patch("backend.inference.manager.get_model") as mock_get_model,
+        patch("backend.inference.manager.is_model_loading_blocked") as mock_blocked,
+        patch("backend.graph.extract_nodes.extract_nodes") as mock_extract,
+        patch("backend.inference.manager.cleanup_if_no_work"),
+    ):
+        mock_status.return_value = "pending_nodes"
+        mock_enabled.return_value = True
+        mock_blocked.return_value = False
+        mock_get_active.return_value = episode_uuid
+        mock_model = Mock()
+        mock_get_model.return_value = mock_model
 
-                            captured_lm = None
+        captured_lm = None
 
-                            def capture_lm(*args, **kwargs):
-                                nonlocal captured_lm
-                                captured_lm = dspy.settings.lm
-                                return mock_result
+        def capture_lm(*args, **kwargs):
+            nonlocal captured_lm
+            captured_lm = dspy.settings.lm
+            return mock_result
 
-                            mock_extract.side_effect = capture_lm
+        mock_extract.side_effect = capture_lm
 
-                            extract_nodes_task.call_local(episode_uuid, DEFAULT_JOURNAL)
+        extract_nodes_task.call_local(episode_uuid, DEFAULT_JOURNAL)
 
-                            assert captured_lm == mock_model
+        assert captured_lm == mock_model
 
 
 @pytest.mark.inference
@@ -182,7 +215,8 @@ def test_extract_nodes_task_integration(
         assert isinstance(result["new_entities"], int)
 
         status = get_episode_status(episode_uuid, DEFAULT_JOURNAL)
-        assert status == "pending_edges"
+        # Episodes are marked "done" after node extraction (edges task TBD)
+        assert status == "done"
 
 
 @pytest.mark.inference
@@ -232,22 +266,32 @@ def test_extract_nodes_task_cleanup_called_on_exception(episode_uuid):
     """cleanup_if_no_work is called even when extraction raises exception."""
     from backend.services.tasks import extract_nodes_task
 
-    with patch("backend.database.redis_ops.get_episode_status") as mock_status:
-        with patch("backend.database.redis_ops.get_inference_enabled", create=True) as mock_enabled:
-            with patch("backend.database.redis_ops.set_episode_status") as mock_set_status:
-                with patch("backend.inference.manager.get_model") as mock_get_model:
-                    with patch("backend.graph.extract_nodes.extract_nodes") as mock_extract:
-                        with patch("backend.inference.manager.cleanup_if_no_work") as mock_cleanup:
-                            mock_status.return_value = "pending_nodes"
-                            mock_enabled.return_value = True
-                            mock_get_model.return_value = Mock()
-                            mock_extract.side_effect = RuntimeError("Extraction failed")
+    with (
+        patch("backend.database.redis_ops.get_episode_status") as mock_status,
+        patch("backend.database.redis_ops.get_inference_enabled", create=True) as mock_enabled,
+        patch("backend.database.redis_ops.set_episode_status") as mock_set_status,
+        patch("backend.database.redis_ops.set_active_episode"),
+        patch("backend.database.redis_ops.get_active_episode_uuid") as mock_get_active,
+        patch("backend.database.redis_ops.clear_active_episode"),
+        patch("backend.database.redis_ops.set_model_state"),
+        patch("backend.database.redis_ops.clear_model_state"),
+        patch("backend.inference.manager.get_model") as mock_get_model,
+        patch("backend.inference.manager.is_model_loading_blocked") as mock_blocked,
+        patch("backend.graph.extract_nodes.extract_nodes") as mock_extract,
+        patch("backend.inference.manager.cleanup_if_no_work") as mock_cleanup,
+    ):
+        mock_status.return_value = "pending_nodes"
+        mock_enabled.return_value = True
+        mock_blocked.return_value = False
+        mock_get_active.return_value = episode_uuid
+        mock_get_model.return_value = Mock()
+        mock_extract.side_effect = RuntimeError("Extraction failed")
 
-                            with pytest.raises(RuntimeError, match="Extraction failed"):
-                                extract_nodes_task.call_local(episode_uuid, DEFAULT_JOURNAL)
+        with pytest.raises(RuntimeError, match="Extraction failed"):
+            extract_nodes_task.call_local(episode_uuid, DEFAULT_JOURNAL)
 
-                            mock_set_status.assert_called_with(episode_uuid, "dead", DEFAULT_JOURNAL)
-                            mock_cleanup.assert_called_once()
+        mock_set_status.assert_called_with(episode_uuid, "dead", DEFAULT_JOURNAL)
+        mock_cleanup.assert_called_once()
 
 
 def test_extract_nodes_task_removes_from_queue_on_success(episode_uuid):
@@ -265,23 +309,34 @@ def test_extract_nodes_task_removes_from_queue_on_success(episode_uuid):
         uuid_map={"prov": "canon"},
     )
 
-    with patch("backend.database.redis_ops.get_episode_status") as mock_status:
-        with patch("backend.database.redis_ops.get_inference_enabled", create=True) as mock_enabled:
-            with patch("backend.database.redis_ops.set_episode_status") as mock_set_status:
-                with patch("backend.inference.manager.get_model") as mock_get_model:
-                    with patch("backend.graph.extract_nodes.extract_nodes") as mock_extract:
-                        with patch("backend.inference.manager.cleanup_if_no_work"):
-                            mock_status.return_value = "pending_nodes"
-                            mock_enabled.return_value = True
-                            mock_get_model.return_value = Mock()
-                            mock_extract.return_value = mock_result
+    with (
+        patch("backend.database.redis_ops.get_episode_status") as mock_status,
+        patch("backend.database.redis_ops.get_inference_enabled", create=True) as mock_enabled,
+        patch("backend.database.redis_ops.set_episode_status") as mock_set_status,
+        patch("backend.database.redis_ops.set_active_episode"),
+        patch("backend.database.redis_ops.get_active_episode_uuid") as mock_get_active,
+        patch("backend.database.redis_ops.clear_active_episode"),
+        patch("backend.database.redis_ops.set_model_state"),
+        patch("backend.database.redis_ops.clear_model_state"),
+        patch("backend.database.redis_ops.remove_pending_episode"),
+        patch("backend.inference.manager.get_model") as mock_get_model,
+        patch("backend.inference.manager.is_model_loading_blocked") as mock_blocked,
+        patch("backend.graph.extract_nodes.extract_nodes") as mock_extract,
+        patch("backend.inference.manager.cleanup_if_no_work"),
+    ):
+        mock_status.return_value = "pending_nodes"
+        mock_enabled.return_value = True
+        mock_blocked.return_value = False
+        mock_get_active.return_value = episode_uuid
+        mock_get_model.return_value = Mock()
+        mock_extract.return_value = mock_result
 
-                            extract_nodes_task.call_local(episode_uuid, DEFAULT_JOURNAL)
+        extract_nodes_task.call_local(episode_uuid, DEFAULT_JOURNAL)
 
-                            # With entities extracted, should transition to done (edges task TBD)
-                            mock_set_status.assert_called_once_with(
-                                episode_uuid, "done", DEFAULT_JOURNAL, uuid_map={"prov": "canon"}
-                            )
+        # With entities extracted, should transition to done (edges task TBD)
+        mock_set_status.assert_called_once_with(
+            episode_uuid, "done", DEFAULT_JOURNAL, uuid_map={"prov": "canon"}
+        )
 
 
 def test_extract_nodes_task_idempotency_check(episode_uuid):
@@ -311,8 +366,9 @@ def test_extract_nodes_task_handles_missing_episode_gracefully(isolated_graph, c
     missing_uuid = "missing-episode-graceful"
     set_episode_status(missing_uuid, "pending_nodes", DEFAULT_JOURNAL)
 
-    # Should NOT raise - graceful handling returns result dict
-    result = extract_nodes_task.call_local(missing_uuid, DEFAULT_JOURNAL)
+    with patch("backend.inference.manager.is_model_loading_blocked", return_value=False):
+        # Should NOT raise - graceful handling returns result dict
+        result = extract_nodes_task.call_local(missing_uuid, DEFAULT_JOURNAL)
 
     # Episode deleted during extraction should be handled gracefully
     assert result["episode_deleted"] is True
@@ -466,22 +522,32 @@ def test_extract_nodes_task_handles_node_not_found_error(episode_uuid):
     from backend.services.tasks import extract_nodes_task
     from graphiti_core.errors import NodeNotFoundError
 
-    with patch("backend.database.redis_ops.get_episode_status") as mock_status:
-        with patch("backend.database.redis_ops.get_inference_enabled", create=True) as mock_enabled:
-            with patch("backend.inference.manager.get_model") as mock_get_model:
-                with patch("backend.graph.extract_nodes.extract_nodes") as mock_extract:
-                    with patch("backend.inference.manager.cleanup_if_no_work"):
-                        with patch("backend.database.redis_ops.remove_episode_from_queue") as mock_remove:
-                            mock_status.return_value = "pending_nodes"
-                            mock_enabled.return_value = True
-                            mock_get_model.return_value = Mock()
-                            mock_extract.side_effect = NodeNotFoundError(episode_uuid)
+    with (
+        patch("backend.database.redis_ops.get_episode_status") as mock_status,
+        patch("backend.database.redis_ops.get_inference_enabled", create=True) as mock_enabled,
+        patch("backend.database.redis_ops.set_active_episode"),
+        patch("backend.database.redis_ops.get_active_episode_uuid") as mock_get_active,
+        patch("backend.database.redis_ops.clear_active_episode"),
+        patch("backend.database.redis_ops.set_model_state"),
+        patch("backend.database.redis_ops.clear_model_state"),
+        patch("backend.inference.manager.get_model") as mock_get_model,
+        patch("backend.inference.manager.is_model_loading_blocked") as mock_blocked,
+        patch("backend.graph.extract_nodes.extract_nodes") as mock_extract,
+        patch("backend.inference.manager.cleanup_if_no_work"),
+        patch("backend.database.redis_ops.remove_episode_from_queue") as mock_remove,
+    ):
+        mock_status.return_value = "pending_nodes"
+        mock_enabled.return_value = True
+        mock_blocked.return_value = False
+        mock_get_active.return_value = episode_uuid
+        mock_get_model.return_value = Mock()
+        mock_extract.side_effect = NodeNotFoundError(episode_uuid)
 
-                            result = extract_nodes_task.call_local(episode_uuid, DEFAULT_JOURNAL)
+        result = extract_nodes_task.call_local(episode_uuid, DEFAULT_JOURNAL)
 
-                            assert result["episode_deleted"] is True
-                            assert result["uuid"] == episode_uuid
-                            mock_remove.assert_called_once_with(episode_uuid, DEFAULT_JOURNAL)
+        assert result["episode_deleted"] is True
+        assert result["uuid"] == episode_uuid
+        mock_remove.assert_called_once_with(episode_uuid, DEFAULT_JOURNAL)
 
 
 def test_extract_nodes_task_handles_episode_deleted_error(episode_uuid):
@@ -489,19 +555,29 @@ def test_extract_nodes_task_handles_episode_deleted_error(episode_uuid):
     from backend.services.tasks import extract_nodes_task
     from backend.database.persistence import EpisodeDeletedError
 
-    with patch("backend.database.redis_ops.get_episode_status") as mock_status:
-        with patch("backend.database.redis_ops.get_inference_enabled", create=True) as mock_enabled:
-            with patch("backend.inference.manager.get_model") as mock_get_model:
-                with patch("backend.graph.extract_nodes.extract_nodes") as mock_extract:
-                    with patch("backend.inference.manager.cleanup_if_no_work"):
-                        with patch("backend.database.redis_ops.remove_episode_from_queue") as mock_remove:
-                            mock_status.return_value = "pending_nodes"
-                            mock_enabled.return_value = True
-                            mock_get_model.return_value = Mock()
-                            mock_extract.side_effect = EpisodeDeletedError(episode_uuid)
+    with (
+        patch("backend.database.redis_ops.get_episode_status") as mock_status,
+        patch("backend.database.redis_ops.get_inference_enabled", create=True) as mock_enabled,
+        patch("backend.database.redis_ops.set_active_episode"),
+        patch("backend.database.redis_ops.get_active_episode_uuid") as mock_get_active,
+        patch("backend.database.redis_ops.clear_active_episode"),
+        patch("backend.database.redis_ops.set_model_state"),
+        patch("backend.database.redis_ops.clear_model_state"),
+        patch("backend.inference.manager.get_model") as mock_get_model,
+        patch("backend.inference.manager.is_model_loading_blocked") as mock_blocked,
+        patch("backend.graph.extract_nodes.extract_nodes") as mock_extract,
+        patch("backend.inference.manager.cleanup_if_no_work"),
+        patch("backend.database.redis_ops.remove_episode_from_queue") as mock_remove,
+    ):
+        mock_status.return_value = "pending_nodes"
+        mock_enabled.return_value = True
+        mock_blocked.return_value = False
+        mock_get_active.return_value = episode_uuid
+        mock_get_model.return_value = Mock()
+        mock_extract.side_effect = EpisodeDeletedError(episode_uuid)
 
-                            result = extract_nodes_task.call_local(episode_uuid, DEFAULT_JOURNAL)
+        result = extract_nodes_task.call_local(episode_uuid, DEFAULT_JOURNAL)
 
-                            assert result["episode_deleted"] is True
-                            assert result["uuid"] == episode_uuid
-                            mock_remove.assert_called_once_with(episode_uuid, DEFAULT_JOURNAL)
+        assert result["episode_deleted"] is True
+        assert result["uuid"] == episode_uuid
+        mock_remove.assert_called_once_with(episode_uuid, DEFAULT_JOURNAL)

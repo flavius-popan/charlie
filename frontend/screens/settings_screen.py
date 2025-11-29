@@ -94,7 +94,9 @@ class SettingsScreen(ModalScreen):
         self, switch: Switch, desired: bool, previous: bool
     ):
         try:
-            # Persist toggle and enqueue in a thread to keep UI responsive
+            # Persist toggle in a thread to keep UI responsive
+            # Don't clear model state on re-enable - let natural flow handle it
+            # to avoid racing with ongoing unload operations
             await asyncio.to_thread(set_inference_enabled, desired)
             self.inference_enabled = desired
             self._on_toggle_success(switch, desired)

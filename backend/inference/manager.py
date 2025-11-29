@@ -35,11 +35,12 @@ def is_model_loading_blocked() -> bool:
     from backend.database.redis_ops import redis_ops
 
     # Check startup grace
-    if _app_startup_time is not None:
-        elapsed = time.monotonic() - _app_startup_time
-        if elapsed < MODEL_LOAD_GRACE_SECONDS:
-            logger.debug("Model loading blocked: startup grace (%.1fs elapsed)", elapsed)
-            return True
+    if _app_startup_time is None:
+        return True  # Block until app is properly started
+    elapsed = time.monotonic() - _app_startup_time
+    if elapsed < MODEL_LOAD_GRACE_SECONDS:
+        logger.debug("Model loading blocked: startup grace (%.1fs elapsed)", elapsed)
+        return True
 
     # Check editing active
     try:
@@ -85,10 +86,20 @@ def unload_all_models() -> None:
 
 def cleanup_if_no_work() -> None:
     """Unload models when editing (for UI responsiveness) OR when no work remains."""
-    from backend.database.redis_ops import get_episodes_by_status, get_inference_enabled, redis_ops
+    from backend.database.redis_ops import (
+        clear_model_state,
+        get_episodes_by_status,
+        get_inference_enabled,
+        redis_ops,
+        set_model_state,
+    )
 
     if not get_inference_enabled():
+        # Show "unloading" state in UI if models are loaded
+        if any(model is not None for model in MODELS.values()):
+            set_model_state("unloading")
         unload_all_models()
+        clear_model_state()
         return
 
     # Unload when editing to keep UI snappy

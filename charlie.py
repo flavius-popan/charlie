@@ -121,10 +121,16 @@ class CharlieApp(App):
     """A minimal journal TUI application."""
 
     TITLE = "Charlie"
-    theme = "catppuccin-mocha"
 
     def __init__(self):
         super().__init__()
+        from frontend.settings import get_theme
+        self.theme = get_theme()
+
+    def watch_theme(self, theme: str) -> None:
+        """Persist theme changes to file."""
+        from frontend.settings import set_theme
+        set_theme(theme)
 
     async def on_mount(self):
         self.push_screen(HomeScreen())
