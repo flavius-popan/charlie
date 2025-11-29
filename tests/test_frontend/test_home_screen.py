@@ -11,6 +11,7 @@ from textual.app import App
 from textual.widgets import Header, Footer
 
 from frontend.screens.home_screen import HomeScreen
+from frontend.state.processing_state_machine import ProcessingOutput
 
 
 class HomeScreenTestApp(App):
@@ -649,16 +650,22 @@ async def test_connections_pane_shows_loading_for_actively_processing_entry(mock
     mock_home_db["get_entry_entities"].return_value = []
     mock_home_db["get_episode_status"].return_value = "pending_nodes"
 
-    app = HomeScreenTestApp()
-    async with app.run_test() as pilot:
-        await pilot.pause()
+    # Mock get_processing_status to return inferring state
+    with patch("frontend.screens.home_screen.get_processing_status") as mock_processing:
+        mock_processing.return_value = {
+            "model_state": "inferring",
+            "active_uuid": "active-entry",
+            "pending_count": 0,
+            "inference_enabled": True,
+        }
 
-        home_screen = app.screen
-        # Simulate that this entry is actively being processed
-        home_screen.active_episode_uuid = "active-entry"
-        home_screen.model_state = "inferring"
-        await pilot.pause()
+        app = HomeScreenTestApp()
+        async with app.run_test() as pilot:
+            await pilot.pause()
 
-        from textual.widgets import LoadingIndicator
-        indicators = app.screen.query(LoadingIndicator)
-        assert len(indicators) > 0
+            # Wait for polling loop to update processing_output
+            await pilot.pause()
+
+            from textual.widgets import LoadingIndicator
+            indicators = app.screen.query(LoadingIndicator)
+            assert len(indicators) > 0

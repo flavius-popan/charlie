@@ -23,6 +23,7 @@ from frontend.screens.settings_screen import SettingsScreen
 from frontend.screens.view_screen import ViewScreen
 from frontend.screens.log_screen import LogScreen
 from frontend.screens.edit_screen import EditScreen
+from frontend.state.processing_state_machine import ProcessingStateMachine, ProcessingOutput
 from frontend.utils import calculate_periods, get_display_title, group_entries_by_period
 from frontend.widgets import ProcessingDot
 
@@ -211,23 +212,20 @@ class HomeScreen(Screen):
         Binding("3", "focus_temporal", "Temporal", show=False),
     ]
 
-    active_episode_uuid: reactive[str | None] = reactive(None)
     selected_entry_uuid: reactive[str | None] = reactive(None)
     selected_entry_status: reactive[str | None] = reactive(None)
     entry_entities: reactive[list[dict]] = reactive([])
     selected_period_index: reactive[int] = reactive(0)
     period_stats: reactive[dict | None] = reactive(None)
-    queue_count: reactive[int] = reactive(0)
-    model_state: reactive[str] = reactive("idle")
-    inference_enabled: reactive[bool] = reactive(True)
+    processing_output: reactive[ProcessingOutput] = reactive(ProcessingOutput.idle())
 
     @property
     def connections_loading(self) -> bool:
         """True if selected entry is currently being inferred (not just loading)."""
         return (
-            self.model_state == "inferring"
+            self.processing_output.is_inferring
             and self.selected_entry_uuid is not None
-            and self.selected_entry_uuid == self.active_episode_uuid
+            and self.selected_entry_uuid == self.processing_output.active_episode_uuid
         )
 
     def __init__(self):
@@ -239,46 +237,59 @@ class HomeScreen(Screen):
         self._last_entries_index: int | None = None
         self._last_connections_index: int | None = None
         self._last_temporal_index: int | None = None
+        # Processing state machine
+        self.processing_machine = ProcessingStateMachine()
 
-    def _update_entry_processing_dots(self) -> None:
-        """Update processing dots on all entry labels based on current state.
+    def _update_entry_processing_dots(self, active_uuid: str | None) -> None:
+        """Update processing dots on all entry labels.
 
-        Consolidates dot update logic to prevent race conditions from watchers
-        reading stale sibling reactive property values.
+        Args:
+            active_uuid: The UUID of the entry being processed, or None when not inferring.
         """
         try:
-            should_show_dot = (
-                self.model_state == "inferring"
-                and self.active_episode_uuid is not None
-            )
-            target_uuid = self.active_episode_uuid if should_show_dot else None
             with self.app.batch_update():
                 for entry_label in self.query(EntryLabel):
-                    entry_label.set_processing(entry_label.episode_uuid == target_uuid)
+                    entry_label.set_processing(entry_label.episode_uuid == active_uuid)
         except Exception as e:
             logger.debug(f"Failed to update processing indicators: {e}")
 
-    def watch_active_episode_uuid(self, old_uuid: str | None, new_uuid: str | None) -> None:
-        """Update processing indicator and refresh panes when processing completes."""
-        # Update entry list indicators via consolidated method
-        self._update_entry_processing_dots()
+    def _resolve_entry_name(self, uuid: str | None) -> str:
+        """Resolve episode UUID to display name."""
+        if not uuid:
+            return ""
+        for ep in self.episodes:
+            if ep["uuid"] == uuid:
+                return get_display_title(ep)
+        return ""  # Entry was deleted
 
-        # Refresh connections pane to update loading state (computed property changed)
-        self._refresh_connections_pane()
+    def watch_processing_output(self, old: ProcessingOutput, new: ProcessingOutput) -> None:
+        """Single watcher handles all processing pane updates."""
+        self._update_processing_pane(new)
+        self._update_entry_processing_dots(new.active_episode_uuid if new.is_inferring else None)
 
-        # If an entry just finished processing (old_uuid was set, now different)
-        if old_uuid and old_uuid != new_uuid:
-            # Refresh connections if the finished entry is selected
-            if old_uuid == self.selected_entry_uuid:
+        # Refresh connections pane if processing state changed
+        # (connections_loading depends on is_inferring and active_episode_uuid)
+        if (old.active_episode_uuid != new.active_episode_uuid or
+            old.is_inferring != new.is_inferring):
+            self._refresh_connections_pane()
+
+        # Detect when an episode just finished processing
+        # Track UUID change, not is_inferring transition (queue may skip idle state)
+        finished_uuid = None
+        if old.active_episode_uuid and old.active_episode_uuid != new.active_episode_uuid:
+            finished_uuid = old.active_episode_uuid
+
+        if finished_uuid:
+            # Refresh connections if finished entry is selected
+            if finished_uuid == self.selected_entry_uuid:
                 self.run_worker(
-                    self._fetch_entry_entities(self.selected_entry_uuid),
+                    self._fetch_entry_entities(finished_uuid),
                     exclusive=True,
                     group="entities",
                 )
 
             # Refresh temporal pane if finished entry is in current period
-            if self._is_episode_in_current_period(old_uuid):
-                # Guard against concurrent period list modification
+            if self._is_episode_in_current_period(finished_uuid):
                 if self.periods and 0 <= self.selected_period_index < len(self.periods):
                     period = self.periods[self.selected_period_index]
                     self.run_worker(
@@ -422,55 +433,42 @@ class HomeScreen(Screen):
         except Exception as e:
             logger.debug(f"Failed to update temporal pane: {e}")
 
-    def watch_queue_count(self, old_count: int, new_count: int) -> None:
-        """Show/hide processing pane based on queue count and model state."""
-        self._update_processing_pane_visibility()
-
-    def _update_processing_pane_visibility(self) -> None:
-        """Update processing pane visibility based on model state."""
+    def _update_processing_pane(self, output: ProcessingOutput) -> None:
+        """Update processing pane display based on machine output."""
         try:
             processing_pane = self.query_one("#processing-pane", Container)
             temporal_pane = self.query_one("#temporal-pane", Container)
+            status_widget = self.query_one("#processing-status", Static)
+            entry_widget = self.query_one("#processing-entry", Static)
+            queue_widget = self.query_one("#processing-queue", Static)
 
             with self.app.batch_update():
-                # Only show when model is actually active - not just because queue has work
-                # This prevents pane from showing during startup grace period
-                should_show = self.model_state != "idle"
-                if should_show:
+                # Toggle pane visibility
+                if output.pane_visible:
                     processing_pane.display = True
                     temporal_pane.styles.height = "1fr"
                 else:
                     processing_pane.display = False
                     temporal_pane.styles.height = "2fr"
+
+                # Toggle .active class for ProcessingDot visibility
+                if output.show_dot:
+                    processing_pane.add_class("active")
+                else:
+                    processing_pane.remove_class("active")
+
+                # Status text from machine output
+                status_widget.update(output.status_text)
+
+                # Entry name resolved HERE, not in machine
+                entry_name = self._resolve_entry_name(output.active_episode_uuid) if output.is_inferring else ""
+                entry_widget.update(entry_name)
+
+                # Queue text from machine output
+                queue_widget.update(output.queue_text)
+
         except Exception as e:
-            logger.debug(f"Failed to update processing pane visibility: {e}")
-
-    def watch_model_state(self, old_state: str, new_state: str) -> None:
-        """Update processing pane and entry indicators when model state changes."""
-        # Update entry list indicators via consolidated method
-        self._update_entry_processing_dots()
-
-        # Refresh connections pane (loading indicator depends on model_state)
-        self._refresh_connections_pane()
-
-        # Update processing pane visibility (may need to show/hide based on state)
-        self._update_processing_pane_visibility()
-
-        # Update processing pane content (show even when queue is 0 for unloading)
-        if self.queue_count > 0 or new_state != "idle":
-            self._update_processing_pane_content(
-                self.active_episode_uuid, self.queue_count, new_state
-            )
-
-    def watch_inference_enabled(self, old_value: bool, new_value: bool) -> None:
-        """Update processing pane when inference enabled state changes."""
-        # Update pane visibility - may need to hide when inference disabled
-        self._update_processing_pane_visibility()
-        # Update pane content to show transitional messages
-        if self.queue_count > 0 or self.model_state != "idle":
-            self._update_processing_pane_content(
-                self.active_episode_uuid, self.queue_count, self.model_state
-            )
+            logger.debug(f"Failed to update processing pane: {e}")
 
     def action_navigate_period_older(self) -> None:
         """Navigate to older time period (←)."""
@@ -646,91 +644,15 @@ class HomeScreen(Screen):
         while True:
             try:
                 status = await asyncio.to_thread(get_processing_status, DEFAULT_JOURNAL)
-                new_uuid = status["active_uuid"]
-                new_count = status["pending_count"]
-                new_model_state = status.get("model_state", "idle")
-                new_inference_enabled = status.get("inference_enabled", True)
-
-                # Batch reactive property updates to prevent cascading watcher renders
-                with self.app.batch_update():
-                    if new_uuid != self.active_episode_uuid:
-                        self.active_episode_uuid = new_uuid
-                    if new_count != self.queue_count:
-                        self.queue_count = new_count
-                    if new_model_state != self.model_state:
-                        self.model_state = new_model_state
-                    if new_inference_enabled != self.inference_enabled:
-                        self.inference_enabled = new_inference_enabled
-
-                # Update pane content when there's work or state changed
-                if new_count > 0 or new_model_state != "idle":
-                    self._update_processing_pane_content(new_uuid, new_count, new_model_state)
-
-                # Poll faster during state transitions, slower when inference disabled
-                if new_inference_enabled and (new_count > 0 or new_model_state in ("loading", "inferring", "unloading")):
-                    poll_interval = 0.3  # Active processing
-                elif new_count > 0 and not new_inference_enabled:
-                    poll_interval = 5.0  # Queue has work but waiting for re-enable
-                else:
-                    poll_interval = 2.0  # Idle
-                await asyncio.sleep(poll_interval)
+                output = self.processing_machine.apply_status(status)
+                self.processing_output = output
+                await asyncio.sleep(output.poll_interval)
             except WorkerCancelled:
                 logger.debug("Processing poll worker cancelled")
                 break
             except Exception as e:
                 logger.debug(f"Processing poll error: {e}")
                 await asyncio.sleep(2.0)
-
-    def _update_processing_pane_content(
-        self, active_uuid: str | None, pending_count: int, model_state: str
-    ) -> None:
-        """Update the processing pane content display based on model state."""
-        try:
-            processing_pane = self.query_one("#processing-pane", Container)
-            status_widget = self.query_one("#processing-status", Static)
-            entry_widget = self.query_one("#processing-entry", Static)
-            queue_widget = self.query_one("#processing-queue", Static)
-
-            with self.app.batch_update():
-                # Toggle .active class to show/hide ProcessingDot
-                is_active = model_state in ("loading", "inferring", "unloading")
-                if is_active:
-                    processing_pane.add_class("active")
-                else:
-                    processing_pane.remove_class("active")
-
-                # Status line based on model state
-                if model_state == "loading":
-                    status_widget.update("Loading model...")
-                    entry_widget.update("")
-                elif model_state == "unloading":
-                    status_widget.update("Unloading model...")
-                    entry_widget.update("")
-                elif model_state == "inferring" and active_uuid:
-                    # Show "Finishing extracting:" if inference disabled while extracting
-                    if not self.inference_enabled:
-                        status_widget.update("Finishing extracting:")
-                    else:
-                        status_widget.update("Extracting:")
-                    # Find the episode name from our loaded episodes
-                    episode_name = None
-                    for ep in self.episodes:
-                        if ep["uuid"] == active_uuid:
-                            episode_name = get_display_title(ep)
-                            break
-                    entry_widget.update(episode_name or "")
-                else:
-                    status_widget.update("")
-                    entry_widget.update("")
-
-                # Queue count
-                if pending_count > 0:
-                    queue_widget.update(f"Queue: {pending_count} remaining")
-                else:
-                    queue_widget.update("")
-
-        except Exception as e:
-            logger.debug(f"Failed to update processing pane content: {e}")
 
     def _save_current_list_positions(self) -> None:
         """Save current index for all list views before switching focus."""
@@ -840,7 +762,8 @@ class HomeScreen(Screen):
                             preview = get_display_title(episode)
                             text = f"[bold]{date_str}[/bold]  {preview}"
                             entry_label = EntryLabel(text, episode["uuid"])
-                            if episode["uuid"] == self.active_episode_uuid:
+                            if (self.processing_output.is_inferring and
+                                episode["uuid"] == self.processing_output.active_episode_uuid):
                                 entry_label.set_processing(True)
                             item = ListItem(entry_label)
                             self.list_index_to_episode[len(items)] = episode_idx
