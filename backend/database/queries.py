@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+from collections import Counter
 from datetime import datetime
 
 from graphiti_core.errors import NodeNotFoundError
@@ -175,7 +177,6 @@ async def delete_entity_mention(
             # Entity still exists in other episodes
             pass
     """
-    import asyncio
     from backend.database.driver import get_driver
     from backend.database.utils import to_cypher_literal, _decode_value
 
@@ -292,8 +293,6 @@ async def get_entry_entities(
         List of entity dicts with 'uuid', 'name', 'type' fields.
         Excludes the "I" (self) entity. Returns empty list if no cache data.
     """
-    import asyncio
-
     cache_key = f"journal:{journal}:{episode_uuid}"
 
     def _fetch_nodes():
@@ -325,9 +324,6 @@ async def get_period_entities(
         - connection_count: Total entity connections
         - top_entities: List of most frequently mentioned entities
     """
-    import asyncio
-    from collections import Counter
-
     driver = get_driver(journal)
 
     # Query episodes in date range

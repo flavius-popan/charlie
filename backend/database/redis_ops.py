@@ -7,11 +7,10 @@ storage that coexists with graph operations in the same .db file.
 from __future__ import annotations
 
 import json
+import logging
 import time
 from contextlib import contextmanager
 from typing import Iterator
-
-import logging
 
 logger = logging.getLogger(__name__)
 

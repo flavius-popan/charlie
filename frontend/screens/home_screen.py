@@ -271,7 +271,7 @@ class HomeScreen(Screen):
                 for entry_label in self.query(EntryLabel):
                     entry_label.set_processing(entry_label.episode_uuid == active_uuid)
         except Exception as e:
-            logger.debug(f"Failed to update processing indicators: {e}")
+            logger.debug("Failed to update processing indicators: %s", e)
 
     def _resolve_entry_name(self, uuid: str | None) -> str:
         """Resolve episode UUID to display name."""
@@ -358,7 +358,7 @@ class HomeScreen(Screen):
         except WorkerCancelled:
             raise  # Don't update state on cancellation
         except Exception as e:
-            logger.debug(f"Failed to fetch entry entities: {e}")
+            logger.debug("Failed to fetch entry entities: %s", e)
             self.selected_entry_status = None
             self.entry_entities = []
 
@@ -409,7 +409,7 @@ class HomeScreen(Screen):
                         name = entity.get("name", "")
                         entity_list.append(ListItem(Label(name)))
         except Exception as e:
-            logger.debug(f"Failed to update connections pane: {e}")
+            logger.debug("Failed to update connections pane: %s", e)
 
     def watch_selected_period_index(self, old_idx: int, new_idx: int) -> None:
         """Fetch period stats and update temporal pane when period changes."""
@@ -423,7 +423,7 @@ class HomeScreen(Screen):
             temporal_pane = self.query_one("#temporal-pane", Container)
             temporal_pane.border_title = f"{period['label']} [dim](3)[/dim]"
         except Exception as e:
-            logger.debug(f"Failed to update temporal pane title: {e}")
+            logger.debug("Failed to update temporal pane title: %s", e)
 
         # Fetch period stats
         self.run_worker(
@@ -450,7 +450,7 @@ class HomeScreen(Screen):
         except WorkerCancelled:
             raise  # Don't update state on cancellation
         except Exception as e:
-            logger.debug(f"Failed to fetch period stats: {e}")
+            logger.debug("Failed to fetch period stats: %s", e)
             self.period_stats = None
 
     def watch_period_stats(
@@ -477,7 +477,7 @@ class HomeScreen(Screen):
                         name = entity.get("name", "")
                         entity_list.append(ListItem(Label(name)))
         except Exception as e:
-            logger.debug(f"Failed to update temporal pane: {e}")
+            logger.debug("Failed to update temporal pane: %s", e)
 
     def _update_processing_pane(self, output: ProcessingOutput) -> None:
         """Update processing pane display based on machine output."""
@@ -518,7 +518,7 @@ class HomeScreen(Screen):
                 queue_widget.update(output.queue_text)
 
         except Exception as e:
-            logger.debug(f"Failed to update processing pane: {e}")
+            logger.debug("Failed to update processing pane: %s", e)
 
     def action_navigate_period_older(self) -> None:
         """Navigate to older time period (←)."""
@@ -560,7 +560,7 @@ class HomeScreen(Screen):
                             "uuid"
                         ]
                 except Exception as e:
-                    logger.debug(f"Failed to scroll to period: {e}")
+                    logger.debug("Failed to scroll to period: %s", e)
                 break
 
     @staticmethod
@@ -646,7 +646,7 @@ class HomeScreen(Screen):
             await self.load_episodes()
             self._start_processing_poll()
         except Exception as e:
-            logger.error(f"Database initialization failed: {e}", exc_info=True)
+            logger.error("Database initialization failed: %s", e, exc_info=True)
             self.notify("Failed to initialize database. Exiting...", severity="error")
             await asyncio.sleep(2)
             self.app.exit(1)
@@ -704,7 +704,7 @@ class HomeScreen(Screen):
                 logger.debug("Processing poll worker cancelled")
                 break
             except Exception as e:
-                logger.debug(f"Processing poll error: {e}")
+                logger.debug("Processing poll error: %s", e)
                 await asyncio.sleep(2.0)
 
     def _save_current_list_positions(self) -> None:
@@ -862,7 +862,7 @@ class HomeScreen(Screen):
                             group="period_stats",
                         )
         except Exception as e:
-            logger.error(f"Failed to load episodes: {e}", exc_info=True)
+            logger.error("Failed to load episodes: %s", e, exc_info=True)
             self.notify("Error loading episodes", severity="error")
 
     def action_new_entry(self):
@@ -879,7 +879,7 @@ class HomeScreen(Screen):
                     episode = self.episodes[episode_idx]
                     self.app.push_screen(ViewScreen(episode["uuid"], DEFAULT_JOURNAL))
         except Exception as e:
-            logger.error(f"Failed to open view screen: {e}", exc_info=True)
+            logger.error("Failed to open view screen: %s", e, exc_info=True)
 
     async def action_delete_entry(self):
         try:
@@ -893,7 +893,7 @@ class HomeScreen(Screen):
                     await delete_episode(episode["uuid"])
                     await self.load_episodes()
         except Exception as e:
-            logger.error(f"Failed to delete entry: {e}", exc_info=True)
+            logger.error("Failed to delete entry: %s", e, exc_info=True)
             self.notify("Failed to delete entry", severity="error")
 
     def action_quit(self):
@@ -904,7 +904,7 @@ class HomeScreen(Screen):
             try:
                 exc = task.exception()
                 if exc is not None:
-                    logger.error(f"Shutdown failed: {exc}", exc_info=exc)
+                    logger.error("Shutdown failed: %s", exc, exc_info=exc)
             except asyncio.CancelledError:
                 pass
 
@@ -918,7 +918,7 @@ class HomeScreen(Screen):
             list_view = self.query_one("#episodes-list", ListView)
             list_view.action_cursor_down()
         except Exception as e:
-            logger.debug(f"cursor_down failed: {e}")
+            logger.debug("cursor_down failed: %s", e)
 
     def action_cursor_up(self):
         if not self.episodes:
@@ -927,7 +927,7 @@ class HomeScreen(Screen):
             list_view = self.query_one("#episodes-list", ListView)
             list_view.action_cursor_up()
         except Exception as e:
-            logger.debug(f"cursor_up failed: {e}")
+            logger.debug("cursor_up failed: %s", e)
 
     def action_focus_entries(self) -> None:
         """Focus entries list (1) and restore position."""
@@ -943,7 +943,7 @@ class HomeScreen(Screen):
                 # Select first item if no saved position
                 list_view.index = 0
         except Exception as e:
-            logger.debug(f"focus_entries failed: {e}")
+            logger.debug("focus_entries failed: %s", e)
 
     def action_focus_connections(self) -> None:
         """Focus connections list (2) and restore position."""
@@ -960,7 +960,7 @@ class HomeScreen(Screen):
                     # Select first item if no saved position
                     entity_list.index = 0
         except Exception as e:
-            logger.debug(f"focus_connections failed: {e}")
+            logger.debug("focus_connections failed: %s", e)
 
     def action_focus_temporal(self) -> None:
         """Focus temporal list (3) and restore position."""
@@ -977,7 +977,7 @@ class HomeScreen(Screen):
                     # Select first item if no saved position
                     entity_list.index = 0
         except Exception as e:
-            logger.debug(f"focus_temporal failed: {e}")
+            logger.debug("focus_temporal failed: %s", e)
 
     def action_open_settings(self):
         self.app.push_screen(SettingsScreen())
