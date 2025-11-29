@@ -215,7 +215,8 @@ def test_extract_nodes_task_integration(
         assert isinstance(result["new_entities"], int)
 
         status = get_episode_status(episode_uuid, DEFAULT_JOURNAL)
-        assert status == "pending_edges"
+        # Episodes are marked "done" after node extraction (edges task TBD)
+        assert status == "done"
 
 
 @pytest.mark.inference

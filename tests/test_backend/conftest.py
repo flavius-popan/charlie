@@ -53,9 +53,13 @@ def isolated_graph(falkordb_test_context) -> Iterator[object]:
     """
     from backend.settings import DEFAULT_JOURNAL
     import backend.database.lifecycle as lifecycle
+    from backend.inference import manager as inference_manager
 
     # Reset lifecycle state BEFORE test (in case previous test left dirty state)
     lifecycle.reset_lifecycle_state()
+
+    # Mark app as started so is_model_loading_blocked() doesn't block forever
+    inference_manager.mark_app_started()
 
     graph = db_utils.get_falkordb_graph(DEFAULT_JOURNAL)
 
@@ -72,6 +76,8 @@ def isolated_graph(falkordb_test_context) -> Iterator[object]:
     finally:
         # Reset lifecycle state AFTER test
         lifecycle.reset_lifecycle_state()
+        # Reset app startup time for test isolation
+        inference_manager._app_startup_time = None
         # Clear all data after test
         graph.query("MATCH (n) DETACH DELETE n")
         persistence._graph_initialized.clear()
