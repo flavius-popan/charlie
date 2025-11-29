@@ -589,6 +589,10 @@ class EntityBrowserScreen(Screen):
             else:
                 self.remove_class("narrow")
 
+            # Reset scroll position when switching entries
+            reader_panel = self.query_one("#reader-panel", VerticalScroll)
+            reader_panel.scroll_home(animate=False)
+
             self.reader_open = True
         except Exception as e:
             logger.error("Failed to open reader: %s", e, exc_info=True)
