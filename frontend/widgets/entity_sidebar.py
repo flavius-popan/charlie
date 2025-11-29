@@ -32,9 +32,10 @@ class EntityListItem(ListItem):
     }
     """
 
-    def __init__(self, label_text: str, **kwargs):
+    def __init__(self, label_text: str, entity_uuid: str | None = None, **kwargs):
         super().__init__(**kwargs)
         self.label_text = label_text
+        self.entity_uuid = entity_uuid
 
     def compose(self) -> ComposeResult:
         yield Label(self.label_text)
@@ -303,7 +304,7 @@ class EntitySidebar(Container):
                     return
 
             items = [
-                EntityListItem(self._format_entity_label(entity))
+                EntityListItem(self._format_entity_label(entity), entity.get("uuid"))
                 for entity in self.entities
             ]
             list_view = ListView(*items)
@@ -389,3 +390,10 @@ class EntitySidebar(Container):
 
         except Exception as e:
             logger.error(f"Failed to delete entity mention: {e}", exc_info=True)
+
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        """Handle Enter key on entity list - open entity browser."""
+        if isinstance(event.item, EntityListItem) and event.item.entity_uuid:
+            from frontend.screens.entity_browser_screen import EntityBrowserScreen
+
+            self.app.push_screen(EntityBrowserScreen(event.item.entity_uuid, self.journal))

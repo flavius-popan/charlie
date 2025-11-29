@@ -489,7 +489,8 @@ class HomeScreen(Screen):
                     self._last_temporal_index = None
                     for entity in top_entities[:25]:
                         name = entity.get("name", "")
-                        entity_list.append(ListItem(Label(name)))
+                        uuid = entity.get("uuid", "")
+                        entity_list.append(EntityListItem(name, uuid))
         except Exception as e:
             logger.debug("Failed to update temporal pane: %s", e)
 
@@ -793,6 +794,10 @@ class HomeScreen(Screen):
                     self.app.push_screen(ViewScreen(episode["uuid"], DEFAULT_JOURNAL))
         # Handle connections list - navigate to entity browser
         elif event.list_view.id == "connections-list":
+            if isinstance(event.item, EntityListItem) and event.item.entity_uuid:
+                self.app.push_screen(EntityBrowserScreen(event.item.entity_uuid, DEFAULT_JOURNAL))
+        # Handle temporal list - navigate to entity browser
+        elif event.list_view.id == "temporal-list":
             if isinstance(event.item, EntityListItem) and event.item.entity_uuid:
                 self.app.push_screen(EntityBrowserScreen(event.item.entity_uuid, DEFAULT_JOURNAL))
 
