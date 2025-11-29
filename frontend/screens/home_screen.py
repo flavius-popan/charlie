@@ -7,7 +7,15 @@ from textual.containers import Container, Horizontal, Vertical
 from textual.reactive import reactive
 from textual.screen import Screen
 from textual.css.query import NoMatches
-from textual.widgets import Footer, Header, Label, ListItem, ListView, LoadingIndicator, Static
+from textual.widgets import (
+    Footer,
+    Header,
+    Label,
+    ListItem,
+    ListView,
+    LoadingIndicator,
+    Static,
+)
 
 from backend.database import (
     delete_episode,
@@ -23,7 +31,10 @@ from frontend.screens.settings_screen import SettingsScreen
 from frontend.screens.view_screen import ViewScreen
 from frontend.screens.log_screen import LogScreen
 from frontend.screens.edit_screen import EditScreen
-from frontend.state.processing_state_machine import ProcessingStateMachine, ProcessingOutput
+from frontend.state.processing_state_machine import (
+    ProcessingStateMachine,
+    ProcessingOutput,
+)
 from frontend.utils import calculate_periods, get_display_title, group_entries_by_period
 from frontend.widgets import ProcessingDot
 
@@ -122,6 +133,7 @@ class HomeScreen(Screen):
         height: 2fr;
         border: solid $accent;
         border-title-align: left;
+        border-subtitle-align: center;
     }
 
     HomeScreen #processing-pane {
@@ -166,6 +178,7 @@ class HomeScreen(Screen):
     }
 
     HomeScreen .pane-content {
+        height: 1;
         padding: 0 1;
         color: $text-muted;
     }
@@ -176,7 +189,12 @@ class HomeScreen(Screen):
     }
 
     HomeScreen .entity-list > ListItem {
+        height: 1;
         padding: 0 1;
+    }
+
+    HomeScreen .entity-list > ListItem > Label {
+        padding: 0;
     }
 
     HomeScreen #episodes-list > ListItem.-highlight EntryLabel.processing .entry-text {
@@ -232,7 +250,9 @@ class HomeScreen(Screen):
         super().__init__()
         self.episodes = []
         self.periods: list[dict] = []
-        self.list_index_to_episode: dict[int, int] = {}  # Maps list index to episode index
+        self.list_index_to_episode: dict[
+            int, int
+        ] = {}  # Maps list index to episode index
         # Track last selected index for each list view (for position memory on focus switch)
         self._last_entries_index: int | None = None
         self._last_connections_index: int | None = None
@@ -262,21 +282,30 @@ class HomeScreen(Screen):
                 return get_display_title(ep)
         return ""  # Entry was deleted
 
-    def watch_processing_output(self, old: ProcessingOutput, new: ProcessingOutput) -> None:
+    def watch_processing_output(
+        self, old: ProcessingOutput, new: ProcessingOutput
+    ) -> None:
         """Single watcher handles all processing pane updates."""
         self._update_processing_pane(new)
-        self._update_entry_processing_dots(new.active_episode_uuid if new.is_inferring else None)
+        self._update_entry_processing_dots(
+            new.active_episode_uuid if new.is_inferring else None
+        )
 
         # Refresh connections pane if processing state changed
         # (connections_loading depends on is_inferring and active_episode_uuid)
-        if (old.active_episode_uuid != new.active_episode_uuid or
-            old.is_inferring != new.is_inferring):
+        if (
+            old.active_episode_uuid != new.active_episode_uuid
+            or old.is_inferring != new.is_inferring
+        ):
             self._refresh_connections_pane()
 
         # Detect when an episode just finished processing
         # Track UUID change, not is_inferring transition (queue may skip idle state)
         finished_uuid = None
-        if old.active_episode_uuid and old.active_episode_uuid != new.active_episode_uuid:
+        if (
+            old.active_episode_uuid
+            and old.active_episode_uuid != new.active_episode_uuid
+        ):
             finished_uuid = old.active_episode_uuid
 
         if finished_uuid:
@@ -298,13 +327,17 @@ class HomeScreen(Screen):
                         group="period_stats",
                     )
 
-    def watch_selected_entry_uuid(self, old_uuid: str | None, new_uuid: str | None) -> None:
+    def watch_selected_entry_uuid(
+        self, old_uuid: str | None, new_uuid: str | None
+    ) -> None:
         """Fetch entities when selected entry changes."""
         # Refresh connections pane immediately (loading state may have changed)
         self._refresh_connections_pane()
 
         if new_uuid:
-            self.run_worker(self._fetch_entry_entities(new_uuid), exclusive=True, group="entities")
+            self.run_worker(
+                self._fetch_entry_entities(new_uuid), exclusive=True, group="entities"
+            )
         else:
             self.selected_entry_status = None
             self.entry_entities = []
@@ -314,7 +347,9 @@ class HomeScreen(Screen):
         from textual.worker import WorkerCancelled
 
         try:
-            status = await asyncio.to_thread(get_episode_status, episode_uuid, DEFAULT_JOURNAL)
+            status = await asyncio.to_thread(
+                get_episode_status, episode_uuid, DEFAULT_JOURNAL
+            )
             entities = await get_entry_entities(episode_uuid, DEFAULT_JOURNAL)
             # Verify entry is still selected before updating (prevents race with rapid navigation)
             if self.selected_entry_uuid == episode_uuid:
@@ -327,11 +362,15 @@ class HomeScreen(Screen):
             self.selected_entry_status = None
             self.entry_entities = []
 
-    def watch_entry_entities(self, old_entities: list[dict], new_entities: list[dict]) -> None:
+    def watch_entry_entities(
+        self, old_entities: list[dict], new_entities: list[dict]
+    ) -> None:
         """Update Connections pane when entities change."""
         self._refresh_connections_pane()
 
-    def watch_selected_entry_status(self, old_status: str | None, new_status: str | None) -> None:
+    def watch_selected_entry_status(
+        self, old_status: str | None, new_status: str | None
+    ) -> None:
         """Refresh connections pane when entry processing status changes."""
         self._refresh_connections_pane()
 
@@ -350,7 +389,10 @@ class HomeScreen(Screen):
                     empty_msg.display = False
                     entity_list.display = False
                     connections_pane.mount(LoadingIndicator())
-                elif self.selected_entry_status == "pending_nodes" and not self.entry_entities:
+                elif (
+                    self.selected_entry_status == "pending_nodes"
+                    and not self.entry_entities
+                ):
                     empty_msg.update("Awaiting processing...")
                     empty_msg.display = True
                     entity_list.display = False
@@ -398,10 +440,12 @@ class HomeScreen(Screen):
         try:
             stats = await get_period_entities(start, end, DEFAULT_JOURNAL)
             # Verify period is still selected before updating (prevents race with rapid navigation)
-            if (self.periods and
-                0 <= self.selected_period_index < len(self.periods) and
-                self.periods[self.selected_period_index]["start"] == start and
-                self.periods[self.selected_period_index]["end"] == end):
+            if (
+                self.periods
+                and 0 <= self.selected_period_index < len(self.periods)
+                and self.periods[self.selected_period_index]["start"] == start
+                and self.periods[self.selected_period_index]["end"] == end
+            ):
                 self.period_stats = stats
         except WorkerCancelled:
             raise  # Don't update state on cancellation
@@ -409,7 +453,9 @@ class HomeScreen(Screen):
             logger.debug(f"Failed to fetch period stats: {e}")
             self.period_stats = None
 
-    def watch_period_stats(self, old_stats: dict | None, new_stats: dict | None) -> None:
+    def watch_period_stats(
+        self, old_stats: dict | None, new_stats: dict | None
+    ) -> None:
         """Update Temporal pane content when stats change."""
         try:
             empty_msg = self.query_one("#temporal-empty", Static)
@@ -461,7 +507,11 @@ class HomeScreen(Screen):
                 status_widget.update(output.status_text)
 
                 # Entry name resolved HERE, not in machine
-                entry_name = self._resolve_entry_name(output.active_episode_uuid) if output.is_inferring else ""
+                entry_name = (
+                    self._resolve_entry_name(output.active_episode_uuid)
+                    if output.is_inferring
+                    else ""
+                )
                 entry_widget.update(entry_name)
 
                 # Queue text from machine output
@@ -506,7 +556,9 @@ class HomeScreen(Screen):
                     list_view.index = list_idx
                     # Update selected entry
                     if first_episode_idx < len(self.episodes):
-                        self.selected_entry_uuid = self.episodes[first_episode_idx]["uuid"]
+                        self.selected_entry_uuid = self.episodes[first_episode_idx][
+                            "uuid"
+                        ]
                 except Exception as e:
                     logger.debug(f"Failed to scroll to period: {e}")
                 break
@@ -546,6 +598,7 @@ class HomeScreen(Screen):
             id="temporal-pane",
         )
         temporal_pane.border_title = "This Week [dim](3)[/dim]"
+        temporal_pane.border_subtitle = "[dim]← older | newer →[/dim]"
 
         processing_pane = Container(
             Horizontal(
@@ -762,8 +815,11 @@ class HomeScreen(Screen):
                             preview = get_display_title(episode)
                             text = f"[bold]{date_str}[/bold]  {preview}"
                             entry_label = EntryLabel(text, episode["uuid"])
-                            if (self.processing_output.is_inferring and
-                                episode["uuid"] == self.processing_output.active_episode_uuid):
+                            if (
+                                self.processing_output.is_inferring
+                                and episode["uuid"]
+                                == self.processing_output.active_episode_uuid
+                            ):
                                 entry_label.set_processing(True)
                             item = ListItem(entry_label)
                             self.list_index_to_episode[len(items)] = episode_idx
