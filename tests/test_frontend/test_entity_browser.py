@@ -100,38 +100,37 @@ def mock_home_db():
 
 
 # =============================================================================
-# BUG TESTS - These test the specific bugs that need fixing
+# RESPONSIVE BEHAVIOR TESTS - Wide vs Narrow screen behavior
 # =============================================================================
 
 
 @pytest.mark.asyncio
-async def test_navigation_does_not_open_reader(mock_entity_db):
-    """Arrow key navigation should NOT open the reader panel.
-
-    Bug: Currently, every arrow key press triggers on_list_view_highlighted
-    which calls _open_reader(), causing flickering.
-    """
+async def test_wide_screen_auto_opens_reader(mock_entity_db, mock_get_entry_entities):
+    """Wide screen (>= 100 columns) should auto-open reader with first quote."""
     app = EntityBrowserTestApp()
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(120, 40)) as pilot:  # Wide screen
         await pilot.pause()
 
-        # Reader should be closed initially
-        assert not app.screen.reader_open, "Reader should be closed on initial load"
-
-        # Navigate down multiple times
-        for i in range(3):
-            await pilot.press("down")
-            await pilot.pause()
-
-        # Reader should STILL be closed after navigation
-        assert not app.screen.reader_open, "Reader should remain closed during navigation"
+        # Reader should be open automatically on wide screen
+        assert app.screen.reader_open, "Reader should auto-open on wide screen"
 
 
 @pytest.mark.asyncio
-async def test_enter_opens_reader(mock_entity_db, mock_get_entry_entities):
-    """Enter key should open the reader with selected quote content."""
+async def test_narrow_screen_reader_closed_initially(mock_entity_db):
+    """Narrow screen (< 100 columns) should not auto-open reader."""
     app = EntityBrowserTestApp()
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(80, 24)) as pilot:  # Narrow screen
+        await pilot.pause()
+
+        # Reader should be closed on narrow screen
+        assert not app.screen.reader_open, "Reader should be closed on narrow screen"
+
+
+@pytest.mark.asyncio
+async def test_narrow_screen_enter_opens_reader(mock_entity_db, mock_get_entry_entities):
+    """On narrow screen, Enter key should open the reader."""
+    app = EntityBrowserTestApp()
+    async with app.run_test(size=(80, 24)) as pilot:  # Narrow screen
         await pilot.pause()
 
         # Reader should be closed initially
@@ -146,10 +145,10 @@ async def test_enter_opens_reader(mock_entity_db, mock_get_entry_entities):
 
 
 @pytest.mark.asyncio
-async def test_back_closes_reader_first(mock_entity_db, mock_get_entry_entities):
-    """Escape should close reader first, then pop screen on second press."""
+async def test_narrow_screen_escape_closes_reader_first(mock_entity_db, mock_get_entry_entities):
+    """On narrow screen, Escape should close reader first, then pop screen."""
     app = EntityBrowserTestApp()
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(80, 24)) as pilot:  # Narrow screen
         await pilot.pause()
 
         # Open reader by pressing Enter
@@ -164,6 +163,26 @@ async def test_back_closes_reader_first(mock_entity_db, mock_get_entry_entities)
 
         # Screen should still be EntityBrowserScreen
         assert isinstance(app.screen, EntityBrowserScreen), "Screen should remain EntityBrowserScreen"
+
+
+@pytest.mark.asyncio
+async def test_wide_screen_escape_pops_immediately(mock_entity_db, mock_get_entry_entities):
+    """On wide screen, Escape should pop screen (no intermediate reader close)."""
+    from textual.screen import Screen
+
+    app = EntityBrowserTestApp()
+    async with app.run_test(size=(120, 40)) as pilot:  # Wide screen
+        await pilot.pause()
+
+        # Reader should be open automatically
+        assert app.screen.reader_open
+
+        # Escape should pop screen directly
+        await pilot.press("escape")
+        await pilot.pause()
+
+        # Should have popped back to default screen
+        assert not isinstance(app.screen, EntityBrowserScreen), "Should have popped EntityBrowserScreen"
 
 
 @pytest.mark.asyncio

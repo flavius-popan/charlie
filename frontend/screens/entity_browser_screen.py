@@ -25,57 +25,6 @@ from frontend.utils import (
 logger = logging.getLogger("charlie")
 
 
-class ThickSeparator(ListItem):
-    """Thick separator before date groups (invisible spacing)."""
-
-    SCOPED_CSS = False
-    DEFAULT_CSS = """
-    ThickSeparator {
-        height: auto;
-        min-height: 1;
-        padding: 0;
-        margin: 0;
-        background: transparent;
-    }
-
-    ThickSeparator:hover {
-        background: transparent;
-    }
-    """
-
-    def __init__(self):
-        super().__init__()
-        self.disabled = True
-
-    def compose(self) -> ComposeResult:
-        yield Static("")
-
-
-class QuoteSeparator(ListItem):
-    """Thin separator between quotes (invisible spacing)."""
-
-    SCOPED_CSS = False
-    DEFAULT_CSS = """
-    QuoteSeparator {
-        height: 1;
-        padding: 0;
-        margin: 0;
-        background: transparent;
-    }
-
-    QuoteSeparator:hover {
-        background: transparent;
-    }
-    """
-
-    def __init__(self):
-        super().__init__()
-        self.disabled = True
-
-    def compose(self) -> ComposeResult:
-        yield Static("")
-
-
 class DateListItem(ListItem):
     """Non-selectable list item showing just the date."""
 
@@ -83,7 +32,7 @@ class DateListItem(ListItem):
     DEFAULT_CSS = """
     DateListItem {
         height: auto;
-        padding: 1 0 0 2;
+        padding: 1 0 1 2;
     }
 
     DateListItem .date-text {
@@ -349,6 +298,7 @@ class EntityBrowserScreen(Screen):
         super().__init__()
         self.entity_uuid = entity_uuid
         self.journal = journal
+        self._has_been_suspended = False
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False, icon="")
@@ -391,9 +341,20 @@ class EntityBrowserScreen(Screen):
         self.run_worker(self._load_entity_data(), exclusive=True, group="entity-data")
 
     async def on_screen_resume(self) -> None:
-        self.run_worker(self._load_entity_data(), exclusive=True, group="entity-data")
+        # Only close reader if we've actually been suspended (returning from another screen)
+        if self._has_been_suspended:
+            self.reader_open = False
+            self.remove_class("narrow")
+            self.run_worker(
+                self._load_entity_data(), exclusive=True, group="entity-data"
+            )
+
+    def _is_wide_screen(self) -> bool:
+        """Check if screen is wide enough for side-by-side layout."""
+        return self.app.size.width >= 100
 
     def on_screen_suspend(self) -> None:
+        self._has_been_suspended = True
         self.workers.cancel_group(self, "entity-data")
 
     async def _load_entity_data(self) -> None:
@@ -434,8 +395,6 @@ class EntityBrowserScreen(Screen):
                 list_index = 0
                 oldest_quote_index = 0  # Track index of oldest (last) quote
                 total_quote_count = 0  # Count actual quotes for mention info
-                is_first_date = True
-                last_item_was_quote = False
 
                 for entry in new["entries"]:
                     valid_at = entry["valid_at"]
@@ -445,14 +404,7 @@ class EntityBrowserScreen(Screen):
                     sentences = extract_entity_sentences(entry["content"], entity_name)
 
                     # Add date item when date changes (with year)
-                    is_new_date = date != prev_date
-                    if is_new_date:
-                        # Add thick separator before date groups (except first)
-                        if not is_first_date:
-                            quotes_list.append(ThickSeparator())
-                            list_index += 1
-                        is_first_date = False
-
+                    if date != prev_date:
                         date_str = (
                             valid_at.strftime("%b %-d, %Y")
                             if hasattr(valid_at, "strftime")
@@ -461,17 +413,11 @@ class EntityBrowserScreen(Screen):
                         prev_date = date
                         quotes_list.append(DateListItem(date_str))
                         list_index += 1
-                        last_item_was_quote = False
 
                     if sentences:
                         # Create quote items for each sentence with entity emphasized
                         quote_target = ENTITY_QUOTE_TARGET_LENGTH + 2
                         for sentence in sentences:
-                            # Add separator between quotes
-                            if last_item_was_quote:
-                                quotes_list.append(QuoteSeparator())
-                                list_index += 1
-
                             emphasized = emphasize_rich(sentence, entity_name)
                             quote_text = f'"{emphasized}"'.ljust(quote_target)
                             item = QuoteListItem(
@@ -481,20 +427,13 @@ class EntityBrowserScreen(Screen):
                             oldest_quote_index = list_index  # Last quote is oldest
                             list_index += 1
                             total_quote_count += 1
-                            last_item_was_quote = True
                     else:
-                        # Add separator if last item was a quote
-                        if last_item_was_quote:
-                            quotes_list.append(QuoteSeparator())
-                            list_index += 1
-
                         # No extractable quotes - show episode title instead
                         title = get_display_title(entry, max_chars=60)
                         item = TitleListItem(title, entry["episode_uuid"])
                         quotes_list.append(item)
                         oldest_quote_index = list_index
                         list_index += 1
-                        last_item_was_quote = True
 
                 # Update mention info in header (use quote count, not entry count)
                 mention_info = self.query_one("#mention-info", MentionInfo)
@@ -538,6 +477,10 @@ class EntityBrowserScreen(Screen):
                             break
                     quotes_list.focus()
 
+            # Auto-open reader on wide screens (after batch_update completes)
+            if self._is_wide_screen() and self.selected_episode_uuid:
+                self._open_reader(self.selected_episode_uuid)
+
         except Exception as e:
             logger.error("Failed to update entity browser: %s", e, exc_info=True)
 
@@ -572,7 +515,10 @@ class EntityBrowserScreen(Screen):
             if self.reader_open:
                 # Already open - push full ViewScreen
                 from frontend.screens.view_screen import ViewScreen
-                self.app.push_screen(ViewScreen(self.selected_episode_uuid, self.journal))
+
+                self.app.push_screen(
+                    ViewScreen(self.selected_episode_uuid, self.journal)
+                )
             else:
                 # Open the reader panel
                 self._open_reader(self.selected_episode_uuid)
@@ -652,7 +598,8 @@ class EntityBrowserScreen(Screen):
             self.app.open_url(href)
 
     def action_back(self) -> None:
-        if self.reader_open:
+        # On narrow screen with reader open: close reader first
+        if self.reader_open and not self._is_wide_screen():
             self.reader_open = False
             self.remove_class("narrow")
             try:
@@ -661,6 +608,7 @@ class EntityBrowserScreen(Screen):
             except Exception:
                 pass
         else:
+            # Wide screen or reader already closed: pop screen
             self.app.pop_screen()
 
     def action_read_entry(self) -> None:
