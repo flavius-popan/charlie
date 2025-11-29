@@ -538,8 +538,11 @@ class TestInternalDataTracking:
 class TestQueueAwareVisibility:
     """Test pane visibility and poll interval when queue has pending work."""
 
-    def test_pane_not_visible_when_idle_with_pending_queue(self):
-        """Pane should NOT be visible when idle, even with pending queue (grace period)."""
+    def test_pane_visible_when_idle_with_pending_queue(self):
+        """Pane should stay visible when idle but queue has pending items.
+
+        This prevents the processing pane from flashing hidden between episodes.
+        """
         machine = ProcessingStateMachine()
         status = {
             "model_state": "idle",
@@ -549,7 +552,7 @@ class TestQueueAwareVisibility:
         }
         output = machine.apply_status(status)
         assert machine.current_state == machine.idle
-        assert output.pane_visible is False  # Hidden during grace period
+        assert output.pane_visible is True  # Stay visible while queue has work
 
     def test_poll_interval_medium_when_idle_with_pending_queue(self):
         """Poll interval should be medium (0.5s) when idle but queue has pending work."""
@@ -588,8 +591,33 @@ class TestQueueAwareVisibility:
         # Dot only shows during active processing, not while waiting
         assert output.show_dot is False
 
-    def test_transition_between_jobs_hides_pane_briefly(self):
-        """Pane hides when idle between jobs, then shows when next job loads."""
+    def test_pane_hidden_when_idle_with_pending_but_inference_disabled(self):
+        """Pane should hide when idle with pending work but inference disabled."""
+        machine = ProcessingStateMachine()
+        status = {
+            "model_state": "idle",
+            "active_uuid": None,
+            "pending_count": 5,
+            "inference_enabled": False,
+        }
+        output = machine.apply_status(status)
+        assert output.pane_visible is False
+
+    def test_pane_hidden_when_idle_with_pending_but_model_loading_blocked(self):
+        """Pane should hide when idle with pending work but model loading blocked."""
+        machine = ProcessingStateMachine()
+        status = {
+            "model_state": "idle",
+            "active_uuid": None,
+            "pending_count": 5,
+            "inference_enabled": True,
+            "model_loading_blocked": True,
+        }
+        output = machine.apply_status(status)
+        assert output.pane_visible is False
+
+    def test_transition_between_jobs_keeps_pane_visible(self):
+        """Pane stays visible when transitioning between jobs (no flash)."""
         machine = ProcessingStateMachine()
 
         # First job inferring
@@ -602,7 +630,7 @@ class TestQueueAwareVisibility:
         output = machine.apply_status(status)
         assert output.pane_visible is True
 
-        # First job completes, goes to idle (pane hides during grace period)
+        # First job completes, goes to idle but still has pending work
         status = {
             "model_state": "idle",
             "active_uuid": None,
@@ -610,8 +638,8 @@ class TestQueueAwareVisibility:
             "inference_enabled": True,
         }
         output = machine.apply_status(status)
-        # Pane hides during idle/grace period
-        assert output.pane_visible is False
+        # Pane stays visible to prevent flash
+        assert output.pane_visible is True
         assert output.poll_interval == 0.5  # Medium polling to pick up next job
 
         # Next job starts loading

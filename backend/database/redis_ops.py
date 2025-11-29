@@ -529,11 +529,15 @@ def get_processing_status(journal: str) -> dict:
         inference_enabled_raw = results[3]
         inference_enabled = inference_enabled_raw != b"false" if inference_enabled_raw else True
 
+        # Check if model loading is blocked (grace period or editing)
+        from backend.inference.manager import is_model_loading_blocked
+
         return {
             "active_uuid": active_uuid,
             "pending_count": pending_count,
             "model_state": model_state,
             "inference_enabled": inference_enabled,
+            "model_loading_blocked": is_model_loading_blocked(),
         }
 
 

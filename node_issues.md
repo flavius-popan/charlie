@@ -1,5 +1,8 @@
 # Node Extraction Failures
 
+NOTE: When adding these, validate that a given prompt currently reproduces the issues listed,
+then ensure the positive examples show the intended results!
+
 - Special characters like ! after a name, "Good luck Charlie!". No Charlie.
 - Too literal "90m nap" instead of "nap", pulls direct quotes, uses adjectives.
 - Place is too narrow for home rooms ("living room", "closet", "balcony").

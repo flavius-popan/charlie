@@ -88,6 +88,7 @@ class ProcessingStateMachine(StateMachine):
         self._active_episode_uuid: str | None = None
         self._queue_count: int = 0
         self._inference_enabled: bool = True
+        self._model_loading_blocked: bool = False
 
     @property
     def output(self) -> ProcessingOutput:
@@ -109,8 +110,15 @@ class ProcessingStateMachine(StateMachine):
         is_active = state_name != "idle"
         has_pending_work = self._queue_count > 0
 
+        # Show pane when actively processing, or when idle with pending work
+        # that will actually be processed (inference enabled, not blocked)
+        can_process_pending = (
+            has_pending_work
+            and self._inference_enabled
+            and not self._model_loading_blocked
+        )
         return ProcessingOutput(
-            pane_visible=is_active,
+            pane_visible=is_active or can_process_pending,
             status_text=status_text,
             queue_text=f"Queue: {self._queue_count} remaining" if self._queue_count > 0 else "",
             show_dot=(state_name in ("loading", "inferring", "unloading")),
@@ -137,6 +145,7 @@ class ProcessingStateMachine(StateMachine):
         self._active_episode_uuid = status.get("active_uuid")
         self._queue_count = status.get("pending_count", 0)
         self._inference_enabled = status.get("inference_enabled", True)
+        self._model_loading_blocked = status.get("model_loading_blocked", False)
 
         # Route to appropriate state based on model_state (default to idle)
         model_state = status.get("model_state", "idle")

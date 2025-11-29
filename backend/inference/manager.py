@@ -35,11 +35,12 @@ def is_model_loading_blocked() -> bool:
     from backend.database.redis_ops import redis_ops
 
     # Check startup grace
-    if _app_startup_time is not None:
-        elapsed = time.monotonic() - _app_startup_time
-        if elapsed < MODEL_LOAD_GRACE_SECONDS:
-            logger.debug("Model loading blocked: startup grace (%.1fs elapsed)", elapsed)
-            return True
+    if _app_startup_time is None:
+        return True  # Block until app is properly started
+    elapsed = time.monotonic() - _app_startup_time
+    if elapsed < MODEL_LOAD_GRACE_SECONDS:
+        logger.debug("Model loading blocked: startup grace (%.1fs elapsed)", elapsed)
+        return True
 
     # Check editing active
     try:

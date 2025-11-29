@@ -133,7 +133,7 @@ class HomeScreen(Screen):
         height: 2fr;
         border: solid $accent;
         border-title-align: left;
-        border-subtitle-align: center;
+        border-subtitle-align: left;
     }
 
     HomeScreen #processing-pane {
