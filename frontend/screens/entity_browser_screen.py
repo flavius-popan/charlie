@@ -49,6 +49,27 @@ class DateListItem(ListItem):
         yield Static(self.date_str, classes="date-text")
 
 
+class QuoteSeparator(ListItem):
+    """Thin separator between quotes from the same entry."""
+
+    SCOPED_CSS = False
+    DEFAULT_CSS = """
+    QuoteSeparator {
+        height: 1;
+        min-height: 1;
+        max-height: 1;
+        padding: 0;
+    }
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.disabled = True
+
+    def compose(self) -> ComposeResult:
+        yield Static(" ")
+
+
 class QuoteListItem(ListItem):
     """List item showing centered quote text."""
 
@@ -192,7 +213,7 @@ class EntityBrowserScreen(Screen):
 
     EntityBrowserScreen #header-container {
         height: auto;
-        padding: 1 2;
+        padding: 1 2 0 2;
         align: center top;
     }
 
@@ -216,6 +237,7 @@ class EntityBrowserScreen(Screen):
     EntityBrowserScreen #body-container {
         height: 1fr;
         width: 100%;
+        border-top: solid $accent;
     }
 
     EntityBrowserScreen #content-area {
@@ -417,7 +439,11 @@ class EntityBrowserScreen(Screen):
                     if sentences:
                         # Create quote items for each sentence with entity emphasized
                         quote_target = ENTITY_QUOTE_TARGET_LENGTH + 2
-                        for sentence in sentences:
+                        for i, sentence in enumerate(sentences):
+                            # Add separator between quotes from same entry
+                            if i > 0:
+                                quotes_list.append(QuoteSeparator())
+                                list_index += 1
                             emphasized = emphasize_rich(sentence, entity_name)
                             quote_text = f'"{emphasized}"'.ljust(quote_target)
                             item = QuoteListItem(
@@ -512,15 +538,15 @@ class EntityBrowserScreen(Screen):
         if event.list_view.id != "quotes-list":
             return
         if self.selected_episode_uuid:
-            if self.reader_open:
-                # Already open - push full ViewScreen
+            if self.reader_open and not self._is_wide_screen():
+                # Narrow screen with reader open - push full ViewScreen
                 from frontend.screens.view_screen import ViewScreen
 
                 self.app.push_screen(
                     ViewScreen(self.selected_episode_uuid, self.journal)
                 )
             else:
-                # Open the reader panel
+                # Wide screen or reader not open - open/update the reader panel
                 self._open_reader(self.selected_episode_uuid)
 
     def _open_reader(self, episode_uuid: str) -> None:
@@ -614,11 +640,13 @@ class EntityBrowserScreen(Screen):
     def action_read_entry(self) -> None:
         if not self.selected_episode_uuid:
             return
-        if self.reader_open:
+        if self.reader_open and not self._is_wide_screen():
+            # Narrow screen with reader open - push full ViewScreen
             from frontend.screens.view_screen import ViewScreen
 
             self.app.push_screen(ViewScreen(self.selected_episode_uuid, self.journal))
         else:
+            # Wide screen or reader not open - open/update the reader panel
             self._open_reader(self.selected_episode_uuid)
 
     async def action_go_home(self) -> None:
