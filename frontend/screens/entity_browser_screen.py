@@ -147,6 +147,11 @@ class EntityBrowserScreen(Screen):
         width: 100%;
     }
 
+    EntityBrowserScreen #content-area {
+        height: 1fr;
+        width: 100%;
+    }
+
     EntityBrowserScreen #quotes-container {
         height: 1fr;
         width: 100%;
@@ -155,7 +160,7 @@ class EntityBrowserScreen(Screen):
     EntityBrowserScreen #quotes-list {
         height: 100%;
         width: 100%;
-        scrollbar-size-vertical: 1;
+        scrollbar-size: 0 0;
     }
 
     EntityBrowserScreen #connections-footer {
@@ -181,51 +186,40 @@ class EntityBrowserScreen(Screen):
     }
 
     /* Reader panel (hidden by default) */
-    EntityBrowserScreen #reader-container {
-        display: none;
-    }
-
     EntityBrowserScreen #reader-panel {
-        width: 2fr;
+        display: none;
+        width: 0;
         height: 1fr;
         padding: 1 2;
-        overflow-y: auto;
+        scrollbar-size: 0 0;
     }
 
     EntityBrowserScreen #reader-date {
         color: $text-muted;
-        padding-bottom: 1;
+        text-align: center;
     }
 
-    EntityBrowserScreen #sidebar-panel {
+    /* Reader mode - wide: 50/50 split */
+    EntityBrowserScreen.reader-open #quotes-container {
         width: 1fr;
-        height: 1fr;
-        border-right: solid $accent;
-        padding: 1 2;
     }
 
-    EntityBrowserScreen #sidebar-label {
-        color: $text-muted;
-        margin-bottom: 1;
+    EntityBrowserScreen.reader-open #reader-panel {
+        display: initial;
+        width: 1fr;
     }
 
-    EntityBrowserScreen #sidebar-chips {
-        width: 100%;
-    }
-
-    EntityBrowserScreen #sidebar-chips ConnectionChip {
-        margin: 0 0 1 0;
-        width: 100%;
-    }
-
-    /* Toggle between browse and reader views */
-    EntityBrowserScreen.reader-open #body-container {
+    EntityBrowserScreen.reader-open #connections-footer {
         display: none;
     }
 
-    EntityBrowserScreen.reader-open #reader-container {
-        display: block;
-        height: 1fr;
+    /* Reader mode - narrow: hide quotes, full-width reader */
+    EntityBrowserScreen.reader-open.narrow #quotes-container {
+        display: none;
+    }
+
+    EntityBrowserScreen.reader-open.narrow #reader-panel {
+        width: 100%;
     }
 
     EntityBrowserScreen #loading {
@@ -264,12 +258,19 @@ class EntityBrowserScreen(Screen):
         header.display = False
         yield header
 
-        # Browse view: quotes list + connections footer at bottom
-        # ListView needs a Container wrapper for proper sizing in Vertical layout
+        # Main body: content area (quotes + reader) + connections footer
         body = Vertical(
-            Container(
-                ListView(id="quotes-list"),
-                id="quotes-container",
+            Horizontal(
+                Container(
+                    ListView(id="quotes-list"),
+                    id="quotes-container",
+                ),
+                VerticalScroll(
+                    Static("", id="reader-date"),
+                    Markdown("", id="reader-content"),
+                    id="reader-panel",
+                ),
+                id="content-area",
             ),
             Container(
                 Static("Also appears with", id="connections-label"),
@@ -280,22 +281,6 @@ class EntityBrowserScreen(Screen):
         )
         body.display = False
         yield body
-
-        # Reader view: sidebar + reader panel (shown when reader-open)
-        reader = Horizontal(
-            VerticalScroll(
-                Static("Also appears with", id="sidebar-label"),
-                Vertical(id="sidebar-chips"),
-                id="sidebar-panel",
-            ),
-            VerticalScroll(
-                Static("", id="reader-date"),
-                Markdown("", id="reader-content"),
-                id="reader-panel",
-            ),
-            id="reader-container",
-        )
-        yield reader
 
         yield Footer()
 
@@ -396,14 +381,6 @@ class EntityBrowserScreen(Screen):
                     chip = ConnectionChip(conn["name"], conn["uuid"], self.journal)
                     chips_container.mount(chip)
 
-                # Also populate sidebar connections (for reader view)
-                sidebar_chips = self.query_one("#sidebar-chips")
-                sidebar_chips.remove_children()
-
-                for conn in new["connections"]:
-                    chip = ConnectionChip(conn["name"], conn["uuid"], self.journal)
-                    sidebar_chips.mount(chip)
-
                 # Focus the quotes list if it has items
                 if new["entries"]:
                     quotes_list.index = 0
@@ -454,6 +431,12 @@ class EntityBrowserScreen(Screen):
             reader_date.update(date_str)
             reader_content.update(entry["content"])
 
+            # Responsive: narrow mode if terminal < 100 columns
+            if self.app.size.width < 100:
+                self.add_class("narrow")
+            else:
+                self.remove_class("narrow")
+
             self.reader_open = True
             reader_content.focus()
         except Exception as e:
@@ -462,6 +445,7 @@ class EntityBrowserScreen(Screen):
     def action_back(self) -> None:
         if self.reader_open:
             self.reader_open = False
+            self.remove_class("narrow")
             try:
                 quotes_list = self.query_one("#quotes-list", ListView)
                 quotes_list.focus()
