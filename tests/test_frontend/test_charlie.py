@@ -69,11 +69,25 @@ async def app_test_context(app):
     Textual 6.6.0 raises CancelledError during test cleanup when removing screens.
     This is a framework issue that doesn't affect test correctness - the test logic
     completes successfully before the error occurs during cleanup.
+
+    Also cancels HomeScreen workers before cleanup to prevent unraisable exceptions
+    when tests end with HomeScreen in the screen stack.
     """
     try:
         async with app.run_test() as pilot:
             await pilot.pause()
             yield pilot
+            # Cancel HomeScreen workers before cleanup to prevent unraisable exceptions
+            # HomeScreen may be in the screen stack even if not the current screen
+            for screen in app.screen_stack:
+                if isinstance(screen, HomeScreen):
+                    for group in ["processing_poll", "entities", "period_stats"]:
+                        screen.workers.cancel_group(screen, group)
+                    # Wait for workers to actually finish cancellation
+                    for _ in range(10):
+                        await pilot.pause()
+                        if not any(w.is_running for w in screen.workers):
+                            break
     except asyncio.CancelledError:
         pass
 

@@ -47,4 +47,9 @@ filterwarnings = [
     "ignore:coroutine.*was never awaited:RuntimeWarning",
     "ignore:coroutine 'Header._on_mount.<locals>.set_title' was never awaited:RuntimeWarning",
     "ignore:coroutine 'Screen._watch_selections' was never awaited:RuntimeWarning",
+    # Textual worker coroutines may report unraisable exceptions during cleanup
+    # when HomeScreen workers are cancelled at test exit. Workers are properly
+    # cancelled but coroutine cleanup timing with pytest's event loop can cause
+    # spurious warnings. These don't indicate actual test failures.
+    "ignore:Exception ignored in.*HomeScreen:pytest.PytestUnraisableExceptionWarning",
 ]
