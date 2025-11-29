@@ -62,8 +62,6 @@ def make_mock_entity_data():
             {"uuid": "conn-2", "name": "Roci", "count": 2, "sample_content": "..."},
             {"uuid": "conn-3", "name": "Tom", "count": 1, "sample_content": "..."},
         ],
-        "sparkline_data": [0, 1, 0, 2, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                          0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
     }
 
 

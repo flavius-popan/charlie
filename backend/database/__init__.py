@@ -23,14 +23,12 @@ from backend.database.persistence import (
     update_episode,
 )
 from backend.database.queries import (
-    compute_sparkline_buckets,
     episode_exists,
     get_entity_browser_data,
     get_entry_entities,
     get_episode,
     get_home_screen,
     get_period_entities,
-    render_sparkline,
     truncate_quote,
 )
 from backend.database.redis_ops import (
@@ -70,14 +68,12 @@ __all__ = [
     "update_episode",
     "delete_episode",
     # Query operations
-    "compute_sparkline_buckets",
     "episode_exists",
     "get_entity_browser_data",
     "get_entry_entities",
     "get_episode",
     "get_home_screen",
     "get_period_entities",
-    "render_sparkline",
     "truncate_quote",
     # Redis operations
     "get_active_episode_uuid",

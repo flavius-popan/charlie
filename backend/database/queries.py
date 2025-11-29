@@ -404,32 +404,6 @@ async def get_period_entities(
 ENTITY_BROWSER_QUOTE_MAX_CHARS = 220
 
 
-def compute_sparkline_buckets(entries: list[dict], bucket_count: int = 40) -> list[int]:
-    """Divide time span into fixed buckets, count entries per bucket."""
-    if not entries:
-        return [0] * bucket_count
-
-    dates = [e["valid_at"] for e in entries]
-    min_date, max_date = min(dates), max(dates)
-    span = (max_date - min_date).total_seconds() or 1
-    bucket_size = span / bucket_count
-
-    buckets = [0] * bucket_count
-    for date in dates:
-        idx = min(
-            bucket_count - 1, int((date - min_date).total_seconds() / bucket_size)
-        )
-        buckets[idx] += 1
-    return buckets
-
-
-def render_sparkline(buckets: list[int]) -> str:
-    """Convert bucket counts to Unicode sparkline characters."""
-    chars = " \u2581\u2582\u2583\u2584\u2585\u2586\u2587"  # 8 levels (space = 0)
-    max_val = max(buckets) or 1
-    return "".join(chars[min(7, int(b / max_val * 7))] for b in buckets)
-
-
 def truncate_quote(
     content: str, max_chars: int = ENTITY_BROWSER_QUOTE_MAX_CHARS
 ) -> str:
@@ -582,7 +556,6 @@ async def get_entity_browser_data(
         - entity: {uuid, name, first_mention, last_mention, entry_count}
         - entries: [{episode_uuid, content, valid_at}]  # newest first
         - connections: [{uuid, name, count, sample_content}]
-        - sparkline_data: [int, ...]  # ~40 buckets, entries per bucket
     """
     driver = get_driver(journal)
 
@@ -636,9 +609,6 @@ async def get_entity_browser_data(
             }
         )
 
-    # Compute sparkline buckets
-    sparkline_data = compute_sparkline_buckets(entries)
-
     # Build entity summary
     first_mention = entries[-1]["valid_at"] if entries else None
     last_mention = entries[0]["valid_at"] if entries else None
@@ -653,7 +623,6 @@ async def get_entity_browser_data(
         },
         "entries": entries,
         "connections": connections,
-        "sparkline_data": sparkline_data,
     }
 
 
@@ -665,8 +634,6 @@ __all__ = [
     "get_entry_entities",
     "get_period_entities",
     "get_entity_browser_data",
-    "compute_sparkline_buckets",
-    "render_sparkline",
     "truncate_quote",
     "extract_entity_snippet",
 ]

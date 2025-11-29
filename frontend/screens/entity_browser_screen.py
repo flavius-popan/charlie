@@ -10,7 +10,7 @@ from textual.reactive import reactive
 from textual.screen import Screen
 from textual.widgets import Footer, Header, ListItem, ListView, Markdown, Static
 
-from backend.database import get_entity_browser_data, render_sparkline
+from backend.database import get_entity_browser_data
 from backend.database.queries import extract_entity_sentences, ENTITY_QUOTE_TARGET_LENGTH
 from backend.settings import DEFAULT_JOURNAL
 
@@ -118,28 +118,6 @@ class EntityBrowserScreen(Screen):
         text-align: center;
         text-style: bold;
         width: 100%;
-        margin-bottom: 1;
-    }
-
-    EntityBrowserScreen #sparkline-row {
-        height: 1;
-        align: center middle;
-    }
-
-    EntityBrowserScreen #start-date {
-        width: auto;
-        color: $text-muted;
-        margin-right: 1;
-    }
-
-    EntityBrowserScreen #sparkline {
-        width: auto;
-    }
-
-    EntityBrowserScreen #end-date {
-        width: auto;
-        color: $text-muted;
-        margin-left: 1;
     }
 
     EntityBrowserScreen #body-container {
@@ -247,12 +225,6 @@ class EntityBrowserScreen(Screen):
         # Header container (frozen)
         header = Container(
             Static("", id="entity-name"),
-            Horizontal(
-                Static("", id="start-date"),
-                Static("", id="sparkline"),
-                Static("", id="end-date"),
-                id="sparkline-row",
-            ),
             id="header-container",
         )
         header.display = False
@@ -321,24 +293,6 @@ class EntityBrowserScreen(Screen):
                 entity_name = entity["name"]
                 name_widget = self.query_one("#entity-name", Static)
                 name_widget.update(entity_name)
-
-                # Update sparkline
-                sparkline_str = render_sparkline(new["sparkline_data"])
-                sparkline_widget = self.query_one("#sparkline", Static)
-                sparkline_widget.update(sparkline_str)
-
-                # Update dates
-                first = entity.get("first_mention")
-                last = entity.get("last_mention")
-                start_widget = self.query_one("#start-date", Static)
-                end_widget = self.query_one("#end-date", Static)
-
-                if first and last:
-                    start_widget.update(first.strftime("%b %Y"))
-                    end_widget.update(last.strftime("%b %Y"))
-                else:
-                    start_widget.update("")
-                    end_widget.update("")
 
                 # Populate quotes list with entity-specific sentences
                 quotes_list = self.query_one("#quotes-list", ListView)
