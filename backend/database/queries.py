@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from collections import Counter
 from datetime import datetime
 
@@ -11,7 +12,12 @@ from graphiti_core.errors import NodeNotFoundError
 from graphiti_core.nodes import EpisodicNode
 
 from backend.database.driver import get_driver
-from backend.database.redis_ops import redis_ops, add_suppressed_entity, set_episode_status
+from backend.database.redis_ops import (
+    redis_ops,
+    add_suppressed_entity,
+    set_episode_status,
+)
+from backend.database.utils import to_cypher_literal
 from backend.settings import DEFAULT_JOURNAL
 
 
@@ -84,7 +90,9 @@ def _build_preview(snippet: str, max_len: int = HOME_PREVIEW_MAX_LEN) -> str:
         found_sentence = False
     else:
         flat = text.replace("\n", " ").strip()
-        sentence_ends = [pos for pos in (flat.find("."), flat.find("!"), flat.find("?")) if pos != -1]
+        sentence_ends = [
+            pos for pos in (flat.find("."), flat.find("!"), flat.find("?")) if pos != -1
+        ]
         if sentence_ends:
             end_pos = min(sentence_ends)
             candidate = flat[: end_pos + 1].strip()
@@ -101,7 +109,11 @@ def _build_preview(snippet: str, max_len: int = HOME_PREVIEW_MAX_LEN) -> str:
     add_ellipsis = False
     if truncated:
         add_ellipsis = True
-    elif not found_sentence and not first_line.startswith("# ") and len(snippet.strip()) >= max_len:
+    elif (
+        not found_sentence
+        and not first_line.startswith("# ")
+        and len(snippet.strip()) >= max_len
+    ):
         # No sentence end found in the available snippet and it's long enough
         # that we likely chopped the original content.
         add_ellipsis = True
@@ -255,7 +267,8 @@ async def delete_entity_mention(
                 uuid_map = json.loads(uuid_map_json.decode())
                 # Remove mappings where canonical UUID = deleted entity
                 updated_map = {
-                    prov: canon for prov, canon in uuid_map.items()
+                    prov: canon
+                    for prov, canon in uuid_map.items()
                     if canon != entity_uuid
                 }
                 if updated_map != uuid_map:
@@ -379,14 +392,268 @@ async def get_period_entities(
                 }
 
     # Get top 25 entities by mention frequency
-    top_entities = [
-        entity_info[name] for name, _ in entity_counts.most_common(25)
-    ]
+    top_entities = [entity_info[name] for name, _ in entity_counts.most_common(25)]
 
     return {
         "entry_count": entry_count,
         "connection_count": total_connections,
         "top_entities": top_entities,
+    }
+
+
+ENTITY_BROWSER_QUOTE_MAX_CHARS = 220
+
+
+def compute_sparkline_buckets(entries: list[dict], bucket_count: int = 40) -> list[int]:
+    """Divide time span into fixed buckets, count entries per bucket."""
+    if not entries:
+        return [0] * bucket_count
+
+    dates = [e["valid_at"] for e in entries]
+    min_date, max_date = min(dates), max(dates)
+    span = (max_date - min_date).total_seconds() or 1
+    bucket_size = span / bucket_count
+
+    buckets = [0] * bucket_count
+    for date in dates:
+        idx = min(
+            bucket_count - 1, int((date - min_date).total_seconds() / bucket_size)
+        )
+        buckets[idx] += 1
+    return buckets
+
+
+def render_sparkline(buckets: list[int]) -> str:
+    """Convert bucket counts to Unicode sparkline characters."""
+    chars = " \u2581\u2582\u2583\u2584\u2585\u2586\u2587"  # 8 levels (space = 0)
+    max_val = max(buckets) or 1
+    return "".join(chars[min(7, int(b / max_val * 7))] for b in buckets)
+
+
+def truncate_quote(
+    content: str, max_chars: int = ENTITY_BROWSER_QUOTE_MAX_CHARS
+) -> str:
+    """Extract first sentence or truncate at word boundary."""
+    if not content:
+        return ""
+    # Strip markdown headers
+    content = re.sub(r"^#+\s+.*$", "", content, flags=re.MULTILINE).strip()
+    if not content:
+        return ""
+    # Find first sentence
+    match = re.search(r"^[^.!?]*[.!?]", content)
+    if match and len(match.group()) <= max_chars:
+        return match.group()
+    # Truncate at word boundary
+    if len(content) <= max_chars:
+        return content
+    truncated = content[:max_chars].rsplit(" ", 1)[0]
+    return truncated + "..."
+
+
+def extract_entity_snippet(
+    content: str, entity_name: str, max_chars: int = ENTITY_BROWSER_QUOTE_MAX_CHARS
+) -> str:
+    """Extract a snippet centered on the entity mention.
+
+    Finds the entity name in the content and extracts surrounding context.
+    Handles possessives ('s) and case-insensitive matching.
+    """
+    if not content or not entity_name:
+        return truncate_quote(content, max_chars)
+
+    # Strip markdown headers and normalize whitespace
+    clean = re.sub(r"^#+\s+.*$", "", content, flags=re.MULTILINE)
+    clean = re.sub(r"\s+", " ", clean).strip()
+
+    if not clean:
+        return ""
+
+    # Build pattern for entity name (case-insensitive, handle possessives)
+    escaped_name = re.escape(entity_name)
+    pattern = rf"\b{escaped_name}(?:'s|'s)?\b"
+
+    match = re.search(pattern, clean, re.IGNORECASE)
+    if not match:
+        # Entity not found, fall back to truncate
+        return truncate_quote(content, max_chars)
+
+    # Extract context around the match
+    start_pos = match.start()
+    end_pos = match.end()
+
+    # Calculate how much context we can show on each side
+    context_chars = (max_chars - (end_pos - start_pos)) // 2
+
+    # Find snippet boundaries
+    snippet_start = max(0, start_pos - context_chars)
+    snippet_end = min(len(clean), end_pos + context_chars)
+
+    # Adjust to word boundaries
+    if snippet_start > 0:
+        # Find next space after snippet_start
+        space_pos = clean.find(" ", snippet_start)
+        if space_pos != -1 and space_pos < start_pos:
+            snippet_start = space_pos + 1
+
+    if snippet_end < len(clean):
+        # Find last space before snippet_end
+        space_pos = clean.rfind(" ", end_pos, snippet_end)
+        if space_pos != -1:
+            snippet_end = space_pos
+
+    snippet = clean[snippet_start:snippet_end].strip()
+
+    # Add ellipsis if truncated
+    prefix = "..." if snippet_start > 0 else ""
+    suffix = "..." if snippet_end < len(clean) else ""
+
+    return f"{prefix}{snippet}{suffix}"
+
+
+ENTITY_QUOTE_TARGET_LENGTH = 220
+
+
+def extract_entity_sentences(
+    content: str,
+    entity_name: str,
+    max_sentences: int = 3,
+    target_length: int = ENTITY_QUOTE_TARGET_LENGTH,
+) -> list[str]:
+    """Extract all sentences mentioning the entity from content.
+
+    Returns complete sentences containing the entity name.
+    Handles possessives ('s) and case-insensitive matching.
+    Pads shorter sentences with trailing context to reach target_length.
+    """
+    if not content or not entity_name:
+        return []
+
+    # Strip markdown headers and normalize whitespace
+    clean = re.sub(r"^#+\s+.*$", "", content, flags=re.MULTILINE)
+    clean = re.sub(r"\s+", " ", clean).strip()
+
+    if not clean:
+        return []
+
+    # Split into sentences (handle ., !, ? followed by space or end)
+    sentences = re.split(r"(?<=[.!?])\s+", clean)
+
+    # Build pattern for entity name (case-insensitive, handle possessives)
+    escaped_name = re.escape(entity_name)
+    pattern = rf"\b{escaped_name}(?:'s|'s)?\b"
+
+    # Find sentences containing the entity, with their indices
+    matching = []
+    for i, sentence in enumerate(sentences):
+        if re.search(pattern, sentence, re.IGNORECASE):
+            sentence = sentence.strip()
+            # Strip leading non-alphabetical characters (bullets, dashes, etc.)
+            sentence = re.sub(r"^[^a-zA-Z]+", "", sentence)
+            if sentence and len(sentence) > 10:  # Skip very short fragments
+                # Pad short sentences with trailing context
+                if len(sentence) < target_length:
+                    padded = sentence
+                    j = i + 1
+                    while len(padded) < target_length and j < len(sentences):
+                        next_sent = sentences[j].strip()
+                        # Also strip leading non-alpha from continuation
+                        next_sent = re.sub(r"^[^a-zA-Z]+", "", next_sent)
+                        if next_sent:
+                            padded = padded + " " + next_sent
+                        j += 1
+                    # Truncate if we went over, add ellipsis
+                    if len(padded) > target_length:
+                        padded = padded[:target_length].rsplit(" ", 1)[0] + "..."
+                    matching.append(padded)
+                else:
+                    matching.append(sentence)
+
+    return matching[:max_sentences]
+
+
+async def get_entity_browser_data(
+    entity_uuid: str, journal: str = DEFAULT_JOURNAL
+) -> dict:
+    """Single function returning everything needed for the entity browser.
+
+    Returns:
+        Dict with:
+        - entity: {uuid, name, first_mention, last_mention, entry_count}
+        - entries: [{episode_uuid, content, valid_at}]  # newest first
+        - connections: [{uuid, name, count, sample_content}]
+        - sparkline_data: [int, ...]  # ~40 buckets, entries per bucket
+    """
+    driver = get_driver(journal)
+
+    # Query 1: Get entity details + all episodes mentioning it
+    episodes_query = f"""
+    MATCH (e:Entity {{uuid: {to_cypher_literal(entity_uuid)}, group_id: {to_cypher_literal(journal)}}})
+    MATCH (ep:Episodic)-[:MENTIONS]->(e)
+    RETURN e.name as name, ep.uuid as episode_uuid, ep.content as content, ep.valid_at as valid_at
+    ORDER BY ep.valid_at DESC
+    """
+
+    episodes_records, _, _ = await driver.execute_query(episodes_query)
+
+    # Parse episode results
+    entity_name = None
+    entries = []
+    for record in episodes_records:
+        if entity_name is None:
+            entity_name = record.get("name")
+        valid_at = _parse_valid_at(record.get("valid_at"))
+        entries.append(
+            {
+                "episode_uuid": record.get("episode_uuid"),
+                "content": record.get("content"),
+                "valid_at": valid_at,
+            }
+        )
+
+    # Query 2: Get co-occurring entities (connections)
+    connections_query = f"""
+    MATCH (ep:Episodic)-[:MENTIONS]->(e:Entity {{uuid: {to_cypher_literal(entity_uuid)}}})
+    MATCH (ep)-[:MENTIONS]->(other:Entity)
+    WHERE other.uuid <> {to_cypher_literal(entity_uuid)}
+      AND other.name <> 'I'
+    WITH other, count(DISTINCT ep) as co_count, collect(ep.content)[0] as sample
+    RETURN other.uuid as uuid, other.name as name, co_count, sample
+    ORDER BY co_count DESC
+    LIMIT 20
+    """
+
+    connections_records, _, _ = await driver.execute_query(connections_query)
+
+    connections = []
+    for record in connections_records:
+        connections.append(
+            {
+                "uuid": record.get("uuid"),
+                "name": record.get("name"),
+                "count": record.get("co_count"),
+                "sample_content": record.get("sample"),
+            }
+        )
+
+    # Compute sparkline buckets
+    sparkline_data = compute_sparkline_buckets(entries)
+
+    # Build entity summary
+    first_mention = entries[-1]["valid_at"] if entries else None
+    last_mention = entries[0]["valid_at"] if entries else None
+
+    return {
+        "entity": {
+            "uuid": entity_uuid,
+            "name": entity_name or "",
+            "first_mention": first_mention,
+            "last_mention": last_mention,
+            "entry_count": len(entries),
+        },
+        "entries": entries,
+        "connections": connections,
+        "sparkline_data": sparkline_data,
     }
 
 
@@ -397,4 +664,9 @@ __all__ = [
     "delete_entity_mention",
     "get_entry_entities",
     "get_period_entities",
+    "get_entity_browser_data",
+    "compute_sparkline_buckets",
+    "render_sparkline",
+    "truncate_quote",
+    "extract_entity_snippet",
 ]
