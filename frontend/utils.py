@@ -3,10 +3,45 @@
 from datetime import datetime, timedelta, timezone
 
 
-def get_display_title(episode: dict, max_chars: int = 50) -> str:
-    """Get a short, display-ready title without inspecting full content."""
+def _extract_preview_from_content(content: str, max_chars: int) -> str:
+    """Extract preview from content - markdown title or first line."""
+    lines = content.strip().split("\n")
 
-    source = (episode.get("preview") or episode.get("name") or "Untitled").strip()
+    # Look for markdown title
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("# "):
+            title = stripped[2:].strip()
+            if title:
+                if len(title) <= max_chars:
+                    return title
+                return title[:max_chars].rstrip(".!? ") + "..."
+
+    # No title found - use first non-empty line
+    for line in lines:
+        stripped = line.strip()
+        if stripped:
+            if len(stripped) <= max_chars:
+                return stripped
+            return stripped[:max_chars].rstrip(".!? ") + "..."
+
+    return "Untitled"
+
+
+def get_display_title(episode: dict, max_chars: int = 50) -> str:
+    """Get a short, display-ready title.
+
+    Tries in order: preview field, name field, extracted from content, "Untitled".
+    """
+    source = episode.get("preview") or episode.get("name")
+
+    if not source and episode.get("content"):
+        return _extract_preview_from_content(episode["content"], max_chars)
+
+    if not source:
+        return "Untitled"
+
+    source = source.strip()
     if len(source) <= max_chars:
         return source
 
@@ -225,3 +260,72 @@ def inject_entity_links(
         result = re.sub(pattern, make_replacement, result, flags=re.IGNORECASE)
 
     return result
+
+
+def emphasize_rich(content: str, text: str) -> str:
+    """Wrap occurrences of text with Rich bold markup ([bold]text[/bold]).
+
+    For use with Textual Static widgets that support Rich markup.
+
+    Args:
+        content: Raw text
+        text: The text to emphasize (case-insensitive matching)
+
+    Returns:
+        Text with Rich bold markup applied
+    """
+    import re
+
+    if not text or len(text) < 2:
+        return content
+
+    escaped_text = re.escape(text)
+
+    pattern = (
+        r"\b(" + escaped_text + r")"
+        r"(?:'s|')?"  # Optional possessive
+        r"\b"
+    )
+
+    def make_replacement(match: re.Match) -> str:
+        matched_text = match.group(0)
+        return f"[bold]{matched_text}[/bold]"
+
+    return re.sub(pattern, make_replacement, content, flags=re.IGNORECASE)
+
+
+def emphasize_text(content: str, text: str) -> str:
+    """Wrap occurrences of text with markdown bold (**text**).
+
+    Args:
+        content: Raw markdown text
+        text: The text to emphasize (case-insensitive matching)
+
+    Returns:
+        Markdown with text wrapped in bold
+    """
+    import re
+
+    if not text or len(text) < 2:
+        return content
+
+    escaped_text = re.escape(text)
+
+    # Pattern similar to inject_entity_links but simpler
+    # Avoid already-bold text or text in links
+    pattern = (
+        r"(?<!\*\*)"  # Not after **
+        r"(?<!\[)"  # Not after [
+        r"(?<![/])"  # Not after / (in URLs)
+        r"\b(" + escaped_text + r")"
+        r"(?:'s|')?"  # Optional possessive
+        r"\b"
+        r"(?!\*\*)"  # Not before **
+        r"(?!\])"  # Not before ]
+    )
+
+    def make_replacement(match: re.Match) -> str:
+        matched_text = match.group(0)
+        return f"**{matched_text}**"
+
+    return re.sub(pattern, make_replacement, content, flags=re.IGNORECASE)

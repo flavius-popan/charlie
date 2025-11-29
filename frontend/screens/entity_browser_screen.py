@@ -1,6 +1,5 @@
 """Entity Browser screen for viewing entity details and memories."""
 
-import asyncio
 import logging
 
 from textual.app import ComposeResult
@@ -11,11 +10,70 @@ from textual.screen import Screen
 from textual.widgets import Footer, Header, ListItem, ListView, Markdown, Static
 
 from backend.database import get_entity_browser_data, get_entry_entities_with_counts
-from backend.database.queries import extract_entity_sentences, ENTITY_QUOTE_TARGET_LENGTH
+from backend.database.queries import (
+    extract_entity_sentences,
+    ENTITY_QUOTE_TARGET_LENGTH,
+)
 from backend.settings import DEFAULT_JOURNAL
-from frontend.utils import inject_entity_links
+from frontend.utils import (
+    inject_entity_links,
+    emphasize_text,
+    emphasize_rich,
+    get_display_title,
+)
 
 logger = logging.getLogger("charlie")
+
+
+class ThickSeparator(ListItem):
+    """Thick separator before date groups (invisible spacing)."""
+
+    SCOPED_CSS = False
+    DEFAULT_CSS = """
+    ThickSeparator {
+        height: auto;
+        min-height: 1;
+        padding: 0;
+        margin: 0;
+        background: transparent;
+    }
+
+    ThickSeparator:hover {
+        background: transparent;
+    }
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.disabled = True
+
+    def compose(self) -> ComposeResult:
+        yield Static("")
+
+
+class QuoteSeparator(ListItem):
+    """Thin separator between quotes (invisible spacing)."""
+
+    SCOPED_CSS = False
+    DEFAULT_CSS = """
+    QuoteSeparator {
+        height: 1;
+        padding: 0;
+        margin: 0;
+        background: transparent;
+    }
+
+    QuoteSeparator:hover {
+        background: transparent;
+    }
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.disabled = True
+
+    def compose(self) -> ComposeResult:
+        yield Static("")
 
 
 class DateListItem(ListItem):
@@ -24,13 +82,12 @@ class DateListItem(ListItem):
     SCOPED_CSS = False
     DEFAULT_CSS = """
     DateListItem {
-        height: 1;
-        padding: 0 0 0 2;
+        height: auto;
+        padding: 1 0 0 2;
     }
 
     DateListItem .date-text {
         color: $text-muted;
-        text-style: bold;
     }
     """
 
@@ -51,7 +108,7 @@ class QuoteListItem(ListItem):
     QuoteListItem {
         height: auto;
         min-height: 1;
-        padding: 1 4;
+        padding: 0 4;
     }
 
     QuoteListItem .quote-text {
@@ -60,28 +117,54 @@ class QuoteListItem(ListItem):
     }
     """
 
-    def __init__(self, quote_text: str, episode_uuid: str):
+    def __init__(self, quote_text: str, episode_uuid: str, markup: bool = False):
         super().__init__()
         self.quote_text = quote_text
         self.episode_uuid = episode_uuid
+        self._markup = markup
 
     def compose(self) -> ComposeResult:
-        yield Static(self.quote_text, classes="quote-text")
+        yield Static(self.quote_text, classes="quote-text", markup=self._markup)
 
 
-class ConnectionChip(Static):
-    """Clickable chip for navigating to connected entities."""
+class TitleListItem(ListItem):
+    """List item showing episode title for entries without extractable quotes."""
 
+    SCOPED_CSS = False
     DEFAULT_CSS = """
-    ConnectionChip {
-        width: auto;
-        background: $panel;
-        padding: 0 1;
-        margin: 0 1 0 0;
+    TitleListItem {
+        height: auto;
+        padding: 0 4;
+        text-align: center;
     }
 
-    ConnectionChip:hover {
-        background: $accent;
+    TitleListItem .title-text {
+        width: 100%;
+        text-align: left;
+    }
+    """
+
+    def __init__(self, title: str, episode_uuid: str):
+        super().__init__()
+        self.title = title
+        self.episode_uuid = episode_uuid
+
+    def compose(self) -> ComposeResult:
+        yield Static(self.title, classes="title-text")
+
+
+class ConnectionLink(Static):
+    """Clickable text link for navigating to connected entities."""
+
+    DEFAULT_CSS = """
+    ConnectionLink {
+        width: auto;
+        color: $text-muted;
+    }
+
+    ConnectionLink:hover {
+        color: $text;
+        text-style: underline;
     }
     """
 
@@ -92,6 +175,54 @@ class ConnectionChip(Static):
 
     def on_click(self) -> None:
         self.app.push_screen(EntityBrowserScreen(self.entity_uuid, self.journal))
+
+
+class ConnectionSeparator(Static):
+    """Dot separator between connection links."""
+
+    DEFAULT_CSS = """
+    ConnectionSeparator {
+        width: auto;
+        color: $text-muted;
+        padding: 0 1;
+    }
+    """
+
+    def __init__(self):
+        super().__init__("·")
+
+
+class MentionInfo(Static):
+    """Clickable mention info that scrolls to oldest quote."""
+
+    DEFAULT_CSS = """
+    MentionInfo {
+        width: 100%;
+        text-align: center;
+        color: $text-muted;
+    }
+
+    MentionInfo:hover {
+        color: $text;
+        text-style: underline;
+    }
+    """
+
+    def __init__(self, text: str = "", oldest_index: int = 0, **kwargs):
+        super().__init__(text, **kwargs)
+        self.oldest_index = oldest_index
+
+    def on_click(self) -> None:
+        """Scroll to oldest quote when clicked."""
+        try:
+            screen = self.screen
+            quotes_list = screen.query_one("#quotes-list", ListView)
+            # Set index and scroll to that position
+            quotes_list.index = self.oldest_index
+            quotes_list.scroll_to_widget(quotes_list.children[self.oldest_index])
+            quotes_list.focus()
+        except Exception:
+            pass
 
 
 class EntityBrowserScreen(Screen):
@@ -113,12 +244,24 @@ class EntityBrowserScreen(Screen):
     EntityBrowserScreen #header-container {
         height: auto;
         padding: 1 2;
+        align: center top;
     }
 
     EntityBrowserScreen #entity-name {
         text-align: center;
         text-style: bold;
         width: 100%;
+        height: auto;
+    }
+
+    EntityBrowserScreen #mention-info {
+        height: auto;
+    }
+
+    EntityBrowserScreen #quotes-footer {
+        width: 100%;
+        height: auto;
+        align: center middle;
     }
 
     EntityBrowserScreen #body-container {
@@ -133,44 +276,28 @@ class EntityBrowserScreen(Screen):
 
     EntityBrowserScreen #quotes-container {
         height: 1fr;
-        width: 100%;
+        width: 1fr;
     }
 
     EntityBrowserScreen #quotes-list {
-        height: 100%;
+        height: 1fr;
         width: 100%;
         scrollbar-size: 0 0;
     }
 
-    EntityBrowserScreen #connections-footer {
-        height: 3;
-        width: 100%;
-        padding: 0 2;
-        background: $panel;
-    }
-
-    EntityBrowserScreen #connections-label {
-        width: 100%;
-        text-align: center;
-        color: $text-muted;
-    }
-
-    EntityBrowserScreen #connections-chips {
-        width: 100%;
-        align: center middle;
-    }
-
-    EntityBrowserScreen ConnectionChip {
-        margin: 0 1 0 0;
-    }
 
     /* Reader panel (hidden by default) */
     EntityBrowserScreen #reader-panel {
         display: none;
         width: 0;
         height: 1fr;
-        padding: 1 2;
+        padding: 0 2;
         scrollbar-size: 0 0;
+    }
+
+    EntityBrowserScreen #reader-content {
+        padding: 0;
+        margin: 0;
     }
 
     EntityBrowserScreen #reader-date {
@@ -178,7 +305,7 @@ class EntityBrowserScreen(Screen):
         text-align: center;
     }
 
-    /* Reader mode - wide: 50/50 split */
+    /* Reader mode - wide: 50/50 split, hide date in reader */
     EntityBrowserScreen.reader-open #quotes-container {
         width: 1fr;
     }
@@ -188,13 +315,19 @@ class EntityBrowserScreen(Screen):
         width: 1fr;
     }
 
-    EntityBrowserScreen.reader-open #connections-footer {
+    EntityBrowserScreen.reader-open #reader-date {
+        display: none;
+        height: 0;
+    }
+
+    /* Reader mode - narrow: hide quotes, full-width reader, show date */
+    EntityBrowserScreen.reader-open.narrow #quotes-container {
         display: none;
     }
 
-    /* Reader mode - narrow: hide quotes, full-width reader */
-    EntityBrowserScreen.reader-open.narrow #quotes-container {
-        display: none;
+    EntityBrowserScreen.reader-open.narrow #reader-date {
+        display: block;
+        height: auto;
     }
 
     EntityBrowserScreen.reader-open.narrow #reader-panel {
@@ -223,18 +356,20 @@ class EntityBrowserScreen(Screen):
         # Loading state
         yield Static("Loading...", id="loading")
 
-        # Header container (frozen)
+        # Header container (frozen) with name, mention info, and connections
         header = Container(
             Static("", id="entity-name"),
+            MentionInfo("", id="mention-info"),
+            Horizontal(id="quotes-footer"),
             id="header-container",
         )
         header.display = False
         yield header
 
-        # Main body: content area (quotes + reader) + connections footer
+        # Main body: content area (quotes + reader)
         body = Vertical(
             Horizontal(
-                Container(
+                Vertical(
                     ListView(id="quotes-list"),
                     id="quotes-container",
                 ),
@@ -244,11 +379,6 @@ class EntityBrowserScreen(Screen):
                     id="reader-panel",
                 ),
                 id="content-area",
-            ),
-            Container(
-                Static("Also appears with", id="connections-label"),
-                Horizontal(id="connections-chips"),
-                id="connections-footer",
             ),
             id="body-container",
         )
@@ -283,13 +413,14 @@ class EntityBrowserScreen(Screen):
             loading = self.query_one("#loading", Static)
             header = self.query_one("#header-container", Container)
             body = self.query_one("#body-container", Vertical)
+            quotes_footer = self.query_one("#quotes-footer", Horizontal)
 
             with self.app.batch_update():
                 loading.display = False
                 header.display = True
                 body.display = True
 
-                # Update header
+                # Update header - entity name
                 entity = new["entity"]
                 entity_name = entity["name"]
                 name_widget = self.query_one("#entity-name", Static)
@@ -300,45 +431,111 @@ class EntityBrowserScreen(Screen):
                 quotes_list.clear()
 
                 prev_date = None
+                list_index = 0
+                oldest_quote_index = 0  # Track index of oldest (last) quote
+                total_quote_count = 0  # Count actual quotes for mention info
+                is_first_date = True
+                last_item_was_quote = False
+
                 for entry in new["entries"]:
                     valid_at = entry["valid_at"]
                     date = valid_at.date() if hasattr(valid_at, "date") else valid_at
 
                     # Extract all sentences mentioning the entity
                     sentences = extract_entity_sentences(entry["content"], entity_name)
-                    if not sentences:
-                        continue
 
-                    # Add date item when date changes
+                    # Add date item when date changes (with year)
                     is_new_date = date != prev_date
                     if is_new_date:
+                        # Add thick separator before date groups (except first)
+                        if not is_first_date:
+                            quotes_list.append(ThickSeparator())
+                            list_index += 1
+                        is_first_date = False
+
                         date_str = (
-                            valid_at.strftime("%b %-d")
+                            valid_at.strftime("%b %-d, %Y")
                             if hasattr(valid_at, "strftime")
                             else str(date)
                         )
                         prev_date = date
                         quotes_list.append(DateListItem(date_str))
+                        list_index += 1
+                        last_item_was_quote = False
 
-                    # Create quote items for each sentence
-                    # Pad to consistent length (content + 2 for quotes)
-                    quote_target = ENTITY_QUOTE_TARGET_LENGTH + 2
-                    for sentence in sentences:
-                        quote_text = f'"{sentence}"'.ljust(quote_target)
-                        item = QuoteListItem(quote_text, entry["episode_uuid"])
+                    if sentences:
+                        # Create quote items for each sentence with entity emphasized
+                        quote_target = ENTITY_QUOTE_TARGET_LENGTH + 2
+                        for sentence in sentences:
+                            # Add separator between quotes
+                            if last_item_was_quote:
+                                quotes_list.append(QuoteSeparator())
+                                list_index += 1
+
+                            emphasized = emphasize_rich(sentence, entity_name)
+                            quote_text = f'"{emphasized}"'.ljust(quote_target)
+                            item = QuoteListItem(
+                                quote_text, entry["episode_uuid"], markup=True
+                            )
+                            quotes_list.append(item)
+                            oldest_quote_index = list_index  # Last quote is oldest
+                            list_index += 1
+                            total_quote_count += 1
+                            last_item_was_quote = True
+                    else:
+                        # Add separator if last item was a quote
+                        if last_item_was_quote:
+                            quotes_list.append(QuoteSeparator())
+                            list_index += 1
+
+                        # No extractable quotes - show episode title instead
+                        title = get_display_title(entry, max_chars=60)
+                        item = TitleListItem(title, entry["episode_uuid"])
                         quotes_list.append(item)
+                        oldest_quote_index = list_index
+                        list_index += 1
+                        last_item_was_quote = True
 
-                # Populate footer connections (limit to 5)
-                chips_container = self.query_one("#connections-chips", Horizontal)
-                chips_container.remove_children()
+                # Update mention info in header (use quote count, not entry count)
+                mention_info = self.query_one("#mention-info", MentionInfo)
+                first_mention = entity.get("first_mention")
 
-                for conn in new["connections"][:5]:
-                    chip = ConnectionChip(conn["name"], conn["uuid"], self.journal)
-                    chips_container.mount(chip)
+                if first_mention and hasattr(first_mention, "strftime"):
+                    date_str = first_mention.strftime("%b %-d, %Y")
+                    if total_quote_count == 1:
+                        mention_text = f"mentioned once on {date_str}"
+                    elif total_quote_count > 1:
+                        mention_text = f"first mentioned {date_str}"
+                    else:
+                        # No quotes found, fall back to entry-based text
+                        mention_text = f"appears in entry from {date_str}"
+                else:
+                    mention_text = ""
 
-                # Focus the quotes list if it has items
-                if new["entries"]:
-                    quotes_list.index = 0
+                mention_info.update(mention_text)
+                mention_info.oldest_index = oldest_quote_index
+
+                # Populate footer connections as text links (limit to 5)
+                quotes_footer.remove_children()
+
+                connections = new["connections"][:5]
+                for i, conn in enumerate(connections):
+                    link = ConnectionLink(conn["name"], conn["uuid"], self.journal)
+                    quotes_footer.mount(link)
+                    # Add separator after all but the last
+                    if i < len(connections) - 1:
+                        quotes_footer.mount(ConnectionSeparator())
+
+                # Focus the quotes list on first selectable (non-disabled) item
+                if quotes_list.children:
+                    # Find first selectable item (QuoteListItem or TitleListItem)
+                    for i, child in enumerate(quotes_list.children):
+                        if isinstance(child, (QuoteListItem, TitleListItem)):
+                            quotes_list.index = i
+                            # Set selected_episode_uuid since programmatic index
+                            # change doesn't fire Highlighted event
+                            self.selected_episode_uuid = child.episode_uuid
+                            break
                     quotes_list.focus()
 
         except Exception as e:
@@ -350,14 +547,35 @@ class EntityBrowserScreen(Screen):
         else:
             self.remove_class("reader-open")
 
-    def on_list_view_selected(self, event: ListView.Selected) -> None:
+    def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
+        """Track highlighted item for selection (does not open reader)."""
         if event.list_view.id != "quotes-list":
             return
+        if event.item is None:
+            return
 
-        # Get the selected QuoteListItem
+        # Get episode UUID from the highlighted item
+        episode_uuid = None
         if isinstance(event.item, QuoteListItem):
-            self.selected_episode_uuid = event.item.episode_uuid
-            self._open_reader(event.item.episode_uuid)
+            episode_uuid = event.item.episode_uuid
+        elif isinstance(event.item, TitleListItem):
+            episode_uuid = event.item.episode_uuid
+
+        if episode_uuid is not None:
+            self.selected_episode_uuid = episode_uuid
+
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        """Handle Enter key on ListView - open reader."""
+        if event.list_view.id != "quotes-list":
+            return
+        if self.selected_episode_uuid:
+            if self.reader_open:
+                # Already open - push full ViewScreen
+                from frontend.screens.view_screen import ViewScreen
+                self.app.push_screen(ViewScreen(self.selected_episode_uuid, self.journal))
+            else:
+                # Open the reader panel
+                self._open_reader(self.selected_episode_uuid)
 
     def _open_reader(self, episode_uuid: str) -> None:
         if self.entity_data is None:
@@ -400,14 +618,13 @@ class EntityBrowserScreen(Screen):
                 self.remove_class("narrow")
 
             self.reader_open = True
-            reader_content.focus()
         except Exception as e:
             logger.error("Failed to open reader: %s", e, exc_info=True)
 
     async def _load_linked_content(
         self, episode_uuid: str, content: str, reader_content: Markdown
     ) -> None:
-        """Load content with entity links injected."""
+        """Load content with entity links injected and current entity emphasized."""
         try:
             entities = await get_entry_entities_with_counts(episode_uuid, self.journal)
             if entities:
@@ -415,6 +632,10 @@ class EntityBrowserScreen(Screen):
                 content = inject_entity_links(
                     content, entities, min_mentions=2, exclude_uuids={self.entity_uuid}
                 )
+            # Emphasize the current entity name in the content
+            if self.entity_data:
+                entity_name = self.entity_data["entity"]["name"]
+                content = emphasize_text(content, entity_name)
             await reader_content.update(content)
         except Exception as e:
             logger.error("Failed to load linked content: %s", e, exc_info=True)
@@ -443,12 +664,27 @@ class EntityBrowserScreen(Screen):
             self.app.pop_screen()
 
     def action_read_entry(self) -> None:
-        if self.reader_open and self.selected_episode_uuid:
+        if not self.selected_episode_uuid:
+            return
+        if self.reader_open:
             from frontend.screens.view_screen import ViewScreen
 
             self.app.push_screen(ViewScreen(self.selected_episode_uuid, self.journal))
+        else:
+            self._open_reader(self.selected_episode_uuid)
 
-    def action_go_home(self) -> None:
+    async def action_go_home(self) -> None:
         """Pop all screens to return to home."""
+        import asyncio
+        from frontend.screens.home_screen import HomeScreen
+
+        # Cancel workers before popping screens
+        self.workers.cancel_group(self, "entity-data")
+        self.workers.cancel_group(self, "reader-links")
+
+        # Pop screens until we reach HomeScreen
         while len(self.app.screen_stack) > 1:
+            if isinstance(self.app.screen, HomeScreen):
+                break
             self.app.pop_screen()
+            await asyncio.sleep(0)  # Yield to event loop between pops

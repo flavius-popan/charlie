@@ -76,6 +76,157 @@ def mock_entity_db():
         yield mock_get
 
 
+@pytest.fixture
+def mock_get_entry_entities():
+    """Mock get_entry_entities_with_counts for reader content loading."""
+    with patch(
+        "frontend.screens.entity_browser_screen.get_entry_entities_with_counts",
+        new_callable=AsyncMock
+    ) as mock:
+        mock.return_value = []
+        yield mock
+
+
+@pytest.fixture
+def mock_home_db():
+    """Mock database operations for HomeScreen."""
+    with patch("frontend.screens.home_screen.get_home_screen", new_callable=AsyncMock) as mock_home, \
+         patch("frontend.screens.home_screen.ensure_database_ready", new_callable=AsyncMock) as mock_ensure, \
+         patch("frontend.screens.home_screen.get_processing_status") as mock_status:
+        mock_home.return_value = []
+        mock_ensure.return_value = None
+        mock_status.return_value = {"status": "idle", "queue_length": 0, "processing": []}
+        yield {"get_home": mock_home, "ensure": mock_ensure, "status": mock_status}
+
+
+# =============================================================================
+# BUG TESTS - These test the specific bugs that need fixing
+# =============================================================================
+
+
+@pytest.mark.asyncio
+async def test_navigation_does_not_open_reader(mock_entity_db):
+    """Arrow key navigation should NOT open the reader panel.
+
+    Bug: Currently, every arrow key press triggers on_list_view_highlighted
+    which calls _open_reader(), causing flickering.
+    """
+    app = EntityBrowserTestApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        # Reader should be closed initially
+        assert not app.screen.reader_open, "Reader should be closed on initial load"
+
+        # Navigate down multiple times
+        for i in range(3):
+            await pilot.press("down")
+            await pilot.pause()
+
+        # Reader should STILL be closed after navigation
+        assert not app.screen.reader_open, "Reader should remain closed during navigation"
+
+
+@pytest.mark.asyncio
+async def test_enter_opens_reader(mock_entity_db, mock_get_entry_entities):
+    """Enter key should open the reader with selected quote content."""
+    app = EntityBrowserTestApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        # Reader should be closed initially
+        assert not app.screen.reader_open
+
+        # Press Enter to select first quote
+        await pilot.press("enter")
+        await pilot.pause()
+
+        # Reader should now be open
+        assert app.screen.reader_open, "Reader should open when Enter is pressed"
+
+
+@pytest.mark.asyncio
+async def test_back_closes_reader_first(mock_entity_db, mock_get_entry_entities):
+    """Escape should close reader first, then pop screen on second press."""
+    app = EntityBrowserTestApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        # Open reader by pressing Enter
+        await pilot.press("enter")
+        await pilot.pause()
+        assert app.screen.reader_open, "Reader should be open after Enter"
+
+        # First escape should close reader, not pop screen
+        await pilot.press("escape")
+        await pilot.pause()
+        assert not app.screen.reader_open, "Reader should close on first Escape"
+
+        # Screen should still be EntityBrowserScreen
+        assert isinstance(app.screen, EntityBrowserScreen), "Screen should remain EntityBrowserScreen"
+
+
+@pytest.mark.asyncio
+async def test_go_home_returns_to_home_screen(mock_entity_db, mock_home_db):
+    """Pressing 'h' should return to HomeScreen without UI corruption.
+
+    Bug: action_go_home() pops screens in a tight loop without yielding
+    to the event loop, causing lifecycle race conditions.
+    """
+    import asyncio
+    from contextlib import asynccontextmanager
+    from frontend.screens.home_screen import HomeScreen
+
+    class TestAppWithHome(App):
+        """Test app that starts with HomeScreen like the real app."""
+        def on_mount(self):
+            self.push_screen(HomeScreen())
+
+    @asynccontextmanager
+    async def home_test_context(app):
+        """Context manager to clean up HomeScreen workers."""
+        try:
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                yield pilot
+                # Cancel workers before cleanup
+                for screen in app.screen_stack:
+                    if isinstance(screen, HomeScreen):
+                        for group in ["processing_poll", "entities", "period_stats"]:
+                            screen.workers.cancel_group(screen, group)
+                        for _ in range(10):
+                            await pilot.pause()
+        except asyncio.CancelledError:
+            pass
+
+    app = TestAppWithHome()
+    async with home_test_context(app) as pilot:
+        # Should start on HomeScreen
+        assert isinstance(app.screen, HomeScreen), "Should start on HomeScreen"
+        initial_stack_len = len(app.screen_stack)
+
+        # Push EntityBrowserScreen
+        app.push_screen(EntityBrowserScreen("test-uuid"))
+        await pilot.pause()
+
+        # Should now be on EntityBrowserScreen
+        assert isinstance(app.screen, EntityBrowserScreen), "Should be on EntityBrowserScreen"
+        assert len(app.screen_stack) == initial_stack_len + 1
+
+        # Press 'h' to go home
+        await pilot.press("h")
+        await pilot.pause()
+
+        # Should be back on HomeScreen
+        assert isinstance(app.screen, HomeScreen), "Should return to HomeScreen"
+        assert len(app.screen_stack) == initial_stack_len, "Stack should be back to original size"
+
+
+# =============================================================================
+# CONTENT TESTS - Basic display verification
+# =============================================================================
+
+
 @pytest.mark.asyncio
 async def test_entity_browser_displays_entity_name(mock_entity_db):
     """Should display the entity name in the header."""
@@ -88,64 +239,25 @@ async def test_entity_browser_displays_entity_name(mock_entity_db):
 
 
 @pytest.mark.asyncio
-async def test_entity_browser_displays_all_quotes(mock_entity_db):
-    """Should display all quote entries in the ListView."""
-    from frontend.screens.entity_browser_screen import QuoteListItem, DateListItem
+async def test_entity_browser_displays_quotes(mock_entity_db):
+    """Should display quote entries in the ListView."""
+    from frontend.screens.entity_browser_screen import QuoteListItem
     app = EntityBrowserTestApp()
     async with app.run_test() as pilot:
         await pilot.pause()
 
         quotes_list = app.screen.query_one("#quotes-list", ListView)
-        # Should have 5 DateListItems + 5 QuoteListItems = 10 total
         quote_items = [c for c in quotes_list.children if isinstance(c, QuoteListItem)]
-        date_items = [c for c in quotes_list.children if isinstance(c, DateListItem)]
         assert len(quote_items) == 5
-        assert len(date_items) == 5
 
 
 @pytest.mark.asyncio
 async def test_entity_browser_displays_connections(mock_entity_db):
-    """Should display connection chips."""
+    """Should display connection links in header."""
     app = EntityBrowserTestApp()
     async with app.run_test() as pilot:
         await pilot.pause()
 
-        chips = app.screen.query_one("#connections-chips")
-        # Should have 3 connection chips
-        assert len(chips.children) == 3
-
-
-@pytest.mark.asyncio
-async def test_entity_browser_layout_visible(mock_entity_db):
-    """Debug test to see the actual layout."""
-    from frontend.screens.entity_browser_screen import QuoteListItem, DateListItem
-    app = EntityBrowserTestApp()
-    async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
-
-        # Print widget sizes for debugging
-        print("\n" + "="*80)
-        print("WIDGET SIZES:")
-        print("="*80)
-
-        body = app.screen.query_one("#body-container")
-        print(f"body-container: size={body.size}, region={body.region}")
-
-        quotes_container = app.screen.query_one("#quotes-container")
-        print(f"quotes-container: size={quotes_container.size}, region={quotes_container.region}")
-
-        quotes_list = app.screen.query_one("#quotes-list", ListView)
-        print(f"quotes-list: size={quotes_list.size}, region={quotes_list.region}")
-
-        footer = app.screen.query_one("#connections-footer")
-        print(f"connections-footer: size={footer.size}, region={footer.region}")
-
-        print(f"\nListView children count: {len(quotes_list.children)}")
-        for i, child in enumerate(quotes_list.children):
-            print(f"  Child {i}: {child}, size={child.size}, region={child.region}")
-
-        print("="*80)
-
-        # 5 dates + 5 quotes = 10 total items
-        quote_items = [c for c in quotes_list.children if isinstance(c, QuoteListItem)]
-        assert len(quote_items) == 5, f"Expected 5 quotes, got {len(quote_items)}"
+        connections = app.screen.query_one("#quotes-footer")
+        # Should have 3 links + 2 separators = 5 children
+        assert len(connections.children) == 5
