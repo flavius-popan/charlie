@@ -83,34 +83,6 @@ Maximize code reuse from graphiti-core for deterministic operations:
 
 Only implement custom DSPy modules for LLM extraction (entity extraction, edge extraction). This keeps the codebase aligned with upstream improvements while allowing local inference optimization.
 
-## Directory Structure
-
-```
-charlie/
-├── charlie.py              # TUI application entry point
-├── backend/                # Graph operations library
-│   ├── __init__.py         # Public API: add_journal_entry() ✓
-│   ├── settings.py         # Backend configuration ✓
-│   ├── database/           # Database layer ✓
-│   │   ├── redis_ops.py    # Global Redis operations for metadata/stats ✓
-│   │   └── ...             # lifecycle, driver, persistence, queries
-│   ├── extract_entities.py # Entity extraction + resolution (not yet implemented)
-│   ├── extract_edges.py    # Relationship extraction + resolution (not yet implemented)
-│   ├── queries.py          # Time-range and entity timeline queries (not yet implemented)
-│   └── models.py           # Data models and state definitions (not yet needed)
-├── importers/              # Bulk import modules (not yet implemented)
-│   └── markdown.py         # Import markdown files as episodes
-├── pipeline/               # V1 reference (preserved, not imported)
-├── tests/test_backend/     # Backend API tests ✓
-│   ├── conftest.py         # Test fixtures ✓
-│   ├── test_add_journal.py # API tests ✓
-│   ├── test_database.py    # Database layer tests ✓
-│   └── test_redis_ops.py   # Redis operations tests ✓
-└── V2_PLAN.md              # This document
-```
-
-Backend modules operate independently on existing episodic nodes. UI code and importers only interact through `backend/__init__.py`. Currently implemented: episode creation with author entity "I" seeding, multi-journal support, and global Redis operations for application metadata.
-
 ## Supported Queries
 
 **Time-Range Queries**: Fetch all episodes from a date range (e.g., March 2024). Return episodes sorted by timestamp with entity mentions and active relationships during that period.

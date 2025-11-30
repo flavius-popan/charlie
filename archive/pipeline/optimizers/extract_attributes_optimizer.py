@@ -16,12 +16,16 @@ import os
 from collections import defaultdict
 from pathlib import Path
 
-# Running as `python pipeline/optimizers/...` requires inserting the repo root so
+# Running as `python archive/pipeline/optimizers/...` requires inserting archive/ so
 # `settings` executes (and configures DSPy caches) before importing DSPy.
 if __package__ is None:
-    PROJECT_ROOT = Path(__file__).resolve().parents[2]
-    if str(PROJECT_ROOT) not in os.sys.path:
-        os.sys.path.insert(0, str(PROJECT_ROOT))
+    ARCHIVE_DIR = Path(__file__).resolve().parents[2]
+    if str(ARCHIVE_DIR) not in os.sys.path:
+        os.sys.path.insert(0, str(ARCHIVE_DIR))
+    # Add repo root for backend imports
+    REPO_ROOT = ARCHIVE_DIR.parent
+    if str(REPO_ROOT) not in os.sys.path:
+        os.sys.path.insert(0, str(REPO_ROOT))
 
 from settings import (  # noqa: E402
     DEFAULT_MODEL_PATH,

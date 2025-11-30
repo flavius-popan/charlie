@@ -15,12 +15,16 @@ from pathlib import Path
 import logging
 from collections import defaultdict
 
-# Allow running as `python pipeline/optimizers/...` by ensuring `settings` loads
+# Allow running as `python archive/pipeline/optimizers/...` by ensuring `settings` loads
 # (and configures DSPy caches) before the first DSPy import.
 if __package__ is None:
-    PROJECT_ROOT = Path(__file__).resolve().parents[2]
-    if str(PROJECT_ROOT) not in os.sys.path:
-        os.sys.path.insert(0, str(PROJECT_ROOT))
+    ARCHIVE_DIR = Path(__file__).resolve().parents[2]
+    if str(ARCHIVE_DIR) not in os.sys.path:
+        os.sys.path.insert(0, str(ARCHIVE_DIR))
+    # Add repo root for backend imports
+    REPO_ROOT = ARCHIVE_DIR.parent
+    if str(REPO_ROOT) not in os.sys.path:
+        os.sys.path.insert(0, str(REPO_ROOT))
 
 from settings import (  # noqa: E402
     DEFAULT_MODEL_PATH,

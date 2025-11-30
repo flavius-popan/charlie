@@ -15,12 +15,16 @@ import logging
 import os
 from pathlib import Path
 
-# When executed as `python pipeline/optimizers/...`, this ensures we can import
+# When executed as `python archive/pipeline/optimizers/...`, this ensures we can import
 # `settings` before DSPy initializes so cache/env configuration is applied first.
 if __package__ is None:
-    PROJECT_ROOT = Path(__file__).resolve().parents[2]
-    if str(PROJECT_ROOT) not in os.sys.path:
-        os.sys.path.insert(0, str(PROJECT_ROOT))
+    ARCHIVE_DIR = Path(__file__).resolve().parents[2]
+    if str(ARCHIVE_DIR) not in os.sys.path:
+        os.sys.path.insert(0, str(ARCHIVE_DIR))
+    # Add repo root for backend imports
+    REPO_ROOT = ARCHIVE_DIR.parent
+    if str(REPO_ROOT) not in os.sys.path:
+        os.sys.path.insert(0, str(REPO_ROOT))
 
 from settings import (  # noqa: E402
     DEFAULT_MODEL_PATH,

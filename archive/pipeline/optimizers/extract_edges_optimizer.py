@@ -15,12 +15,16 @@ import os
 from pathlib import Path
 from typing import Any
 
-# Script execution (`python pipeline/optimizers/...`) needs the repo root on sys.path
+# Script execution (`python archive/pipeline/optimizers/...`) needs archive/ on sys.path
 # so `settings` loads before DSPy and sets cache env vars deterministically.
 if __package__ is None:
-    PROJECT_ROOT = Path(__file__).resolve().parents[2]
-    if str(PROJECT_ROOT) not in os.sys.path:
-        os.sys.path.insert(0, str(PROJECT_ROOT))
+    ARCHIVE_DIR = Path(__file__).resolve().parents[2]
+    if str(ARCHIVE_DIR) not in os.sys.path:
+        os.sys.path.insert(0, str(ARCHIVE_DIR))
+    # Add repo root for backend imports
+    REPO_ROOT = ARCHIVE_DIR.parent
+    if str(REPO_ROOT) not in os.sys.path:
+        os.sys.path.insert(0, str(REPO_ROOT))
 
 from pipeline import _dspy_setup  # noqa: F401
 import dspy  # noqa: E402

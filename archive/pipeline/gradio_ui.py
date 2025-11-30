@@ -5,6 +5,19 @@ Provides interactive testing interface for entity extraction and resolution.
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+# Add archive/ to sys.path for settings, pipeline, inference_runtime imports
+_archive_dir = Path(__file__).resolve().parent.parent
+if str(_archive_dir) not in sys.path:
+    sys.path.insert(0, str(_archive_dir))
+
+# Add repo root to sys.path for backend imports
+_repo_root = _archive_dir.parent
+if str(_repo_root) not in sys.path:
+    sys.path.insert(0, str(_repo_root))
+
 import asyncio
 import json
 import logging
