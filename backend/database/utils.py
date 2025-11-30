@@ -23,6 +23,14 @@ STOPWORDS = [
 SELF_ENTITY_UUID = UUID("11111111-1111-1111-1111-111111111111")
 SELF_ENTITY_NAME = "I"
 SELF_ENTITY_LABELS = ["Entity", "Person"]
+_SELF_ALIASES = {"i", "me", "my", "mine", "myself"}
+
+
+def is_self_entity_name(name: str | None) -> bool:
+    """Return True when the provided entity name clearly refers to the author."""
+    if not name:
+        return False
+    return name.strip().lower() in _SELF_ALIASES
 
 
 def validate_journal_name(journal: str) -> None:
@@ -333,6 +341,7 @@ __all__ = [
     "SELF_UUID_LITERAL",
     "STOPWORDS",
     "FalkorGraph",
+    "is_self_entity_name",
     "validate_journal_name",
     "to_cypher_literal",
     "_decode_value",

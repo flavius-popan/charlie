@@ -43,6 +43,7 @@ from backend.database.utils import (
     SELF_ENTITY_LABELS,
     SELF_ENTITY_NAME,
     SELF_ENTITY_UUID,
+    is_self_entity_name,
     to_cypher_literal,
     validate_journal_name,
 )
@@ -92,6 +93,7 @@ __all__ = [
     "SELF_ENTITY_UUID",
     "SELF_ENTITY_NAME",
     "SELF_ENTITY_LABELS",
+    "is_self_entity_name",
     # Utilities
     "to_cypher_literal",
     "validate_journal_name",
