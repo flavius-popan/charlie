@@ -45,9 +45,11 @@ MODEL_CONFIG = {
 # =============================================================================
 # GEPA Configuration
 # =============================================================================
-REFLECTION_MODEL = os.getenv("REFLECTION_MODEL", "openai/gpt-4o-mini")
-REFLECTION_TEMPERATURE = float(os.getenv("REFLECTION_TEMPERATURE", "0.7"))
-REFLECTION_MAX_TOKENS = int(os.getenv("REFLECTION_MAX_TOKENS", "2048"))
+REFLECTION_MODEL = os.getenv("REFLECTION_MODEL", "openai/gpt-5-mini")
+# gpt-5-mini is a reasoning model: temperature must be 1.0, max_tokens >= 16000
+REFLECTION_MAX_TOKENS = int(os.getenv("REFLECTION_MAX_TOKENS", "16000"))
+REFLECTION_REASONING_EFFORT = os.getenv("REFLECTION_REASONING_EFFORT", "high")
+REFLECTION_VERBOSITY = os.getenv("REFLECTION_VERBOSITY", "low")
 
 # auto mode: "light" (quick), "medium" (balanced), "heavy" (production)
 GEPA_AUTO_MODE = os.getenv("GEPA_AUTO_MODE", "light")
@@ -76,12 +78,15 @@ def split_examples[T](examples: list[T]) -> tuple[list[T], list[T]]:
     All remaining examples go to trainset for learning.
     """
     if len(examples) <= GEPA_VALSET_MIN:
-        raise ValueError(f"Need at least {GEPA_VALSET_MIN + 1} examples, got {len(examples)}")
+        raise ValueError(
+            f"Need at least {GEPA_VALSET_MIN + 1} examples, got {len(examples)}"
+        )
 
     # 10% baseline ensures at least 1 val example per 10 total, then clamp to [1, 3]
     val_size = min(max(GEPA_VALSET_MIN, len(examples) // 10), GEPA_VALSET_MAX)
     split_idx = len(examples) - val_size
     return examples[:split_idx], examples[split_idx:]
+
 
 # =============================================================================
 # Remote (HuggingFace) Configuration
@@ -118,7 +123,11 @@ def get_task_lm(*, remote: bool = False) -> dspy.LM:
 
 
 def get_reflection_lm() -> dspy.LM:
-    """Get reflection LM for GEPA (requires OPENAI_API_KEY)."""
+    """Get reflection LM for GEPA (requires OPENAI_API_KEY).
+
+    Uses gpt-5-mini with reasoning_effort=high for thorough analysis
+    and verbosity=low for concise outputs.
+    """
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         raise ValueError(
@@ -127,8 +136,10 @@ def get_reflection_lm() -> dspy.LM:
     return dspy.LM(
         model=REFLECTION_MODEL,
         api_key=api_key,
-        temperature=REFLECTION_TEMPERATURE,
+        temperature=1.0,  # required for reasoning models
         max_tokens=REFLECTION_MAX_TOKENS,
+        reasoning_effort=REFLECTION_REASONING_EFFORT,
+        verbosity=REFLECTION_VERBOSITY,
     )
 
 
