@@ -106,14 +106,14 @@ def mock_home_db():
 
 
 @pytest.mark.asyncio
-async def test_wide_screen_auto_opens_reader(mock_entity_db, mock_get_entry_entities):
-    """Wide screen (>= 100 columns) should auto-open reader with first quote."""
+async def test_wide_screen_reader_closed_initially(mock_entity_db, mock_get_entry_entities):
+    """Wide screen should not auto-open reader (reader opens on explicit action)."""
     app = EntityBrowserTestApp()
     async with app.run_test(size=(120, 40)) as pilot:  # Wide screen
         await pilot.pause()
 
-        # Reader should be open automatically on wide screen
-        assert app.screen.reader_open, "Reader should auto-open on wide screen"
+        # Reader should be closed initially - opens via Enter or navigation with initial_reader_open
+        assert not app.screen.reader_open, "Reader should be closed initially on wide screen"
 
 
 @pytest.mark.asyncio
@@ -168,15 +168,13 @@ async def test_narrow_screen_escape_closes_reader_first(mock_entity_db, mock_get
 
 @pytest.mark.asyncio
 async def test_wide_screen_escape_pops_immediately(mock_entity_db, mock_get_entry_entities):
-    """On wide screen, Escape should pop screen (no intermediate reader close)."""
-    from textual.screen import Screen
-
+    """On wide screen, Escape should pop screen directly."""
     app = EntityBrowserTestApp()
     async with app.run_test(size=(120, 40)) as pilot:  # Wide screen
         await pilot.pause()
 
-        # Reader should be open automatically
-        assert app.screen.reader_open
+        # Reader starts closed on wide screen
+        assert not app.screen.reader_open
 
         # Escape should pop screen directly
         await pilot.press("escape")
