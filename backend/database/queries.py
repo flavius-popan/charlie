@@ -671,6 +671,72 @@ async def get_entity_browser_data(
     }
 
 
+async def get_n_plus_one_neighbors(
+    source_uuids: list[str],
+    journal: str = DEFAULT_JOURNAL,
+    exclude_uuids: set[str] | None = None,
+    limit: int = 10,
+) -> list[dict]:
+    """Find entities that co-occur with source entities (1-hop neighbors).
+
+    Used by entity browser to expand exploration beyond direct connections.
+    When reading an entry, the entities in that entry become sources, and
+    this query finds what those entities connect to - enabling discovery
+    of bridging entities that link multiple topics.
+
+    Ranking prioritizes entities that connect to MORE of the sources
+    (higher intersection score), with ties broken by oldest co-occurrence
+    to surface forgotten connections (inverse recency for rediscovery).
+
+    Args:
+        source_uuids: Entity UUIDs to find neighbors for
+        journal: Journal name
+        exclude_uuids: UUIDs to exclude from results (e.g. visited entities)
+        limit: Max results to return
+
+    Returns:
+        List of dicts with 'uuid', 'name', 'intersection_count', 'oldest_cooccurrence'
+    """
+    if not source_uuids:
+        return []
+
+    exclude_uuids = exclude_uuids or set()
+    driver = get_driver(journal)
+
+    # Build exclusion list including sources themselves
+    all_excluded = set(source_uuids) | exclude_uuids
+
+    query = f"""
+    UNWIND {to_cypher_literal(source_uuids)} AS source_uuid
+    MATCH (source:Entity {{uuid: source_uuid, group_id: {to_cypher_literal(journal)}}})
+    MATCH (ep:Episodic)-[:MENTIONS]->(source)
+    MATCH (ep)-[:MENTIONS]->(neighbor:Entity)
+    WHERE neighbor.uuid <> source_uuid
+      AND neighbor.name <> 'I'
+      AND NOT neighbor.uuid IN {to_cypher_literal(list(all_excluded))}
+    WITH neighbor, source_uuid, min(ep.valid_at) as oldest_with_source
+    WITH neighbor, count(DISTINCT source_uuid) as intersection_count, min(oldest_with_source) as oldest_cooccurrence
+    RETURN neighbor.uuid as uuid, neighbor.name as name, intersection_count, oldest_cooccurrence
+    ORDER BY intersection_count DESC, oldest_cooccurrence ASC
+    LIMIT {limit}
+    """
+
+    records, _, _ = await driver.execute_query(query)
+
+    neighbors = []
+    for record in records:
+        neighbors.append(
+            {
+                "uuid": record.get("uuid"),
+                "name": record.get("name"),
+                "intersection_count": record.get("intersection_count"),
+                "oldest_cooccurrence": _parse_valid_at(record.get("oldest_cooccurrence")),
+            }
+        )
+
+    return neighbors
+
+
 __all__ = [
     "get_episode",
     "episode_exists",
@@ -680,6 +746,7 @@ __all__ = [
     "get_entry_entities_with_counts",
     "get_period_entities",
     "get_entity_browser_data",
+    "get_n_plus_one_neighbors",
     "truncate_quote",
     "extract_entity_snippet",
 ]

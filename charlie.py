@@ -126,6 +126,8 @@ class CharlieApp(App):
         super().__init__()
         from frontend.settings import get_theme
         self.theme = get_theme()
+        # Tracks visited entity UUIDs during exploration to prevent navigation cycles
+        self.visited_entities: set[str] = set()
 
     def watch_theme(self, theme: str) -> None:
         """Persist theme changes to file."""

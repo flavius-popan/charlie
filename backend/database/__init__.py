@@ -29,6 +29,7 @@ from backend.database.queries import (
     get_entry_entities_with_counts,
     get_episode,
     get_home_screen,
+    get_n_plus_one_neighbors,
     get_period_entities,
     truncate_quote,
 )
@@ -75,6 +76,7 @@ __all__ = [
     "get_entry_entities_with_counts",
     "get_episode",
     "get_home_screen",
+    "get_n_plus_one_neighbors",
     "get_period_entities",
     "truncate_quote",
     # Redis operations

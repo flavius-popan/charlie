@@ -9,7 +9,7 @@ from textual.reactive import reactive
 from textual.screen import Screen
 from textual.widgets import Footer, Header, ListItem, ListView, Markdown, Static
 
-from backend.database import get_entity_browser_data, get_entry_entities_with_counts
+from backend.database import get_entity_browser_data, get_entry_entities_with_counts, get_n_plus_one_neighbors
 from backend.database.queries import (
     extract_entity_sentences,
     ENTITY_QUOTE_TARGET_LENGTH,
@@ -368,6 +368,7 @@ class EntityBrowserScreen(Screen):
         yield Footer()
 
     async def on_mount(self) -> None:
+        self.app.visited_entities.add(self.entity_uuid)
         self.run_worker(self._load_entity_data(), exclusive=True, group="entity-data")
 
     async def on_screen_resume(self) -> None:
@@ -386,6 +387,7 @@ class EntityBrowserScreen(Screen):
     def on_screen_suspend(self) -> None:
         self._has_been_suspended = True
         self.workers.cancel_group(self, "entity-data")
+        self.workers.cancel_group(self, "header-connections")
 
     async def _load_entity_data(self) -> None:
         try:
@@ -488,16 +490,8 @@ class EntityBrowserScreen(Screen):
                 mention_info.update(mention_text)
                 mention_info.oldest_index = oldest_quote_index
 
-                # Populate footer connections as text links (limit to 5)
-                quotes_footer.remove_children()
-
-                connections = new["connections"][:5]
-                for i, conn in enumerate(connections):
-                    link = ConnectionLink(conn["name"], conn["uuid"], self.journal)
-                    quotes_footer.mount(link)
-                    # Add separator after all but the last
-                    if i < len(connections) - 1:
-                        quotes_footer.mount(ConnectionSeparator())
+                # Update header connections (filtered by visited entities)
+                self._update_header_connections()
 
                 # Focus the quotes list on first selectable (non-disabled) item
                 if quotes_list.children:
@@ -521,8 +515,85 @@ class EntityBrowserScreen(Screen):
     def watch_reader_open(self, old: bool, new: bool) -> None:
         if new:
             self.add_class("reader-open")
+            # Refresh connections for reader context (n+1 neighbors)
+            if self.selected_episode_uuid:
+                self.run_worker(
+                    self._load_reader_connections(self.selected_episode_uuid),
+                    exclusive=True,
+                    group="header-connections",
+                )
         else:
             self.remove_class("reader-open")
+            # Restore entity connections when reader closes
+            self._update_header_connections()
+
+    def _update_header_connections(self, connections: list[dict] | None = None) -> None:
+        """Update header connection links, filtering out visited entities.
+
+        Args:
+            connections: Optional list of connection dicts. If None, uses
+                        entity_data["connections"].
+        """
+        if self.entity_data is None:
+            return
+
+        try:
+            quotes_footer = self.query_one("#quotes-footer", Horizontal)
+            quotes_footer.remove_children()
+
+            if connections is None:
+                connections = self.entity_data.get("connections", [])
+
+            # Filter out visited entities
+            visited = self.app.visited_entities
+            filtered = [c for c in connections if c["uuid"] not in visited][:5]
+
+            for i, conn in enumerate(filtered):
+                link = ConnectionLink(conn["name"], conn["uuid"], self.journal)
+                quotes_footer.mount(link)
+                if i < len(filtered) - 1:
+                    quotes_footer.mount(ConnectionSeparator())
+        except Exception as e:
+            logger.error("Failed to update header connections: %s", e, exc_info=True)
+
+    async def _load_reader_connections(self, episode_uuid: str) -> None:
+        """Load n+1 neighbors for the entry being read."""
+        try:
+            # Get entities from the current entry
+            entry_entities = await get_entry_entities_with_counts(episode_uuid, self.journal)
+            if not entry_entities:
+                # Fall back to entity connections if no entry entities
+                self._update_header_connections()
+                return
+
+            source_uuids = [e["uuid"] for e in entry_entities]
+
+            # Build exclusion set: visited entities + current entity
+            exclude = set(self.app.visited_entities)
+            exclude.add(self.entity_uuid)
+
+            # Get n+1 neighbors
+            neighbors = await get_n_plus_one_neighbors(
+                source_uuids,
+                self.journal,
+                exclude_uuids=exclude,
+                limit=10,
+            )
+
+            if not neighbors:
+                # Fall back to entity connections if no neighbors found
+                self._update_header_connections()
+                return
+
+            # Convert to connection format for display
+            connections = [
+                {"uuid": n["uuid"], "name": n["name"]}
+                for n in neighbors
+            ]
+            self._update_header_connections(connections)
+        except Exception as e:
+            logger.error("Failed to load reader connections: %s", e, exc_info=True)
+            self._update_header_connections()
 
     def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
         """Track highlighted item for selection (does not open reader)."""
@@ -601,6 +672,14 @@ class EntityBrowserScreen(Screen):
             reader_panel = self.query_one("#reader-panel", VerticalScroll)
             reader_panel.scroll_home(animate=False)
 
+            # Refresh n+1 neighbors if reader already open (watcher won't fire on same value)
+            if self.reader_open:
+                self.run_worker(
+                    self._load_reader_connections(episode_uuid),
+                    exclusive=True,
+                    group="header-connections",
+                )
+
             self.reader_open = True
         except Exception as e:
             logger.error("Failed to open reader: %s", e, exc_info=True)
@@ -668,6 +747,10 @@ class EntityBrowserScreen(Screen):
         # Cancel workers before popping screens
         self.workers.cancel_group(self, "entity-data")
         self.workers.cancel_group(self, "reader-links")
+        self.workers.cancel_group(self, "header-connections")
+
+        # Clear exploration history for fresh start
+        self.app.visited_entities.clear()
 
         # Pop screens until we reach HomeScreen
         while len(self.app.screen_stack) > 1:

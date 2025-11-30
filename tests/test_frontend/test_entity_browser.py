@@ -15,6 +15,7 @@ class EntityBrowserTestApp(App):
     def __init__(self, entity_uuid: str = "test-uuid"):
         super().__init__()
         self.entity_uuid = entity_uuid
+        self.visited_entities: set[str] = set()
 
     def on_mount(self):
         self.push_screen(EntityBrowserScreen(self.entity_uuid))
@@ -198,6 +199,10 @@ async def test_go_home_returns_to_home_screen(mock_entity_db, mock_home_db):
 
     class TestAppWithHome(App):
         """Test app that starts with HomeScreen like the real app."""
+        def __init__(self):
+            super().__init__()
+            self.visited_entities: set[str] = set()
+
         def on_mount(self):
             self.push_screen(HomeScreen())
 
@@ -280,3 +285,112 @@ async def test_entity_browser_displays_connections(mock_entity_db):
         connections = app.screen.query_one("#quotes-footer")
         # Should have 3 links + 2 separators = 5 children
         assert len(connections.children) == 5
+
+
+# =============================================================================
+# VISITED ENTITIES TESTS - Navigation history tracking
+# =============================================================================
+
+
+@pytest.mark.asyncio
+async def test_visited_entity_added_on_mount(mock_entity_db):
+    """Entity UUID should be added to visited_entities when screen mounts."""
+    app = EntityBrowserTestApp(entity_uuid="test-entity-uuid")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        assert "test-entity-uuid" in app.visited_entities, \
+            "Entity UUID should be added to visited_entities on mount"
+
+
+@pytest.mark.asyncio
+async def test_visited_entities_cleared_on_go_home(mock_entity_db, mock_home_db):
+    """Pressing 'h' should clear visited_entities."""
+    import asyncio
+    from contextlib import asynccontextmanager
+    from frontend.screens.home_screen import HomeScreen
+
+    class TestAppWithHome(App):
+        def __init__(self):
+            super().__init__()
+            self.visited_entities: set[str] = set()
+
+        def on_mount(self):
+            self.push_screen(HomeScreen())
+
+    @asynccontextmanager
+    async def home_test_context(app):
+        try:
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                yield pilot
+                for screen in app.screen_stack:
+                    if isinstance(screen, HomeScreen):
+                        for group in ["processing_poll", "entities", "period_stats"]:
+                            screen.workers.cancel_group(screen, group)
+                        for _ in range(10):
+                            await pilot.pause()
+        except asyncio.CancelledError:
+            pass
+
+    app = TestAppWithHome()
+    async with home_test_context(app) as pilot:
+        # Pre-populate visited entities
+        app.visited_entities = {"entity-1", "entity-2", "entity-3"}
+
+        # Push EntityBrowserScreen
+        app.push_screen(EntityBrowserScreen("test-uuid"))
+        await pilot.pause()
+
+        # visited_entities should now include test-uuid
+        assert "test-uuid" in app.visited_entities
+
+        # Press 'h' to go home
+        await pilot.press("h")
+        await pilot.pause()
+
+        # visited_entities should be cleared
+        assert len(app.visited_entities) == 0, \
+            "visited_entities should be cleared on Go Home"
+
+
+@pytest.mark.asyncio
+async def test_visited_entities_preserved_on_back(mock_entity_db):
+    """Back navigation should preserve visited_entities."""
+    app = EntityBrowserTestApp(entity_uuid="first-entity")
+    async with app.run_test(size=(120, 40)) as pilot:  # Wide screen
+        await pilot.pause()
+
+        # Add another entity to visited
+        app.visited_entities.add("second-entity")
+        assert len(app.visited_entities) == 2
+
+        # Press escape to go back
+        await pilot.press("escape")
+        await pilot.pause()
+
+        # visited_entities should still contain both
+        assert "first-entity" in app.visited_entities
+        assert "second-entity" in app.visited_entities
+
+
+@pytest.mark.asyncio
+async def test_connections_filtered_by_visited(mock_entity_db):
+    """Header connections should exclude visited entities."""
+    from frontend.screens.entity_browser_screen import ConnectionLink
+
+    app = EntityBrowserTestApp(entity_uuid="test-uuid")
+    # Pre-populate visited entities to include conn-1 (Ryan)
+    app.visited_entities = {"conn-1"}
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        connections = app.screen.query_one("#quotes-footer")
+        connection_links = [c for c in connections.children if isinstance(c, ConnectionLink)]
+
+        # Should only have 2 links (Roci and Tom), Ryan should be filtered out
+        # ConnectionLink stores entity_uuid, check that conn-1 is not in the links
+        link_uuids = [link.entity_uuid for link in connection_links]
+        assert "conn-1" not in link_uuids, "Visited entity should be filtered from connections"
+        assert len(connection_links) == 2
