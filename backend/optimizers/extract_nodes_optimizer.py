@@ -128,10 +128,10 @@ def metric(gold, pred, trace=None, pred_name=None, pred_trace=None):
         # Actionable guidance
         if missing:
             feedback += "\nTry to identify all named entities. "
-            feedback += "Look for compound names (e.g., 'Dr. Smith'), organizations, and activities."
+            feedback += "Look for compound names (e.g., 'Dr. Smith'), groups, and activities."
         if extra:
-            feedback += "\nAvoid extracting generic terms. "
-            feedback += "Focus on specific, named entities mentioned in the text."
+            feedback += "\nEntities should be canonical nouns that compose naturally with verbs, not verbatim phrases. "
+            feedback += "Strip time modifiers, actions, possessives. Normalize typos."
 
     return dspy.Prediction(score=f1, feedback=feedback)
 

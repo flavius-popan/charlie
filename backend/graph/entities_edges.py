@@ -15,14 +15,14 @@ class Place(BaseModel):
     pass
 
 
-class Organization(BaseModel):
-    """Company, team, or community group entity type."""
+class Group(BaseModel):
+    """Team, club, friend circle, or organization entity type."""
 
     pass
 
 
 class Activity(BaseModel):
-    """Event, outing, or routine entity type."""
+    """Event, occasion, outing, or routine entity type."""
 
     pass
 
@@ -30,7 +30,7 @@ class Activity(BaseModel):
 entity_types = {
     "Person": Person,
     "Place": Place,
-    "Organization": Organization,
+    "Group": Group,
     "Activity": Activity,
 }
 
@@ -60,8 +60,8 @@ def format_entity_types_for_llm(types: dict | None = None) -> str:
     descriptions = {
         "Person": "individual people mentioned by name",
         "Place": "specific named locations and venues",
-        "Organization": "named companies, teams, communities, or groups",
-        "Activity": "named events, outings, routines, or recurring activities",
+        "Group": "named teams, clubs, friend circles, or organizations",
+        "Activity": "named events, occasions, outings, or recurring routines",
     }
 
     for idx, (name, _) in enumerate(types.items(), start=1):
@@ -109,7 +109,7 @@ def get_type_name_from_id(type_id: int, types: dict | None = None) -> str:
 __all__ = [
     "Person",
     "Place",
-    "Organization",
+    "Group",
     "Activity",
     "entity_types",
     "format_entity_types_for_llm",
