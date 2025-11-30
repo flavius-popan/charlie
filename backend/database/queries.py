@@ -162,7 +162,10 @@ async def get_home_screen(journal: str = DEFAULT_JOURNAL) -> list[dict]:
 
 
 async def delete_entity_mention(
-    episode_uuid: str, entity_uuid: str, journal: str = DEFAULT_JOURNAL
+    episode_uuid: str,
+    entity_uuid: str,
+    journal: str = DEFAULT_JOURNAL,
+    suppress_reextraction: bool = False,
 ) -> bool:
     """Delete MENTIONS edge between episode and entity, and entity if orphaned.
 
@@ -170,6 +173,7 @@ async def delete_entity_mention(
         episode_uuid: Episode UUID
         entity_uuid: Entity UUID to remove mention of
         journal: Journal name
+        suppress_reextraction: If True, suppress entity from re-extraction in this entry
 
     Returns:
         True if entity was fully deleted (orphaned)
@@ -286,11 +290,122 @@ async def delete_entity_mention(
     # Offload Redis cache updates to background thread
     await asyncio.to_thread(_update_redis_caches)
 
-    # Suppress entity globally in journal
-    if entity_name:
-        await add_suppressed_entity(journal, entity_name)
+    # Suppress entity based on scope
+    if suppress_reextraction and entity_name:
+        await add_entry_suppressed_entity(journal, episode_uuid, entity_name)
 
     return was_deleted
+
+
+async def delete_entity_all_mentions(
+    entity_uuid: str,
+    journal: str,
+    suppress_reextraction: bool = False,
+) -> tuple[str, int]:
+    """Delete entity and ALL its MENTIONS edges across the journal.
+
+    Args:
+        entity_uuid: Entity UUID to delete
+        journal: Journal name
+        suppress_reextraction: If True, suppress entity from re-extraction globally
+
+    Returns:
+        (entity_name, deleted_edge_count)
+    """
+    from backend.database.driver import get_driver
+    from backend.database.utils import to_cypher_literal, _decode_value
+
+    driver = get_driver(journal)
+    graph = driver._graph
+    lock = driver._lock
+
+    entity_literal = to_cypher_literal(entity_uuid)
+
+    # Query 1: Get entity name, all affected episode UUIDs, and all MENTIONS edge UUIDs
+    query1 = f"""
+    MATCH (ent:Entity {{uuid: {entity_literal}}})
+    OPTIONAL MATCH (ep:Episodic)-[r:MENTIONS]->(ent)
+    WITH ent.name as entity_name, collect(DISTINCT ep.uuid) as episode_uuids, collect(r.uuid) as edge_uuids
+    RETURN entity_name, episode_uuids, edge_uuids
+    """
+
+    def _locked_query1():
+        with lock:
+            return graph.query(query1)
+
+    result1 = await asyncio.to_thread(_locked_query1)
+
+    entity_name = None
+    episode_uuids = []
+    edge_uuids = []
+
+    if result1.result_set and len(result1.result_set) > 0:
+        row = result1.result_set[0]
+        entity_name = _decode_value(row[0]) if len(row) > 0 else None
+        episode_uuids = _decode_value(row[1]) if len(row) > 1 else []
+        edge_uuids = _decode_value(row[2]) if len(row) > 2 else []
+
+    # Query 2: DETACH DELETE the entity (removes entity + all MENTIONS + all RELATES_TO edges)
+    query2 = f"""
+    MATCH (ent:Entity {{uuid: {entity_literal}}})
+    DETACH DELETE ent
+    RETURN true as deleted
+    """
+
+    def _locked_query2():
+        with lock:
+            return graph.query(query2)
+
+    await asyncio.to_thread(_locked_query2)
+
+    # Clean up Redis caches for each affected episode
+    def _update_redis_caches():
+        """Update Redis caches for all affected episodes."""
+        with redis_ops() as r:
+            for episode_uuid in episode_uuids:
+                cache_key = f"journal:{journal}:{episode_uuid}"
+
+                # 1. Update 'nodes' cache
+                nodes_json = r.hget(cache_key, "nodes")
+                remaining_nodes = []
+                if nodes_json:
+                    nodes = json.loads(nodes_json.decode())
+                    remaining_nodes = [n for n in nodes if n["uuid"] != entity_uuid]
+                    r.hset(cache_key, "nodes", json.dumps(remaining_nodes))
+
+                # 2. Update 'mentions_edges' cache
+                mentions_json = r.hget(cache_key, "mentions_edges")
+                if mentions_json and edge_uuids:
+                    edge_uuid_list = json.loads(mentions_json.decode())
+                    # Remove all edge UUIDs that were deleted
+                    updated_edges = [uuid for uuid in edge_uuid_list if uuid not in edge_uuids]
+                    r.hset(cache_key, "mentions_edges", json.dumps(updated_edges))
+
+                # 3. Update 'uuid_map' cache
+                uuid_map_json = r.hget(cache_key, "uuid_map")
+                if uuid_map_json:
+                    uuid_map = json.loads(uuid_map_json.decode())
+                    updated_map = {
+                        prov: canon
+                        for prov, canon in uuid_map.items()
+                        if canon != entity_uuid
+                    }
+                    if updated_map != uuid_map:
+                        r.hset(cache_key, "uuid_map", json.dumps(updated_map))
+
+                # 4. Update episode status if no visible entities remain
+                visible_remaining = [n for n in remaining_nodes if n.get("name") != "I"]
+                if not visible_remaining:
+                    r.hset(cache_key, "status", "done")
+
+    await asyncio.to_thread(_update_redis_caches)
+
+    # Add to suppression list if requested
+    if suppress_reextraction and entity_name:
+        await add_suppressed_entity(journal, entity_name)
+
+    deleted_edge_count = len(edge_uuids) if edge_uuids else 0
+    return (entity_name or "", deleted_edge_count)
 
 
 async def get_entry_entities(
@@ -737,16 +852,106 @@ async def get_n_plus_one_neighbors(
     return neighbors
 
 
+async def add_entry_suppressed_entity(
+    journal: str, episode_uuid: str, entity_name: str
+) -> None:
+    """Add entity to entry-level suppression list.
+
+    Args:
+        journal: Journal name
+        episode_uuid: Episode UUID
+        entity_name: Entity name to suppress (normalized to lowercase)
+
+    Note:
+        Entry-level suppression is specific to a single entry, unlike
+        journal-level suppression which affects all future entries.
+        Uses the existing episode hash at journal:{journal}:{uuid} with
+        a 'suppressed_entities' field containing a JSON array of names.
+    """
+    def _sync_add():
+        with redis_ops() as r:
+            cache_key = f"journal:{journal}:{episode_uuid}"
+            normalized_name = entity_name.lower()
+
+            # Get existing suppressed entities or start with empty list
+            existing_json = r.hget(cache_key, "suppressed_entities")
+            if existing_json:
+                suppressed = json.loads(existing_json.decode())
+            else:
+                suppressed = []
+
+            # Add if not already present
+            if normalized_name not in suppressed:
+                suppressed.append(normalized_name)
+                r.hset(cache_key, "suppressed_entities", json.dumps(suppressed))
+
+    await asyncio.to_thread(_sync_add)
+
+
+async def get_entry_suppressed_entities(journal: str, episode_uuid: str) -> set[str]:
+    """Get all suppressed entity names for an entry.
+
+    Args:
+        journal: Journal name
+        episode_uuid: Episode UUID
+
+    Returns:
+        Set of suppressed entity names (lowercase), empty set if none
+    """
+    def _sync_get():
+        with redis_ops() as r:
+            cache_key = f"journal:{journal}:{episode_uuid}"
+            suppressed_json = r.hget(cache_key, "suppressed_entities")
+            if suppressed_json:
+                return set(json.loads(suppressed_json.decode()))
+            return set()
+
+    return await asyncio.to_thread(_sync_get)
+
+
+async def is_entity_suppressed(episode_uuid: str, journal: str, entity_name: str) -> bool:
+    """Check if entity is suppressed at entry OR journal level.
+
+    Args:
+        episode_uuid: Episode UUID
+        journal: Journal name
+        entity_name: Entity name to check
+
+    Returns:
+        True if entity is suppressed at entry or journal level, False otherwise
+
+    Note:
+        Checks entry-level suppression first (more specific), then falls back
+        to journal-level check.
+    """
+    from backend.database.redis_ops import get_suppressed_entities
+
+    normalized_name = entity_name.lower()
+
+    # Check entry-level suppression first
+    entry_suppressed = await get_entry_suppressed_entities(journal, episode_uuid)
+    if normalized_name in entry_suppressed:
+        return True
+
+    # Fall back to journal-level suppression (sync function, run in thread)
+    journal_suppressed = await asyncio.to_thread(get_suppressed_entities, journal)
+    return normalized_name in journal_suppressed
+
+
 __all__ = [
     "get_episode",
     "episode_exists",
     "get_home_screen",
     "delete_entity_mention",
+    "delete_entity_all_mentions",
     "get_entry_entities",
     "get_entry_entities_with_counts",
     "get_period_entities",
     "get_entity_browser_data",
     "get_n_plus_one_neighbors",
+    "add_entry_suppressed_entity",
+    "get_entry_suppressed_entities",
+    "is_entity_suppressed",
     "truncate_quote",
     "extract_entity_snippet",
 ]

@@ -223,7 +223,10 @@ async def test_entity_sidebar_deletes_entity():
 
             await asyncio.sleep(0.1)
 
-            mock_delete.assert_called_once_with("test-uuid", "uuid-1", "test")
+            # Modal defaults to scope="entry" and suppress_reextraction=True for sidebar
+            mock_delete.assert_called_once_with(
+                "test-uuid", "uuid-1", "test", suppress_reextraction=True
+            )
 
             assert len(sidebar.entities) == 1
             assert sidebar.entities[0]["name"] == "Park"
@@ -265,7 +268,9 @@ async def test_entity_sidebar_delete_last_entity_shows_no_connections():
             await asyncio.sleep(0.1)
             await pilot.pause()
 
-            mock_delete.assert_called_once_with("test-uuid", "uuid-1", "test")
+            mock_delete.assert_called_once_with(
+                "test-uuid", "uuid-1", "test", suppress_reextraction=True
+            )
             assert len(sidebar.entities) == 0
 
             content = sidebar.query_one("#entity-content")

@@ -167,6 +167,13 @@ class ViewScreen(Screen):
         await self._refresh_all_sidebar_state()
         await self.load_episode()
 
+        # Refresh sidebar entities in case they changed while navigating
+        try:
+            sidebar = self.query_one("#entity-sidebar", EntitySidebar)
+            sidebar.run_worker(sidebar.refresh_entities(), exclusive=True)
+        except NoMatches:
+            pass
+
     def _sync_machine_output(self) -> None:
         """Sync machine output to reactive properties for sidebar consumption.
 

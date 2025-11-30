@@ -14,10 +14,9 @@ from textual.widgets import (
     LoadingIndicator,
 )
 
-from backend.database.queries import delete_entity_mention
+from backend.database.queries import delete_entity_mention, delete_entity_all_mentions
 from backend.database.redis_ops import redis_ops
-from frontend.widgets import EntityListItem
-from frontend.widgets.confirmation_modal import ConfirmationModal
+from frontend.widgets import DeleteEntityModal, DeleteEntityResult, EntityListItem
 
 logger = logging.getLogger("charlie")
 
@@ -263,16 +262,16 @@ class EntitySidebar(Container):
 
         entity = self.entities[list_view.index]
         name = entity["name"]
-        modal = ConfirmationModal(
-            title=f"Remove '{name}'?",
-            hint="It won't appear again in any future entries.",
-            confirm_label="Remove",
+        modal = DeleteEntityModal(
+            entity_name=name,
+            default_scope="entry",
+            checkbox_default=True,
         )
         self.app.push_screen(modal, self._handle_delete_result)
 
-    async def _handle_delete_result(self, confirmed: bool) -> None:
+    async def _handle_delete_result(self, result: DeleteEntityResult) -> None:
         """Handle deletion confirmation result."""
-        if not confirmed:
+        if not result.confirmed:
             return
 
         list_view = self.query_one(ListView)
@@ -282,8 +281,20 @@ class EntitySidebar(Container):
         entity = self.entities[list_view.index]
 
         try:
-            # Delete from database
-            await delete_entity_mention(self.episode_uuid, entity["uuid"], self.journal)
+            # Delete from database based on scope
+            if result.scope == "entry":
+                await delete_entity_mention(
+                    self.episode_uuid,
+                    entity["uuid"],
+                    self.journal,
+                    suppress_reextraction=result.block_future,
+                )
+            else:  # scope == "all"
+                await delete_entity_all_mentions(
+                    entity["uuid"],
+                    self.journal,
+                    suppress_reextraction=result.block_future,
+                )
 
             # Remove from local state
             new_entities = [e for e in self.entities if e["uuid"] != entity["uuid"]]

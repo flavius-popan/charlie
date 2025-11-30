@@ -9,7 +9,7 @@ from textual.reactive import reactive
 from textual.screen import Screen
 from textual.widgets import Footer, Header, ListItem, ListView, Markdown, Static
 
-from backend.database import get_entity_browser_data, get_entry_entities_with_counts, get_n_plus_one_neighbors
+from backend.database import get_entity_browser_data, get_entry_entities_with_counts, get_n_plus_one_neighbors, delete_entity_all_mentions
 from backend.database.queries import (
     extract_entity_sentences,
     ENTITY_QUOTE_TARGET_LENGTH,
@@ -21,6 +21,7 @@ from frontend.utils import (
     emphasize_rich,
     get_display_title,
 )
+from frontend.widgets import DeleteEntityModal, DeleteEntityResult
 
 logger = logging.getLogger("charlie")
 
@@ -212,6 +213,7 @@ class EntityBrowserScreen(Screen):
     BINDINGS = [
         Binding("escape", "back", "Back", show=True),
         Binding("enter", "read_entry", "Read", show=True),
+        Binding("d", "delete_entity", "Delete", show=True),
         Binding("h", "go_home", "Home", show=True),
         Binding("q", "back", "Back", show=False),
     ]
@@ -767,3 +769,64 @@ class EntityBrowserScreen(Screen):
             if isinstance(self.app.screen, HomeScreen):
                 break
             self.app.pop_screen()
+
+    def action_delete_entity(self) -> None:
+        """Open delete modal with context-appropriate defaults.
+
+        If reader is open (episode selected): show both scope options with "entry" default
+        If no episode selected: only show "all entries" option (hide scope radio)
+        """
+        if self.entity_data is None:
+            return
+
+        entity_name = self.entity_data["entity"]["name"]
+
+        # Determine if we have an episode context (reader is open)
+        has_episode_context = self.reader_open and self.selected_episode_uuid is not None
+
+        modal = DeleteEntityModal(
+            entity_name=entity_name,
+            default_scope="entry" if has_episode_context else "all",
+            checkbox_default=True,
+            show_scope=has_episode_context,
+        )
+        self.app.push_screen(modal, self._handle_delete_result)
+
+    async def _handle_delete_result(self, result: DeleteEntityResult) -> None:
+        """Handle deletion confirmation result."""
+        if not result.confirmed:
+            return
+
+        if self.entity_data is None:
+            return
+
+        try:
+            if result.scope == "entry":
+                # For entry scope, delete from just this entry
+                from backend.database import delete_entity_mention
+
+                if self.selected_episode_uuid:
+                    await delete_entity_mention(
+                        self.selected_episode_uuid,
+                        self.entity_uuid,
+                        self.journal,
+                        suppress_reextraction=result.block_future,
+                    )
+                    # Refresh the entity data to show remaining entries
+                    self.run_worker(
+                        self._load_entity_data(), exclusive=True, group="entity-data"
+                    )
+                    # Close the reader panel since we just deleted from it
+                    self.reader_open = False
+                    self.remove_class("narrow")
+            else:  # scope == "all"
+                await delete_entity_all_mentions(
+                    self.entity_uuid,
+                    self.journal,
+                    suppress_reextraction=result.block_future,
+                )
+                # Pop back to previous screen
+                self.app.pop_screen()
+
+        except Exception as e:
+            logger.error(f"Failed to delete entity: {e}", exc_info=True)

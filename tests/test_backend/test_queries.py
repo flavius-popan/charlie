@@ -8,6 +8,10 @@ import pytest
 from backend import add_journal_entry
 from backend.database.queries import (
     delete_entity_mention,
+    delete_entity_all_mentions,
+    add_entry_suppressed_entity,
+    get_entry_suppressed_entities,
+    is_entity_suppressed,
     get_entry_entities,
     get_n_plus_one_neighbors,
     get_period_entities,
@@ -51,12 +55,14 @@ async def test_delete_entity_mention_orphaned(isolated_graph, require_llm):
 
     entity_name = entities[0]["name"]
 
-    was_deleted = await delete_entity_mention(episode_uuid, entity_uuid, "test_journal")
+    was_deleted = await delete_entity_mention(
+        episode_uuid, entity_uuid, "test_journal", suppress_reextraction=True
+    )
 
     assert was_deleted is True
 
-    suppressed = get_suppressed_entities("test_journal")
-    assert entity_name.lower() in suppressed, "Deleted entity should be globally suppressed"
+    suppressed = await get_entry_suppressed_entities("test_journal", episode_uuid)
+    assert entity_name.lower() in suppressed, "Deleted entity should be suppressed at entry level"
 
 
 @pytest.mark.inference
@@ -82,12 +88,14 @@ async def test_delete_entity_mention_shared(isolated_graph, require_llm):
         sarah = next((e for e in entities if "Sarah" in e["name"]), None)
         assert sarah is not None
 
-    was_deleted = await delete_entity_mention(ep1_uuid, sarah["uuid"], "test_journal")
+    was_deleted = await delete_entity_mention(
+        ep1_uuid, sarah["uuid"], "test_journal", suppress_reextraction=True
+    )
 
     assert was_deleted is False
 
-    suppressed = get_suppressed_entities("test_journal")
-    assert "sarah" in suppressed, "Deleted entity should be globally suppressed even if not orphaned"
+    suppressed = await get_entry_suppressed_entities("test_journal", ep1_uuid)
+    assert "sarah" in suppressed, "Deleted entity should be suppressed at entry level"
 
 
 @pytest.mark.inference
@@ -111,7 +119,7 @@ async def test_delete_entity_mention_updates_redis_cache(isolated_graph, require
         entity_uuid = entity_to_delete["uuid"]
         entity_name = entity_to_delete["name"]
 
-    await delete_entity_mention(episode_uuid, entity_uuid, "test_journal")
+    await delete_entity_mention(episode_uuid, entity_uuid, "test_journal", suppress_reextraction=False)
 
     with redis_ops() as r:
         cache_key = f"journal:test_journal:{episode_uuid}"
@@ -122,8 +130,8 @@ async def test_delete_entity_mention_updates_redis_cache(isolated_graph, require
         assert entity_uuid not in [e["uuid"] for e in updated_entities]
         assert entity_name not in [e["name"] for e in updated_entities]
 
-    suppressed = get_suppressed_entities("test_journal")
-    assert entity_name.lower() in suppressed, "Deleted entity should be globally suppressed"
+    suppressed = await get_entry_suppressed_entities("test_journal", episode_uuid)
+    assert entity_name.lower() not in suppressed, "Entity should NOT be suppressed when suppress_reextraction=False"
 
 
 @pytest.mark.asyncio
@@ -191,6 +199,325 @@ async def test_delete_entity_mention_sets_done_when_only_self_remains(isolated_g
         nodes = json.loads(nodes_json.decode())
         assert len(nodes) == 1
         assert nodes[0]["name"] == "I"
+
+
+@pytest.mark.asyncio
+async def test_add_entry_suppressed_entity(isolated_graph):
+    """Test adding entity to entry-level suppression list."""
+    journal = "test_journal"
+    episode_uuid = "test-episode-uuid"
+    entity_name = "TestEntity"
+
+    await add_entry_suppressed_entity(journal, episode_uuid, entity_name)
+
+    suppressed = await get_entry_suppressed_entities(journal, episode_uuid)
+    assert "testentity" in suppressed, "Entity should be normalized to lowercase and added"
+
+
+@pytest.mark.asyncio
+async def test_get_entry_suppressed_entities_empty(isolated_graph):
+    """Test getting suppressed entities returns empty set when none exist."""
+    journal = "test_journal"
+    episode_uuid = "nonexistent-episode-uuid"
+
+    suppressed = await get_entry_suppressed_entities(journal, episode_uuid)
+    assert suppressed == set(), "Should return empty set for episode with no suppressions"
+
+
+@pytest.mark.asyncio
+async def test_is_entity_suppressed_entry_level(isolated_graph):
+    """Test is_entity_suppressed returns True for entry-suppressed entity."""
+    journal = "test_journal"
+    episode_uuid = "test-episode-uuid"
+    entity_name = "SuppressedEntity"
+
+    await add_entry_suppressed_entity(journal, episode_uuid, entity_name)
+
+    is_suppressed = await is_entity_suppressed(episode_uuid, journal, entity_name)
+    assert is_suppressed is True, "Entity suppressed at entry level should return True"
+
+
+@pytest.mark.asyncio
+async def test_is_entity_suppressed_journal_level(isolated_graph):
+    """Test is_entity_suppressed returns True for journal-suppressed entity."""
+    from backend.database.redis_ops import add_suppressed_entity
+
+    episode_uuid = "test-episode-uuid"
+    entity_name = "JournalSuppressed"
+
+    await add_suppressed_entity("test_journal", entity_name)
+
+    is_suppressed = await is_entity_suppressed(episode_uuid, "test_journal", entity_name)
+    assert is_suppressed is True, "Entity suppressed at journal level should return True"
+
+
+@pytest.mark.asyncio
+async def test_is_entity_suppressed_neither(isolated_graph):
+    """Test is_entity_suppressed returns False when not suppressed at either level."""
+    episode_uuid = "test-episode-uuid"
+    entity_name = "NotSuppressed"
+
+    is_suppressed = await is_entity_suppressed(episode_uuid, "test_journal", entity_name)
+    assert is_suppressed is False, "Entity not suppressed at any level should return False"
+
+
+@pytest.mark.inference
+@pytest.mark.asyncio
+async def test_delete_entity_all_mentions_removes_all_edges(isolated_graph, require_llm):
+    """Test delete_entity_all_mentions removes all MENTIONS edges across episodes."""
+    ep1_uuid = await add_journal_entry(
+        content="I met Alice today.",
+        journal="test_journal"
+    )
+    await extract_nodes(episode_uuid=ep1_uuid, journal="test_journal")
+
+    ep2_uuid = await add_journal_entry(
+        content="Alice came over again.",
+        journal="test_journal"
+    )
+    await extract_nodes(episode_uuid=ep2_uuid, journal="test_journal")
+
+    with redis_ops() as r:
+        cache_key = f"journal:test_journal:{ep1_uuid}"
+        nodes_json = r.hget(cache_key, "nodes")
+        entities = json.loads(nodes_json.decode())
+        alice = next((e for e in entities if "Alice" in e["name"]), None)
+        assert alice is not None
+
+    entity_name, deleted_count = await delete_entity_all_mentions(
+        alice["uuid"], "test_journal", suppress_reextraction=False
+    )
+
+    assert entity_name.lower() == "alice"
+    assert deleted_count == 2, "Should have deleted 2 MENTIONS edges (one per episode)"
+
+    with redis_ops() as r:
+        cache_key1 = f"journal:test_journal:{ep1_uuid}"
+        cache_key2 = f"journal:test_journal:{ep2_uuid}"
+
+        nodes1_json = r.hget(cache_key1, "nodes")
+        nodes2_json = r.hget(cache_key2, "nodes")
+
+        nodes1 = json.loads(nodes1_json.decode()) if nodes1_json else []
+        nodes2 = json.loads(nodes2_json.decode()) if nodes2_json else []
+
+        assert alice["uuid"] not in [n["uuid"] for n in nodes1], "Alice should be removed from ep1 cache"
+        assert alice["uuid"] not in [n["uuid"] for n in nodes2], "Alice should be removed from ep2 cache"
+
+
+@pytest.mark.inference
+@pytest.mark.asyncio
+async def test_delete_entity_all_mentions_removes_node(isolated_graph, require_llm):
+    """Test delete_entity_all_mentions removes the entity node from graph."""
+    from backend.database.driver import get_driver
+
+    episode_uuid = await add_journal_entry(
+        content="I met Bob at the park.",
+        journal="test_journal"
+    )
+    await extract_nodes(episode_uuid=episode_uuid, journal="test_journal")
+
+    with redis_ops() as r:
+        cache_key = f"journal:test_journal:{episode_uuid}"
+        nodes_json = r.hget(cache_key, "nodes")
+        entities = json.loads(nodes_json.decode())
+        bob = next((e for e in entities if "Bob" in e["name"]), None)
+        assert bob is not None
+
+    entity_name, deleted_count = await delete_entity_all_mentions(
+        bob["uuid"], "test_journal", suppress_reextraction=False
+    )
+
+    assert entity_name.lower() == "bob"
+    assert deleted_count == 1
+
+    driver = get_driver("test_journal")
+    records, _, _ = await driver.execute_query(
+        "MATCH (e:Entity {uuid: $uuid}) RETURN e",
+        uuid=bob["uuid"]
+    )
+    assert len(records) == 0, "Entity node should be deleted from graph"
+
+
+@pytest.mark.inference
+@pytest.mark.asyncio
+async def test_delete_entity_all_mentions_with_block(isolated_graph, require_llm):
+    """Test delete_entity_all_mentions with suppress_reextraction=True adds to journal suppression."""
+    from backend.database.redis_ops import add_suppressed_entity
+
+    episode_uuid = await add_journal_entry(
+        content="I saw Charlie yesterday.",
+        journal="test_journal"
+    )
+    await extract_nodes(episode_uuid=episode_uuid, journal="test_journal")
+
+    with redis_ops() as r:
+        cache_key = f"journal:test_journal:{episode_uuid}"
+        nodes_json = r.hget(cache_key, "nodes")
+        entities = json.loads(nodes_json.decode())
+        charlie = next((e for e in entities if "Charlie" in e["name"]), None)
+        assert charlie is not None
+
+    entity_name, deleted_count = await delete_entity_all_mentions(
+        charlie["uuid"], "test_journal", suppress_reextraction=True
+    )
+
+    assert entity_name.lower() == "charlie"
+
+    suppressed = get_suppressed_entities("test_journal")
+    assert "charlie" in suppressed, "Entity should be added to journal-level suppression"
+
+
+@pytest.mark.inference
+@pytest.mark.asyncio
+async def test_delete_entity_all_mentions_cleans_all_caches(isolated_graph, require_llm):
+    """Test delete_entity_all_mentions cleans Redis caches for all affected episodes."""
+    ep1_uuid = await add_journal_entry(
+        content="I met Diana at the store.",
+        journal="test_journal"
+    )
+    await extract_nodes(episode_uuid=ep1_uuid, journal="test_journal")
+
+    ep2_uuid = await add_journal_entry(
+        content="Diana and I went hiking.",
+        journal="test_journal"
+    )
+    await extract_nodes(episode_uuid=ep2_uuid, journal="test_journal")
+
+    with redis_ops() as r:
+        cache_key = f"journal:test_journal:{ep1_uuid}"
+        nodes_json = r.hget(cache_key, "nodes")
+        entities = json.loads(nodes_json.decode())
+        diana = next((e for e in entities if "Diana" in e["name"]), None)
+        assert diana is not None
+
+        cache_key1 = f"journal:test_journal:{ep1_uuid}"
+        cache_key2 = f"journal:test_journal:{ep2_uuid}"
+
+        mentions1_json = r.hget(cache_key1, "mentions_edges")
+        mentions2_json = r.hget(cache_key2, "mentions_edges")
+
+        mentions1_before = json.loads(mentions1_json.decode()) if mentions1_json else []
+        mentions2_before = json.loads(mentions2_json.decode()) if mentions2_json else []
+
+        initial_mentions_count = len(mentions1_before) + len(mentions2_before)
+
+    entity_name, deleted_count = await delete_entity_all_mentions(
+        diana["uuid"], "test_journal", suppress_reextraction=False
+    )
+
+    assert entity_name.lower() == "diana"
+    assert deleted_count == 2
+
+    with redis_ops() as r:
+        cache_key1 = f"journal:test_journal:{ep1_uuid}"
+        cache_key2 = f"journal:test_journal:{ep2_uuid}"
+
+        nodes1_json = r.hget(cache_key1, "nodes")
+        nodes2_json = r.hget(cache_key2, "nodes")
+        mentions1_json = r.hget(cache_key1, "mentions_edges")
+        mentions2_json = r.hget(cache_key2, "mentions_edges")
+
+        nodes1 = json.loads(nodes1_json.decode()) if nodes1_json else []
+        nodes2 = json.loads(nodes2_json.decode()) if nodes2_json else []
+        mentions1_after = json.loads(mentions1_json.decode()) if mentions1_json else []
+        mentions2_after = json.loads(mentions2_json.decode()) if mentions2_json else []
+
+        assert diana["uuid"] not in [n["uuid"] for n in nodes1], "Diana removed from ep1 nodes cache"
+        assert diana["uuid"] not in [n["uuid"] for n in nodes2], "Diana removed from ep2 nodes cache"
+
+        final_mentions_count = len(mentions1_after) + len(mentions2_after)
+        assert final_mentions_count == initial_mentions_count - 2, "2 mention edges should be removed from cache"
+
+
+@pytest.mark.asyncio
+async def test_delete_entity_mention_no_block(isolated_graph, episode_uuid):
+    """Test delete_entity_mention doesn't suppress when suppress_reextraction=False."""
+    from backend.database.queries import delete_entity_mention
+    from backend.settings import DEFAULT_JOURNAL
+
+    journal = DEFAULT_JOURNAL
+
+    isolated_graph.query(f"""
+        CREATE (:Episodic {{
+            uuid: '{episode_uuid}',
+            group_id: '{journal}',
+            content: 'Test entry',
+            name: 'Test',
+            source: 'text',
+            source_description: 'test',
+            entity_edges: [],
+            created_at: '2025-01-01T00:00:00Z',
+            valid_at: '2025-01-01T00:00:00Z'
+        }})
+    """)
+
+    isolated_graph.query(f"""
+        CREATE (:Entity:Person {{uuid: 'eve-uuid', group_id: '{journal}', name: 'Eve'}})
+    """)
+
+    isolated_graph.query(f"""
+        MATCH (ep:Episodic {{uuid: '{episode_uuid}'}}), (eve:Entity {{uuid: 'eve-uuid'}})
+        CREATE (ep)-[:MENTIONS {{uuid: 'mention-uuid'}}]->(eve)
+    """)
+
+    with redis_ops() as r:
+        cache_key = f"journal:{journal}:{episode_uuid}"
+        r.hset(cache_key, "nodes", json.dumps([
+            {"uuid": "eve-uuid", "name": "Eve", "type": "Person"},
+        ]))
+        r.hset(cache_key, "mentions_edges", json.dumps(["mention-uuid"]))
+        r.hset(cache_key, "journal", journal)
+
+    await delete_entity_mention(episode_uuid, "eve-uuid", journal, suppress_reextraction=False)
+
+    suppressed = await get_entry_suppressed_entities(journal, episode_uuid)
+    assert "eve" not in suppressed, "Entity should NOT be suppressed when suppress_reextraction=False"
+
+
+@pytest.mark.asyncio
+async def test_delete_entity_mention_with_block(isolated_graph, episode_uuid):
+    """Test delete_entity_mention suppresses at entry level when suppress_reextraction=True."""
+    from backend.database.queries import delete_entity_mention
+    from backend.settings import DEFAULT_JOURNAL
+
+    journal = DEFAULT_JOURNAL
+
+    isolated_graph.query(f"""
+        CREATE (:Episodic {{
+            uuid: '{episode_uuid}',
+            group_id: '{journal}',
+            content: 'Test entry',
+            name: 'Test',
+            source: 'text',
+            source_description: 'test',
+            entity_edges: [],
+            created_at: '2025-01-01T00:00:00Z',
+            valid_at: '2025-01-01T00:00:00Z'
+        }})
+    """)
+
+    isolated_graph.query(f"""
+        CREATE (:Entity:Person {{uuid: 'frank-uuid', group_id: '{journal}', name: 'Frank'}})
+    """)
+
+    isolated_graph.query(f"""
+        MATCH (ep:Episodic {{uuid: '{episode_uuid}'}}), (frank:Entity {{uuid: 'frank-uuid'}})
+        CREATE (ep)-[:MENTIONS {{uuid: 'mention-uuid'}}]->(frank)
+    """)
+
+    with redis_ops() as r:
+        cache_key = f"journal:{journal}:{episode_uuid}"
+        r.hset(cache_key, "nodes", json.dumps([
+            {"uuid": "frank-uuid", "name": "Frank", "type": "Person"},
+        ]))
+        r.hset(cache_key, "mentions_edges", json.dumps(["mention-uuid"]))
+        r.hset(cache_key, "journal", journal)
+
+    await delete_entity_mention(episode_uuid, "frank-uuid", journal, suppress_reextraction=True)
+
+    suppressed = await get_entry_suppressed_entities(journal, episode_uuid)
+    assert "frank" in suppressed, "Entity should be suppressed at entry level when suppress_reextraction=True"
 
 
 class TestGetEntryEntities:

@@ -23,6 +23,7 @@ from backend.database.persistence import (
     update_episode,
 )
 from backend.database.queries import (
+    delete_entity_all_mentions,
     episode_exists,
     get_entity_browser_data,
     get_entry_entities,
@@ -71,6 +72,7 @@ __all__ = [
     "update_episode",
     "delete_episode",
     # Query operations
+    "delete_entity_all_mentions",
     "episode_exists",
     "get_entity_browser_data",
     "get_entry_entities",
