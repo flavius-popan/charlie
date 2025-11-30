@@ -64,18 +64,6 @@ async def test_with_llm_call(isolated_graph, require_llm):
     # Test code that makes LLM calls via DSPy
 ```
 
-## State Machine Diagram Regeneration
-
-**CRITICAL: When modifying any state machine (adding/removing states, events, or transitions), regenerate its diagram immediately after implementation.**
-
-State diagrams are generated from the state machine definition and must stay in sync to avoid diagram drift. If a plan or task mentions a state diagram file (e.g., `frontend/diagrams/sidebar_state_machine.png`), regenerate it whenever you modify the corresponding state machine.
-
-**How to regenerate:**
-- Look for a `generate_diagram()` function in the state machine module
-- Call it explicitly: `python -c "from path.to.module import generate_diagram; generate_diagram()"`
-- Verify the updated diagram is committed
-- Never skip this step - diagram drift makes architecture documentation unreliable
-
 ### Misc. Things to Remember
 
 - Use the respective conftest.py file for a given test suite for fixtures.

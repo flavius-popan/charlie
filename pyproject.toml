@@ -17,7 +17,6 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "python-statemachine[diagrams]>=2.5.0",
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
     "pytest-textual-snapshot>=1.0.0",
