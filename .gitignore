@@ -15,6 +15,7 @@ wheels/
 .pytest_cache
 .direnv
 .claude
+.worktrees/
 .dspy_cache
 backend/prompts/gepa/
 backend/prompts/.dspy_cache/
