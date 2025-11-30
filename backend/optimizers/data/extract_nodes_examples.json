@@ -101,6 +101,20 @@
         {"name": "Notion", "entity_type_id": 0},
         {"name": "prototyping", "entity_type_id": 4}
       ]
+    },
+    {
+      "_persona": "Grad student, mid-20s, finally seeing the light at the end of the tunnel, emotional and reflective",
+      "_modes": "Reinforcement: titled names stay intact (Dr., Auntie), informal activities ARE valid (retail therapy, doom scrolling)",
+      "episode_content": "Finally submitted my thesis draft to Dr. Okonkwo and I feel like I can breathe again, shes been pushing me hard but honestly I needed it. Celebrated with some retail therapy at Target and came home with way more candles than any person needs lol.\n\nCalled Auntie Pat to tell her the news and she cried which made me cry, Nana would be proud she said and that one hit different.\n\nDecompressed with some yoga then did my usual doom scrolling before bed, really need to break that habit.",
+      "expected_entities": [
+        {"name": "Dr. Okonkwo", "entity_type_id": 1},
+        {"name": "Target", "entity_type_id": 2},
+        {"name": "retail therapy", "entity_type_id": 4},
+        {"name": "Auntie Pat", "entity_type_id": 1},
+        {"name": "Nana", "entity_type_id": 1},
+        {"name": "yoga", "entity_type_id": 4},
+        {"name": "doom scrolling", "entity_type_id": 4}
+      ]
     }
   ]
 }
