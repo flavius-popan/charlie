@@ -5,12 +5,10 @@ from typing import Callable
 
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Container, Horizontal, Vertical
+from textual.containers import Container
 from textual.message import Message
 from textual.reactive import reactive
-from textual.screen import ModalScreen
 from textual.widgets import (
-    Button,
     Label,
     ListView,
     LoadingIndicator,
@@ -19,82 +17,9 @@ from textual.widgets import (
 from backend.database.queries import delete_entity_mention
 from backend.database.redis_ops import redis_ops
 from frontend.widgets import EntityListItem
+from frontend.widgets.confirmation_modal import ConfirmationModal
 
 logger = logging.getLogger("charlie")
-
-
-class DeleteEntityModal(ModalScreen):
-    """Confirmation modal for entity deletion."""
-
-    DEFAULT_CSS = """
-    DeleteEntityModal {
-        align: center middle;
-    }
-
-    #delete-dialog {
-        width: 80;
-        height: auto;
-        max-height: 15;
-        border: thick $background 80%;
-        background: $surface;
-        padding: 2 4;
-    }
-
-    #delete-dialog Vertical {
-        height: auto;
-    }
-
-    #delete-title {
-        text-style: bold;
-        color: $text;
-        margin-bottom: 1;
-    }
-
-    #delete-hint {
-        color: $text-muted;
-        margin-bottom: 2;
-    }
-
-    #delete-buttons {
-        align: center middle;
-    }
-
-    #delete-dialog Button {
-        margin-right: 2;
-    }
-    """
-
-    def __init__(self, entity: dict):
-        super().__init__()
-        self.entity = entity
-
-    def compose(self) -> ComposeResult:
-        name = self.entity["name"]
-        title = f"Remove '{name}'?"
-        hint = "It won't appear again in any future entries."
-
-        yield Vertical(
-            Label(title, id="delete-title"),
-            Label(hint, id="delete-hint"),
-            Horizontal(
-                Button("Cancel", id="cancel", variant="default"),
-                Button("Remove", id="remove", variant="error"),
-                id="delete-buttons",
-            ),
-            id="delete-dialog",
-        )
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "remove":
-            self.dismiss(True)
-        else:
-            self.dismiss(False)
-
-    def on_key(self, event) -> None:
-        if event.key == "escape":
-            self.dismiss(False)
-            event.stop()
-            event.prevent_default()
 
 
 class EntitySidebar(Container):
@@ -129,18 +54,9 @@ class EntitySidebar(Container):
         width: 100%;
         height: 4%;
     }
-
-    EntitySidebar .sidebar-footer {
-        color: $text-muted;
-        text-align: center;
-        width: 100%;
-        height: 2%;
-    }
     """
 
-    BINDINGS = [
-        Binding("d", "delete_entity", "Delete", show=False),
-    ]
+    BINDINGS = []
 
     episode_uuid: reactive[str] = reactive("")
     journal: reactive[str] = reactive("")
@@ -175,7 +91,6 @@ class EntitySidebar(Container):
     def compose(self) -> ComposeResult:
         yield Label("Connections", classes="sidebar-header")
         yield Container(id="entity-content")
-        yield Label("d: delete | ↑↓: navigate", classes="sidebar-footer")
 
     def on_mount(self) -> None:
         """Render initial content and attempt immediate cache fetch."""
@@ -347,7 +262,13 @@ class EntitySidebar(Container):
             return
 
         entity = self.entities[list_view.index]
-        self.app.push_screen(DeleteEntityModal(entity), self._handle_delete_result)
+        name = entity["name"]
+        modal = ConfirmationModal(
+            title=f"Remove '{name}'?",
+            hint="It won't appear again in any future entries.",
+            confirm_label="Remove",
+        )
+        self.app.push_screen(modal, self._handle_delete_result)
 
     async def _handle_delete_result(self, confirmed: bool) -> None:
         """Handle deletion confirmation result."""

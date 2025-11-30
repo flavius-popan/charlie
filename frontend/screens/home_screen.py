@@ -18,7 +18,6 @@ from textual.widgets import (
 )
 
 from backend.database import (
-    delete_episode,
     ensure_database_ready,
     get_entry_entities,
     get_episode_status,
@@ -218,7 +217,6 @@ class HomeScreen(Screen):
     BINDINGS = [
         Binding("n", "new_entry", "New", show=True),
         Binding("space", "view_entry", "View", show=True),
-        Binding("d", "delete_entry", "Delete", show=True),
         Binding("s", "open_settings", "Settings", show=True),
         Binding("l", "open_logs", "Logs", show=True),
         Binding("q", "quit", "Quit", show=True),
@@ -890,21 +888,6 @@ class HomeScreen(Screen):
                     self.app.push_screen(ViewScreen(episode["uuid"], DEFAULT_JOURNAL))
         except Exception as e:
             logger.error("Failed to open view screen: %s", e, exc_info=True)
-
-    async def action_delete_entry(self):
-        try:
-            if not self.episodes:
-                return
-            list_view = self.query_one("#episodes-list", ListView)
-            if list_view.index is not None:
-                episode_idx = self.list_index_to_episode.get(list_view.index)
-                if episode_idx is not None and 0 <= episode_idx < len(self.episodes):
-                    episode = self.episodes[episode_idx]
-                    await delete_episode(episode["uuid"])
-                    await self.load_episodes()
-        except Exception as e:
-            logger.error("Failed to delete entry: %s", e, exc_info=True)
-            self.notify("Failed to delete entry", severity="error")
 
     def action_quit(self):
         """Request graceful shutdown via unified async path (fire-and-forget)."""

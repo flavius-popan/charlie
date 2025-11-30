@@ -10,6 +10,7 @@ from textual.screen import Screen
 from textual.widgets import Footer, Header, ListView, Markdown
 
 from backend.database import get_episode, get_entry_entities_with_counts
+from backend.database.persistence import delete_episode
 from backend.database.redis_ops import redis_ops
 from frontend.utils import inject_entity_links
 from backend.database.redis_ops import (
@@ -19,6 +20,7 @@ from backend.database.redis_ops import (
 )
 from backend.settings import DEFAULT_JOURNAL
 from textual.worker import WorkerCancelled
+from frontend.widgets.confirmation_modal import ConfirmationModal
 from frontend.widgets.entity_sidebar import EntitySidebar
 from frontend.state.sidebar_state_machine import SidebarStateMachine
 
@@ -34,6 +36,7 @@ class ViewScreen(Screen):
 
     BINDINGS = [
         Binding("e", "edit_entry", "Edit", show=True),
+        Binding("d", "delete", "Delete", show=True),
         Binding("c", "toggle_connections", "Connections", show=True),
         Binding("l", "show_logs", "Logs", show=True),
         Binding("q", "back", "Back", show=True),
@@ -276,6 +279,43 @@ class ViewScreen(Screen):
     def action_edit_entry(self):
         from frontend.screens.edit_screen import EditScreen
         self.app.push_screen(EditScreen(self.episode_uuid))
+
+    def _sidebar_entity_focused(self) -> bool:
+        """Check if sidebar is visible with an entity focused."""
+        try:
+            sidebar = self.query_one("#entity-sidebar", EntitySidebar)
+            if sidebar.display and sidebar.entities:
+                list_view = sidebar.query_one(ListView)
+                if list_view.has_focus and list_view.index is not None and list_view.index >= 0:
+                    return True
+        except NoMatches:
+            pass
+        return False
+
+    def action_delete(self):
+        """Context-aware delete: connection if sidebar focused, otherwise entry."""
+        if self._sidebar_entity_focused():
+            sidebar = self.query_one("#entity-sidebar", EntitySidebar)
+            sidebar.action_delete_entity()
+        else:
+            modal = ConfirmationModal(
+                title="Delete this entry?",
+                hint="This action cannot be undone.",
+                confirm_label="Delete",
+            )
+            self.app.push_screen(modal, self._handle_entry_delete_result)
+
+    async def _handle_entry_delete_result(self, confirmed: bool) -> None:
+        """Handle entry deletion confirmation result."""
+        if not confirmed:
+            return
+
+        try:
+            await delete_episode(self.episode_uuid)
+            self.app.pop_screen()
+        except Exception as e:
+            logger.error("Failed to delete entry: %s", e, exc_info=True)
+            self.notify("Failed to delete entry", severity="error")
 
     def action_back(self):
         # Notify machine that episode is closed (only if sidebar visible)

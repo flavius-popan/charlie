@@ -39,7 +39,8 @@ from frontend.screens.home_screen import HomeScreen
 from frontend.screens.view_screen import ViewScreen
 from frontend.screens.edit_screen import EditScreen
 from frontend.screens.settings_screen import SettingsScreen
-from frontend.widgets.entity_sidebar import EntitySidebar, DeleteEntityModal
+from frontend.widgets.confirmation_modal import ConfirmationModal
+from frontend.widgets.entity_sidebar import EntitySidebar
 
 
 async def wait_for_condition(predicate, timeout=1.0, check_interval=0.01):
@@ -1353,7 +1354,7 @@ class TestConnectionsPaneVisibility:
 
             # Should remain on ViewScreen and no delete modal should appear
             assert isinstance(app.screen, ViewScreen)
-            assert all(not isinstance(s, DeleteEntityModal) for s in app.screen_stack)
+            assert all(not isinstance(s, ConfirmationModal) for s in app.screen_stack)
 
 
 @pytest.mark.asyncio
