@@ -191,37 +191,10 @@ async def test_go_home_returns_to_home_screen(mock_entity_db, mock_home_db):
     Bug: action_go_home() pops screens in a tight loop without yielding
     to the event loop, causing lifecycle race conditions.
     """
-    import asyncio
-    from contextlib import asynccontextmanager
     from frontend.screens.home_screen import HomeScreen
+    from tests.test_frontend.conftest import TestAppWithHomeScreen, home_test_context
 
-    class TestAppWithHome(App):
-        """Test app that starts with HomeScreen like the real app."""
-        def __init__(self):
-            super().__init__()
-            self.visited_entities: set[str] = set()
-
-        def on_mount(self):
-            self.push_screen(HomeScreen())
-
-    @asynccontextmanager
-    async def home_test_context(app):
-        """Context manager to clean up HomeScreen workers."""
-        try:
-            async with app.run_test() as pilot:
-                await pilot.pause()
-                yield pilot
-                # Cancel workers before cleanup
-                for screen in app.screen_stack:
-                    if isinstance(screen, HomeScreen):
-                        for group in ["processing_poll", "entities", "period_stats"]:
-                            screen.workers.cancel_group(screen, group)
-                        for _ in range(10):
-                            await pilot.pause()
-        except asyncio.CancelledError:
-            pass
-
-    app = TestAppWithHome()
+    app = TestAppWithHomeScreen()
     async with home_test_context(app) as pilot:
         # Should start on HomeScreen
         assert isinstance(app.screen, HomeScreen), "Should start on HomeScreen"
@@ -304,34 +277,9 @@ async def test_visited_entity_added_on_mount(mock_entity_db):
 @pytest.mark.asyncio
 async def test_visited_entities_cleared_on_go_home(mock_entity_db, mock_home_db):
     """Pressing 'h' should clear visited_entities."""
-    import asyncio
-    from contextlib import asynccontextmanager
-    from frontend.screens.home_screen import HomeScreen
+    from tests.test_frontend.conftest import TestAppWithHomeScreen, home_test_context
 
-    class TestAppWithHome(App):
-        def __init__(self):
-            super().__init__()
-            self.visited_entities: set[str] = set()
-
-        def on_mount(self):
-            self.push_screen(HomeScreen())
-
-    @asynccontextmanager
-    async def home_test_context(app):
-        try:
-            async with app.run_test() as pilot:
-                await pilot.pause()
-                yield pilot
-                for screen in app.screen_stack:
-                    if isinstance(screen, HomeScreen):
-                        for group in ["processing_poll", "entities", "period_stats"]:
-                            screen.workers.cancel_group(screen, group)
-                        for _ in range(10):
-                            await pilot.pause()
-        except asyncio.CancelledError:
-            pass
-
-    app = TestAppWithHome()
+    app = TestAppWithHomeScreen()
     async with home_test_context(app) as pilot:
         # Pre-populate visited entities
         app.visited_entities = {"entity-1", "entity-2", "entity-3"}
@@ -392,3 +340,102 @@ async def test_connections_filtered_by_visited(mock_entity_db):
         link_uuids = [link.entity_uuid for link in connection_links]
         assert "conn-1" not in link_uuids, "Visited entity should be filtered from connections"
         assert len(connection_links) == 2
+
+
+# =============================================================================
+# LINK HANDLING TESTS
+# =============================================================================
+
+
+@pytest.mark.asyncio
+async def test_entity_link_pushes_new_browser_screen(mock_entity_db):
+    """Clicking entity:// link should push new EntityBrowserScreen."""
+    from textual.widgets import Markdown
+
+    app = EntityBrowserTestApp(entity_uuid="test-uuid")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+
+        # Open the reader first
+        await pilot.press("enter")
+        await pilot.pause()
+
+        # Simulate entity link click by posting the event
+        reader_content = app.screen.query_one("#reader-content", Markdown)
+        event = Markdown.LinkClicked(reader_content, href="entity://linked-entity-uuid")
+        app.screen.on_markdown_link_clicked(event)
+        await pilot.pause()
+
+        # Should have pushed a new EntityBrowserScreen
+        assert isinstance(app.screen, EntityBrowserScreen), "Should push new EntityBrowserScreen"
+        assert app.screen.entity_uuid == "linked-entity-uuid"
+
+
+@pytest.mark.asyncio
+async def test_reader_opens_and_displays_content(mock_entity_db):
+    """Opening reader should display entry content with entity emphasis."""
+    app = EntityBrowserTestApp(entity_uuid="test-uuid")
+    async with app.run_test(size=(120, 40)) as pilot:  # Wide screen
+        await pilot.pause()
+
+        # Reader should be closed initially
+        assert not app.screen.reader_open
+
+        # Open reader with Enter
+        await pilot.press("enter")
+        await pilot.pause()
+
+        # Reader should now be open
+        assert app.screen.reader_open
+
+        # Check that reader panel is visible
+        reader_panel = app.screen.query_one("#reader-panel")
+        assert reader_panel.display is not False
+
+
+@pytest.mark.asyncio
+async def test_reader_inherits_open_state_on_navigation(mock_entity_db):
+    """Reader state should be preserved when navigating to new entity."""
+    from frontend.screens.entity_browser_screen import ConnectionLink
+
+    app = EntityBrowserTestApp(entity_uuid="test-uuid")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+
+        # Open reader
+        await pilot.press("enter")
+        await pilot.pause()
+        assert app.screen.reader_open
+
+        # Get a connection link and click it
+        connections = app.screen.query_one("#quotes-footer")
+        connection_links = [c for c in connections.children if isinstance(c, ConnectionLink)]
+        if connection_links:
+            connection_links[0].on_click()
+            await pilot.pause()
+
+            # New screen should have reader open (inherited state)
+            assert isinstance(app.screen, EntityBrowserScreen)
+            # The _initial_reader_open flag should have been set
+            assert app.screen._initial_reader_open
+
+
+@pytest.mark.asyncio
+async def test_screen_unmount_cancels_workers(mock_entity_db):
+    """Workers should be cancelled when screen is unmounted."""
+    app = EntityBrowserTestApp(entity_uuid="test-uuid")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+
+        screen = app.screen
+        # Verify screen has worker groups set up
+        assert hasattr(screen, "workers")
+
+        # Pop the screen
+        app.pop_screen()
+        await pilot.pause()
+
+        # Screen should have been unmounted (on_unmount called)
+        # We can't easily verify workers were cancelled, but we can verify
+        # the screen was removed without errors
+        assert screen not in app.screen_stack

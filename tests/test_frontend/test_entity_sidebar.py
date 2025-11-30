@@ -128,9 +128,9 @@ async def test_entity_sidebar_formats_entity_labels():
         list_view = sidebar.query_one(ListView)
         items = list(list_view.children)
 
-        from frontend.widgets.entity_sidebar import EntityListItem
-        item1_label = items[0].label_text if isinstance(items[0], EntityListItem) else ""
-        item2_label = items[1].label_text if isinstance(items[1], EntityListItem) else ""
+        from frontend.widgets import EntityListItem
+        item1_label = items[0]._name if isinstance(items[0], EntityListItem) else ""
+        item2_label = items[1]._name if isinstance(items[1], EntityListItem) else ""
 
         assert "Sarah" in item1_label
         assert "[Person]" in item1_label

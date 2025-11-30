@@ -12,33 +12,15 @@ from textual.screen import ModalScreen
 from textual.widgets import (
     Button,
     Label,
-    ListItem,
     ListView,
     LoadingIndicator,
 )
 
 from backend.database.queries import delete_entity_mention
 from backend.database.redis_ops import redis_ops
+from frontend.widgets import EntityListItem
 
 logger = logging.getLogger("charlie")
-
-
-class EntityListItem(ListItem):
-    """A list item for displaying entity information."""
-
-    DEFAULT_CSS = """
-    EntityListItem {
-        padding-left: 1;
-    }
-    """
-
-    def __init__(self, label_text: str, entity_uuid: str | None = None, **kwargs):
-        super().__init__(**kwargs)
-        self.label_text = label_text
-        self.entity_uuid = entity_uuid
-
-    def compose(self) -> ComposeResult:
-        yield Label(self.label_text)
 
 
 class DeleteEntityModal(ModalScreen):
@@ -131,11 +113,14 @@ class EntitySidebar(Container):
     EntitySidebar {
         width: 1fr;
         border-left: solid $accent;
-
     }
 
     EntitySidebar #entity-content {
         padding-left: 0;
+    }
+
+    EntitySidebar EntityListItem {
+        padding-left: 1;
     }
 
     EntitySidebar .sidebar-header {

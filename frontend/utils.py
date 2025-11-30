@@ -1,5 +1,6 @@
 """Utility functions for Charlie TUI frontend."""
 
+import re
 from datetime import datetime, timedelta, timezone
 
 
@@ -197,8 +198,6 @@ def inject_entity_links(
     Returns:
         Markdown with injected entity links
     """
-    import re
-
     if not entities:
         return content
 
@@ -274,8 +273,6 @@ def emphasize_rich(content: str, text: str) -> str:
     Returns:
         Text with Rich bold markup applied
     """
-    import re
-
     if not text or len(text) < 2:
         return content
 
@@ -304,8 +301,6 @@ def emphasize_text(content: str, text: str) -> str:
     Returns:
         Markdown with text wrapped in bold
     """
-    import re
-
     if not text or len(text) < 2:
         return content
 

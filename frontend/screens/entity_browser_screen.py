@@ -198,12 +198,16 @@ class MentionInfo(Static):
                 item = quotes_list.children[self.oldest_index]
                 if isinstance(item, (QuoteListItem, TitleListItem)):
                     screen._open_reader(item.episode_uuid)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Failed to scroll to oldest quote: %s", e)
 
 
 class EntityBrowserScreen(Screen):
     """Screen for browsing entity details and memories."""
+
+    WIDE_SCREEN_THRESHOLD = 100
+    MAX_HEADER_CONNECTIONS = 5
+    MAX_N_PLUS_ONE_NEIGHBORS = 10
 
     BINDINGS = [
         Binding("escape", "back", "Back", show=True),
@@ -382,11 +386,17 @@ class EntityBrowserScreen(Screen):
 
     def _is_wide_screen(self) -> bool:
         """Check if screen is wide enough for side-by-side layout."""
-        return self.app.size.width >= 100
+        return self.app.size.width >= self.WIDE_SCREEN_THRESHOLD
 
     def on_screen_suspend(self) -> None:
         self._has_been_suspended = True
         self.workers.cancel_group(self, "entity-data")
+        self.workers.cancel_group(self, "header-connections")
+
+    def on_unmount(self) -> None:
+        """Cancel all workers when screen is removed from DOM."""
+        self.workers.cancel_group(self, "entity-data")
+        self.workers.cancel_group(self, "reader-links")
         self.workers.cancel_group(self, "header-connections")
 
     async def _load_entity_data(self) -> None:
@@ -546,7 +556,7 @@ class EntityBrowserScreen(Screen):
 
             # Filter out visited entities
             visited = self.app.visited_entities
-            filtered = [c for c in connections if c["uuid"] not in visited][:5]
+            filtered = [c for c in connections if c["uuid"] not in visited][:self.MAX_HEADER_CONNECTIONS]
 
             for i, conn in enumerate(filtered):
                 link = ConnectionLink(conn["name"], conn["uuid"], self.journal)
@@ -554,7 +564,7 @@ class EntityBrowserScreen(Screen):
                 if i < len(filtered) - 1:
                     quotes_footer.mount(ConnectionSeparator())
         except Exception as e:
-            logger.error("Failed to update header connections: %s", e, exc_info=True)
+            logger.debug("Failed to update header connections: %s", e)
 
     async def _load_reader_connections(self, episode_uuid: str) -> None:
         """Load n+1 neighbors for the entry being read."""
@@ -577,7 +587,7 @@ class EntityBrowserScreen(Screen):
                 source_uuids,
                 self.journal,
                 exclude_uuids=exclude,
-                limit=10,
+                limit=self.MAX_N_PLUS_ONE_NEIGHBORS,
             )
 
             if not neighbors:
@@ -592,7 +602,7 @@ class EntityBrowserScreen(Screen):
             ]
             self._update_header_connections(connections)
         except Exception as e:
-            logger.error("Failed to load reader connections: %s", e, exc_info=True)
+            logger.debug("Failed to load reader connections: %s", e)
             self._update_header_connections()
 
     def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
@@ -662,8 +672,8 @@ class EntityBrowserScreen(Screen):
                 group="reader-links",
             )
 
-            # Responsive: narrow mode if terminal < 100 columns
-            if self.app.size.width < 100:
+            # Responsive: narrow mode if terminal below threshold
+            if self.app.size.width < self.WIDE_SCREEN_THRESHOLD:
                 self.add_class("narrow")
             else:
                 self.remove_class("narrow")
@@ -701,7 +711,7 @@ class EntityBrowserScreen(Screen):
                 content = emphasize_text(content, entity_name)
             await reader_content.update(content)
         except Exception as e:
-            logger.error("Failed to load linked content: %s", e, exc_info=True)
+            logger.debug("Failed to load linked content: %s", e)
             await reader_content.update(content)
 
     def on_markdown_link_clicked(self, event: Markdown.LinkClicked) -> None:
@@ -722,8 +732,8 @@ class EntityBrowserScreen(Screen):
             try:
                 quotes_list = self.query_one("#quotes-list", ListView)
                 quotes_list.focus()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Failed to focus quotes list: %s", e)
         else:
             # Wide screen or reader already closed: pop screen
             self.app.pop_screen()

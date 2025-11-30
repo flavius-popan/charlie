@@ -37,7 +37,7 @@ from frontend.state.processing_state_machine import (
     ProcessingOutput,
 )
 from frontend.utils import calculate_periods, get_display_title, group_entries_by_period
-from frontend.widgets import ProcessingDot
+from frontend.widgets import EntityListItem, ProcessingDot
 
 EMPTY_STATE_CAT = r"""
          /\_/\
@@ -104,18 +104,6 @@ class EntryLabel(Horizontal):
             self.add_class("processing")
         else:
             self.remove_class("processing")
-
-
-class EntityListItem(ListItem):
-    """List item for entity display with UUID for navigation."""
-
-    def __init__(self, name: str, entity_uuid: str):
-        super().__init__()
-        self.entity_uuid = entity_uuid
-        self._name = name
-
-    def compose(self) -> ComposeResult:
-        yield Label(self._name)
 
 
 class HomeScreen(Screen):
