@@ -27,6 +27,7 @@ from backend.database import (
     get_processing_status,
 )
 from backend.settings import DEFAULT_JOURNAL
+from frontend.screens.entity_browser_screen import EntityBrowserScreen
 from frontend.screens.settings_screen import SettingsScreen
 from frontend.screens.view_screen import ViewScreen
 from frontend.screens.log_screen import LogScreen
@@ -36,7 +37,7 @@ from frontend.state.processing_state_machine import (
     ProcessingOutput,
 )
 from frontend.utils import calculate_periods, get_display_title, group_entries_by_period
-from frontend.widgets import ProcessingDot
+from frontend.widgets import EntityListItem, ProcessingDot
 
 EMPTY_STATE_CAT = r"""
          /\_/\
@@ -407,7 +408,8 @@ class HomeScreen(Screen):
                     self._last_connections_index = None
                     for entity in self.entry_entities[:10]:
                         name = entity.get("name", "")
-                        entity_list.append(ListItem(Label(name)))
+                        uuid = entity.get("uuid", "")
+                        entity_list.append(EntityListItem(name, uuid))
         except Exception as e:
             logger.debug("Failed to update connections pane: %s", e)
 
@@ -475,7 +477,8 @@ class HomeScreen(Screen):
                     self._last_temporal_index = None
                     for entity in top_entities[:25]:
                         name = entity.get("name", "")
-                        entity_list.append(ListItem(Label(name)))
+                        uuid = entity.get("uuid", "")
+                        entity_list.append(EntityListItem(name, uuid))
         except Exception as e:
             logger.debug("Failed to update temporal pane: %s", e)
 
@@ -770,14 +773,21 @@ class HomeScreen(Screen):
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         """Handle ListView selection (Enter key)."""
-        # Only respond to entries list events, not connections/temporal lists
-        if event.list_view.id != "episodes-list":
-            return
-        if self.episodes and event.list_view.index is not None:
-            episode_idx = self.list_index_to_episode.get(event.list_view.index)
-            if episode_idx is not None and 0 <= episode_idx < len(self.episodes):
-                episode = self.episodes[episode_idx]
-                self.app.push_screen(ViewScreen(episode["uuid"], DEFAULT_JOURNAL))
+        # Handle entries list
+        if event.list_view.id == "episodes-list":
+            if self.episodes and event.list_view.index is not None:
+                episode_idx = self.list_index_to_episode.get(event.list_view.index)
+                if episode_idx is not None and 0 <= episode_idx < len(self.episodes):
+                    episode = self.episodes[episode_idx]
+                    self.app.push_screen(ViewScreen(episode["uuid"], DEFAULT_JOURNAL))
+        # Handle connections list - navigate to entity browser
+        elif event.list_view.id == "connections-list":
+            if isinstance(event.item, EntityListItem) and event.item.entity_uuid:
+                self.app.push_screen(EntityBrowserScreen(event.item.entity_uuid, DEFAULT_JOURNAL))
+        # Handle temporal list - navigate to entity browser
+        elif event.list_view.id == "temporal-list":
+            if isinstance(event.item, EntityListItem) and event.item.entity_uuid:
+                self.app.push_screen(EntityBrowserScreen(event.item.entity_uuid, DEFAULT_JOURNAL))
 
     async def load_episodes(self):
         try:

@@ -9,8 +9,9 @@ from textual.reactive import reactive
 from textual.screen import Screen
 from textual.widgets import Footer, Header, ListView, Markdown
 
-from backend.database import get_episode
+from backend.database import get_episode, get_entry_entities_with_counts
 from backend.database.redis_ops import redis_ops
+from frontend.utils import inject_entity_links
 from backend.database.redis_ops import (
     get_episode_status,
     get_inference_enabled,
@@ -115,7 +116,7 @@ class ViewScreen(Screen):
 
         yield Header(show_clock=False, icon="")
         yield Horizontal(
-            Markdown("Loading...", id="journal-content"),
+            Markdown("Loading...", id="journal-content", open_links=False),
             sidebar,
         )
         yield Footer()
@@ -242,8 +243,15 @@ class ViewScreen(Screen):
             if self.episode:
                 # Refresh sidebar context in case status changed externally (batched for speed)
                 await self._refresh_all_sidebar_state()
+
+                # Fetch entities and inject clickable links (only entities mentioned 2+ times)
+                entities = await get_entry_entities_with_counts(self.episode_uuid, self.journal)
+                content = self.episode["content"]
+                if entities:
+                    content = inject_entity_links(content, entities, min_mentions=2)
+
                 markdown = self.query_one("#journal-content", Markdown)
-                await markdown.update(self.episode["content"])
+                await markdown.update(content)
             else:
                 logger.error(f"Episode not found: {self.episode_uuid}")
                 self.notify("Entry not found", severity="error")
@@ -252,6 +260,18 @@ class ViewScreen(Screen):
             logger.error(f"Failed to load episode: {e}", exc_info=True)
             self.notify("Error loading entry", severity="error")
             self.app.pop_screen()
+
+    def on_markdown_link_clicked(self, event: Markdown.LinkClicked) -> None:
+        """Handle link clicks, including custom entity:// protocol."""
+        href = event.href
+
+        if href.startswith("entity://"):
+            entity_uuid = href.replace("entity://", "")
+            from frontend.screens.entity_browser_screen import EntityBrowserScreen
+
+            self.app.push_screen(EntityBrowserScreen(entity_uuid, self.journal))
+        elif href.startswith(("http://", "https://")):
+            self.app.open_url(href)
 
     def action_edit_entry(self):
         from frontend.screens.edit_screen import EditScreen

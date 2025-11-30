@@ -12,32 +12,15 @@ from textual.screen import ModalScreen
 from textual.widgets import (
     Button,
     Label,
-    ListItem,
     ListView,
     LoadingIndicator,
 )
 
 from backend.database.queries import delete_entity_mention
 from backend.database.redis_ops import redis_ops
+from frontend.widgets import EntityListItem
 
 logger = logging.getLogger("charlie")
-
-
-class EntityListItem(ListItem):
-    """A list item for displaying entity information."""
-
-    DEFAULT_CSS = """
-    EntityListItem {
-        padding-left: 1;
-    }
-    """
-
-    def __init__(self, label_text: str, **kwargs):
-        super().__init__(**kwargs)
-        self.label_text = label_text
-
-    def compose(self) -> ComposeResult:
-        yield Label(self.label_text)
 
 
 class DeleteEntityModal(ModalScreen):
@@ -130,11 +113,14 @@ class EntitySidebar(Container):
     EntitySidebar {
         width: 1fr;
         border-left: solid $accent;
-
     }
 
     EntitySidebar #entity-content {
         padding-left: 0;
+    }
+
+    EntitySidebar EntityListItem {
+        padding-left: 1;
     }
 
     EntitySidebar .sidebar-header {
@@ -303,7 +289,7 @@ class EntitySidebar(Container):
                     return
 
             items = [
-                EntityListItem(self._format_entity_label(entity))
+                EntityListItem(self._format_entity_label(entity), entity.get("uuid"))
                 for entity in self.entities
             ]
             list_view = ListView(*items)
@@ -389,3 +375,10 @@ class EntitySidebar(Container):
 
         except Exception as e:
             logger.error(f"Failed to delete entity mention: {e}", exc_info=True)
+
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        """Handle Enter key on entity list - open entity browser."""
+        if isinstance(event.item, EntityListItem) and event.item.entity_uuid:
+            from frontend.screens.entity_browser_screen import EntityBrowserScreen
+
+            self.app.push_screen(EntityBrowserScreen(event.item.entity_uuid, self.journal))

@@ -1,7 +1,47 @@
 """Frontend test fixtures - mocking for UI tests."""
 
+import asyncio
+from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
+from textual.app import App
+
+
+class TestAppWithHomeScreen(App):
+    """Test app that starts with HomeScreen like the real app."""
+
+    def __init__(self):
+        super().__init__()
+        self.visited_entities: set[str] = set()
+
+    def on_mount(self):
+        from frontend.screens.home_screen import HomeScreen
+        self.push_screen(HomeScreen())
+
+
+@asynccontextmanager
+async def home_test_context(app):
+    """Context manager to clean up HomeScreen workers.
+
+    Use this when testing screens that navigate from/to HomeScreen to
+    prevent worker cancellation errors during test cleanup.
+    """
+    from frontend.screens.home_screen import HomeScreen
+
+    try:
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            yield pilot
+            # Cancel workers before cleanup
+            for screen in app.screen_stack:
+                if isinstance(screen, HomeScreen):
+                    for group in ["processing_poll", "entities", "period_stats"]:
+                        screen.workers.cancel_group(screen, group)
+                    for _ in range(10):
+                        await pilot.pause()
+    except asyncio.CancelledError:
+        pass
 
 
 @pytest.fixture(autouse=True)

@@ -4,6 +4,9 @@ These tests use a lightweight test app that mounts HomeScreen directly,
 avoiding the overhead of full CharlieApp initialization.
 """
 
+import asyncio
+from contextlib import asynccontextmanager
+
 import pytest
 from unittest.mock import patch, AsyncMock, MagicMock
 from datetime import datetime
@@ -12,6 +15,29 @@ from textual.widgets import Header, Footer
 
 from frontend.screens.home_screen import HomeScreen
 from frontend.state.processing_state_machine import ProcessingOutput
+
+
+@asynccontextmanager
+async def home_test_context(app):
+    """Context manager that cancels HomeScreen workers before cleanup.
+
+    Prevents unraisable exceptions from workers still running when test ends.
+    """
+    try:
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            yield pilot
+            # Cancel HomeScreen workers before cleanup
+            for screen in app.screen_stack:
+                if isinstance(screen, HomeScreen):
+                    for group in ["processing_poll", "entities", "period_stats"]:
+                        screen.workers.cancel_group(screen, group)
+                    for _ in range(10):
+                        await pilot.pause()
+                        if not any(w.is_running for w in screen.workers):
+                            break
+    except asyncio.CancelledError:
+        pass
 
 
 class HomeScreenTestApp(App):
@@ -53,7 +79,7 @@ async def test_home_screen_shows_empty_state(mock_home_db):
     mock_home_db["get_home"].return_value = []
 
     app = HomeScreenTestApp()
-    async with app.run_test() as pilot:
+    async with home_test_context(app) as pilot:
         await pilot.pause()
 
         empty_state = app.screen.query_one("#empty-state")
@@ -65,7 +91,7 @@ async def test_home_screen_shows_empty_state(mock_home_db):
 async def test_home_screen_displays_header(mock_home_db):
     """Should display Header."""
     app = HomeScreenTestApp()
-    async with app.run_test() as pilot:
+    async with home_test_context(app) as pilot:
         await pilot.pause()
 
         headers = app.screen.query(Header)
@@ -76,7 +102,7 @@ async def test_home_screen_displays_header(mock_home_db):
 async def test_home_screen_has_footer(mock_home_db):
     """Should display Footer with key bindings."""
     app = HomeScreenTestApp()
-    async with app.run_test() as pilot:
+    async with home_test_context(app) as pilot:
         await pilot.pause()
 
         footers = app.screen.query(Footer)
@@ -97,7 +123,7 @@ async def test_home_screen_loads_episodes(mock_home_db):
     mock_home_db["get_home"].return_value = mock_episodes
 
     app = HomeScreenTestApp()
-    async with app.run_test() as pilot:
+    async with home_test_context(app) as pilot:
         await pilot.pause()
 
         home_screen = app.screen
@@ -125,7 +151,7 @@ async def test_home_screen_displays_episode_list(mock_home_db):
     mock_home_db["get_home"].return_value = mock_episodes
 
     app = HomeScreenTestApp()
-    async with app.run_test() as pilot:
+    async with home_test_context(app) as pilot:
         await pilot.pause()
 
         from textual.widgets import ListView
@@ -166,7 +192,7 @@ async def test_navigating_entries_updates_period_on_boundary_crossing(mock_home_
     mock_home_db["get_home"].return_value = mock_episodes
 
     app = HomeScreenTestApp()
-    async with app.run_test() as pilot:
+    async with home_test_context(app) as pilot:
         await pilot.pause()
 
         home_screen = app.screen
@@ -206,7 +232,7 @@ async def test_pane_titles_show_key_hints(mock_home_db):
     }
 
     app = HomeScreenTestApp()
-    async with app.run_test() as pilot:
+    async with home_test_context(app) as pilot:
         await pilot.pause()
 
         from textual.containers import Container
@@ -233,7 +259,7 @@ async def test_numerical_key_focuses_entries_list(mock_home_db):
     mock_home_db["get_home"].return_value = mock_episodes
 
     app = HomeScreenTestApp()
-    async with app.run_test() as pilot:
+    async with home_test_context(app) as pilot:
         await pilot.pause()
 
         from textual.widgets import ListView
@@ -266,7 +292,7 @@ async def test_numerical_key_focuses_connections_list(mock_home_db):
     ]
 
     app = HomeScreenTestApp()
-    async with app.run_test() as pilot:
+    async with home_test_context(app) as pilot:
         await pilot.pause()
 
         from textual.widgets import ListView
@@ -300,7 +326,7 @@ async def test_numerical_key_focuses_temporal_list(mock_home_db):
     }
 
     app = HomeScreenTestApp()
-    async with app.run_test() as pilot:
+    async with home_test_context(app) as pilot:
         await pilot.pause()
 
         from textual.widgets import ListView
@@ -345,7 +371,7 @@ async def test_position_memory_preserved_on_focus_switch(mock_home_db):
     ]
 
     app = HomeScreenTestApp()
-    async with app.run_test() as pilot:
+    async with home_test_context(app) as pilot:
         await pilot.pause()
 
         from textual.widgets import ListView
@@ -388,7 +414,7 @@ async def test_entity_list_navigation_does_not_change_entry_selection(mock_home_
     ]
 
     app = HomeScreenTestApp()
-    async with app.run_test() as pilot:
+    async with home_test_context(app) as pilot:
         await pilot.pause()
 
         home_screen = app.screen
@@ -427,7 +453,7 @@ async def test_entity_list_selection_does_not_trigger_view(mock_home_db):
     ]
 
     app = HomeScreenTestApp()
-    async with app.run_test() as pilot:
+    async with home_test_context(app) as pilot:
         await pilot.pause()
 
         # Focus connections list
@@ -456,7 +482,7 @@ async def test_entry_formatting_uses_bold_date(mock_home_db):
     mock_home_db["get_home"].return_value = mock_episodes
 
     app = HomeScreenTestApp()
-    async with app.run_test() as pilot:
+    async with home_test_context(app) as pilot:
         await pilot.pause()
 
         from frontend.screens.home_screen import EntryLabel
@@ -483,7 +509,7 @@ async def test_entry_formatting_no_dot_separator(mock_home_db):
     mock_home_db["get_home"].return_value = mock_episodes
 
     app = HomeScreenTestApp()
-    async with app.run_test() as pilot:
+    async with home_test_context(app) as pilot:
         await pilot.pause()
 
         from frontend.screens.home_screen import EntryLabel
@@ -510,7 +536,7 @@ async def test_focus_on_empty_connections_list_does_nothing(mock_home_db):
     mock_home_db["get_entry_entities"].return_value = []  # No entities
 
     app = HomeScreenTestApp()
-    async with app.run_test() as pilot:
+    async with home_test_context(app) as pilot:
         await pilot.pause()
 
         from textual.widgets import ListView
@@ -551,7 +577,7 @@ async def test_index_bounds_validation_after_list_shrinks(mock_home_db):
     ]
 
     app = HomeScreenTestApp()
-    async with app.run_test() as pilot:
+    async with home_test_context(app) as pilot:
         await pilot.pause()
 
         from textual.widgets import ListView
@@ -603,7 +629,7 @@ async def test_connections_pane_shows_awaiting_processing_for_pending_entry(mock
     mock_home_db["get_episode_status"].return_value = "pending_nodes"
 
     app = HomeScreenTestApp()
-    async with app.run_test() as pilot:
+    async with home_test_context(app) as pilot:
         await pilot.pause()
 
         from textual.widgets import Static
@@ -627,7 +653,7 @@ async def test_connections_pane_shows_no_connections_for_processed_entry(mock_ho
     mock_home_db["get_episode_status"].return_value = "done"
 
     app = HomeScreenTestApp()
-    async with app.run_test() as pilot:
+    async with home_test_context(app) as pilot:
         await pilot.pause()
 
         from textual.widgets import Static
@@ -660,7 +686,7 @@ async def test_connections_pane_shows_loading_for_actively_processing_entry(mock
         }
 
         app = HomeScreenTestApp()
-        async with app.run_test() as pilot:
+        async with home_test_context(app) as pilot:
             await pilot.pause()
 
             # Wait for polling loop to update processing_output

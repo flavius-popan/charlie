@@ -24,10 +24,14 @@ from backend.database.persistence import (
 )
 from backend.database.queries import (
     episode_exists,
+    get_entity_browser_data,
     get_entry_entities,
+    get_entry_entities_with_counts,
     get_episode,
     get_home_screen,
+    get_n_plus_one_neighbors,
     get_period_entities,
+    truncate_quote,
 )
 from backend.database.redis_ops import (
     get_active_episode_uuid,
@@ -67,10 +71,14 @@ __all__ = [
     "delete_episode",
     # Query operations
     "episode_exists",
+    "get_entity_browser_data",
     "get_entry_entities",
+    "get_entry_entities_with_counts",
     "get_episode",
     "get_home_screen",
+    "get_n_plus_one_neighbors",
     "get_period_entities",
+    "truncate_quote",
     # Redis operations
     "get_active_episode_uuid",
     "get_episode_status",
