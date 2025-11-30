@@ -661,9 +661,8 @@ class EntityBrowserScreen(Screen):
             # Wide screen or reader not open - open/update the reader panel
             self._open_reader(self.selected_episode_uuid)
 
-    async def action_go_home(self) -> None:
+    def action_go_home(self) -> None:
         """Pop all screens to return to home."""
-        import asyncio
         from frontend.screens.home_screen import HomeScreen
 
         # Cancel workers before popping screens
@@ -675,4 +674,3 @@ class EntityBrowserScreen(Screen):
             if isinstance(self.app.screen, HomeScreen):
                 break
             self.app.pop_screen()
-            await asyncio.sleep(0)  # Yield to event loop between pops
