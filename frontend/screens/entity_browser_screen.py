@@ -144,7 +144,8 @@ class ConnectionLink(Static):
         self.journal = journal
 
     def on_click(self) -> None:
-        self.app.push_screen(EntityBrowserScreen(self.entity_uuid, self.journal))
+        current_reader_open = getattr(self.screen, 'reader_open', False)
+        self.app.push_screen(EntityBrowserScreen(self.entity_uuid, self.journal, initial_reader_open=current_reader_open))
 
 
 class ConnectionSeparator(Static):
@@ -191,6 +192,12 @@ class MentionInfo(Static):
             quotes_list.index = self.oldest_index
             quotes_list.scroll_to_widget(quotes_list.children[self.oldest_index])
             quotes_list.focus()
+
+            # Update viewer if already open
+            if screen.reader_open:
+                item = quotes_list.children[self.oldest_index]
+                if isinstance(item, (QuoteListItem, TitleListItem)):
+                    screen._open_reader(item.episode_uuid)
         except Exception:
             pass
 
@@ -316,10 +323,11 @@ class EntityBrowserScreen(Screen):
     reader_open: reactive[bool] = reactive(False)
     selected_episode_uuid: reactive[str | None] = reactive(None)
 
-    def __init__(self, entity_uuid: str, journal: str = DEFAULT_JOURNAL):
+    def __init__(self, entity_uuid: str, journal: str = DEFAULT_JOURNAL, *, initial_reader_open: bool = False):
         super().__init__()
         self.entity_uuid = entity_uuid
         self.journal = journal
+        self._initial_reader_open = initial_reader_open
         self._has_been_suspended = False
 
     def compose(self) -> ComposeResult:
@@ -503,8 +511,8 @@ class EntityBrowserScreen(Screen):
                             break
                     quotes_list.focus()
 
-            # Auto-open reader on wide screens (after batch_update completes)
-            if self._is_wide_screen() and self.selected_episode_uuid:
+            # Open reader if inherited from previous screen
+            if self._initial_reader_open and self.selected_episode_uuid:
                 self._open_reader(self.selected_episode_uuid)
 
         except Exception as e:
@@ -623,7 +631,7 @@ class EntityBrowserScreen(Screen):
 
         if href.startswith("entity://"):
             entity_uuid = href.replace("entity://", "")
-            self.app.push_screen(EntityBrowserScreen(entity_uuid, self.journal))
+            self.app.push_screen(EntityBrowserScreen(entity_uuid, self.journal, initial_reader_open=self.reader_open))
         elif href.startswith(("http://", "https://")):
             self.app.open_url(href)
 
