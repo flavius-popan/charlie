@@ -13,6 +13,25 @@ fail() { echo "ERROR: $1" >&2; exit 1; }
 
 step "Pre-flight checks"
 
+# Check for uv package manager (preferred for speed)
+if ! command -v uv &> /dev/null; then
+    echo "uv package manager not found (recommended for faster installs)"
+    read -p "Install uv now? [Y/n] " install_uv
+    if [[ ! "$install_uv" =~ ^[Nn]$ ]]; then
+        echo "Installing uv..."
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+
+        # Add uv to PATH for this session
+        export PATH="$HOME/.local/bin:$PATH"
+
+        if command -v uv &> /dev/null; then
+            echo "uv installed successfully"
+        else
+            echo "Warning: uv installed but not found in PATH. Falling back to pip."
+        fi
+    fi
+fi
+
 # Find suitable Python (3.12+)
 find_python() {
     for cmd in python3.13 python3.12 python3 python; do
@@ -106,11 +125,13 @@ else
         echo "Using uv for dependency management"
         uv venv "$VENV_DIR" --python "$PYTHON_CMD"
         source "$VENV_DIR/bin/activate"
+        echo "Installing and compiling dependencies (may take a few minutes on first run)..."
         uv pip install -e ".[dev]"
     else
         echo "Using pip for dependency management"
         "$PYTHON_CMD" -m venv "$VENV_DIR"
         source "$VENV_DIR/bin/activate"
+        echo "Installing and compiling dependencies (may take a few minutes on first run)..."
         pip install -e ".[dev]"
     fi
 fi
@@ -145,14 +166,22 @@ fi
 
 step "Downloading model and verifying inference"
 
-echo "This may take several minutes on first run (~4.5GB download)"
-echo "Model will be cached in ~/.cache/huggingface/"
+echo "First run: ~4.5GB download, cached in ~/.cache/huggingface/"
 
 python -c "
 from backend.inference.loader import load_model
+from backend.settings import MODEL_REPO_ID, MODEL_QUANTIZATION
+from huggingface_hub import try_to_load_from_cache
 
-print('Loading model (downloading if needed)...')
+filename_pattern = f'*{MODEL_QUANTIZATION}.gguf'
+cached = try_to_load_from_cache(MODEL_REPO_ID, filename_pattern)
+if cached:
+    print('Model already cached, loading...')
+else:
+    print('Downloading model (this may take several minutes)...')
+
 llm = load_model()
+print('Model loaded')
 
 print('Running inference test...')
 result = llm.create_chat_completion(
@@ -197,20 +226,33 @@ asyncio.run(verify())
 
 step "Journal import"
 
-echo "Available importers:"
-echo "  - Text files (.txt, .md, .rtf): python importers/files.py <directory>"
-echo "  - Day One export: python importers/dayone.py <export.zip>"
+echo "Import journal entries from:"
+echo "  1) Text files (.txt, .md, .rtf from a directory)"
+echo "  2) Day One export (.zip file)"
+echo "  3) Skip import"
 echo ""
-read -p "Import text files now? [y/N] " import_choice
-if [[ "$import_choice" =~ ^[Yy]$ ]]; then
-    read -p "Path to journal directory: " journal_path
-    if [[ -n "$journal_path" ]]; then
-        echo ""
-        echo "Options: --recursive, --date-source created|modified, --dry-run"
-        read -p "Additional options (or press Enter for defaults): " import_opts
-        python importers/files.py "$journal_path" $import_opts
-    fi
-fi
+read -p "Choose [1/2/3]: " import_choice
+
+case "$import_choice" in
+    1)
+        read -p "Path to journal directory: " journal_path
+        if [[ -n "$journal_path" ]]; then
+            echo ""
+            echo "Options: --recursive, --date-source created|modified, --dry-run"
+            read -p "Additional options (or press Enter for defaults): " import_opts
+            python importers/files.py "$journal_path" $import_opts
+        fi
+        ;;
+    2)
+        read -p "Path to Day One export .zip: " dayone_path
+        if [[ -n "$dayone_path" ]]; then
+            python importers/dayone.py "$dayone_path"
+        fi
+        ;;
+    *)
+        echo "Skipping import"
+        ;;
+esac
 
 # =============================================================================
 # 6. Launch Charlie
