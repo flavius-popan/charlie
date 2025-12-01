@@ -3,6 +3,12 @@
 from pydantic import BaseModel
 
 
+class Entity(BaseModel):
+    """Generic entity fallback type."""
+
+    pass
+
+
 class Person(BaseModel):
     """Person entity type."""
 
@@ -32,6 +38,7 @@ entity_types = {
     "Place": Place,
     "Group": Group,
     "Activity": Activity,
+    "Entity": Entity,
 }
 
 
@@ -49,25 +56,29 @@ def format_entity_types_for_llm(types: dict | None = None) -> str:
     if types is None:
         types = entity_types
 
-    type_list = [
-        {
-            "entity_type_id": 0,
-            "entity_type_name": "Entity",
-            "entity_type_description": "Generic entity fallback",
-        }
-    ]
+    type_list = []
+
+    # Explicit IDs: Entity is 0 (fallback) but listed last so LLM sees primary types first
+    type_ids = {
+        "Person": 1,
+        "Place": 2,
+        "Group": 3,
+        "Activity": 4,
+        "Entity": 0,
+    }
 
     descriptions = {
         "Person": "individual people mentioned by name",
         "Place": "specific named locations and venues",
         "Group": "named teams, clubs, friend circles, or organizations",
         "Activity": "named events, occasions, outings, or recurring routines",
+        "Entity": "proper nouns the author chose to mention but outside the existing categories",
     }
 
-    for idx, (name, _) in enumerate(types.items(), start=1):
+    for name, _ in types.items():
         type_list.append(
             {
-                "entity_type_id": idx,
+                "entity_type_id": type_ids.get(name, 0),
                 "entity_type_name": name,
                 "entity_type_description": descriptions.get(
                     name, f"{name} entity type"
@@ -107,6 +118,7 @@ def get_type_name_from_id(type_id: int, types: dict | None = None) -> str:
 
 
 __all__ = [
+    "Entity",
     "Person",
     "Place",
     "Group",
