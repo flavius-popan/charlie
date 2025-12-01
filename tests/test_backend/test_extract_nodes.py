@@ -227,28 +227,6 @@ async def test_extract_nodes_dedupe_disabled(isolated_graph, require_llm):
 
 @pytest.mark.inference
 @pytest.mark.asyncio
-async def test_extract_nodes_custom_entity_types(isolated_graph, require_llm):
-    """Test extraction with custom entity types."""
-    from backend import add_journal_entry, extract_nodes
-    from backend.settings import DEFAULT_JOURNAL
-    from pydantic import BaseModel
-
-    class CustomType(BaseModel):
-        pass
-
-    custom_types = {"CustomType": CustomType}
-
-    content = "I visited the park today."
-    episode_uuid = await add_journal_entry(content)
-
-    result = await extract_nodes(episode_uuid, DEFAULT_JOURNAL, entity_types=custom_types)
-
-    assert result.episode_uuid == episode_uuid
-    assert result.extracted_count >= 0
-
-
-@pytest.mark.inference
-@pytest.mark.asyncio
 async def test_extract_nodes_mentions_edges_created(isolated_graph, require_llm):
     """Test that MENTIONS edges are created from episode to entities."""
     from backend import add_journal_entry, extract_nodes

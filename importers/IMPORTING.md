@@ -8,6 +8,7 @@ Import journal entries from external sources into charlie.
 |--------|---------|
 | Day One | `python importers/dayone.py export.zip` |
 | Basic XML | `python importers/basic_xml.py corpus.xml --timezone UTC` |
+| Text Files | `python importers/files.py ~/journals/` |
 
 ## Common Options
 
@@ -31,6 +32,31 @@ Features:
 - Preserves original Day One UUIDs
 - Cleans markdown escape characters
 - Skips empty entries
+
+## Files Importer
+
+Imports from a directory of text files (`.txt`, `.md`, `.rtf`, etc.) using file metadata for dates.
+
+```bash
+python importers/files.py ~/old-journals/
+python importers/files.py ~/notes/ --extensions md --date-source modified
+python importers/files.py ~/Documents/journals/ --recursive --timezone America/New_York
+```
+
+Options:
+- `--date-source created|modified` - Use file creation or modification time (default: `created`)
+- `--extensions txt,md,rtf` - Comma-separated extensions (default: `txt,md,rtf,markdown,text`)
+- `--recursive` - Recurse into subdirectories
+- `--timezone ZONE` - Timezone for file timestamps (default: system timezone)
+
+Features:
+- Supports `.txt`, `.md`, `.rtf`, `.markdown`, `.text` files by default
+- RTF files are automatically stripped of formatting
+- Skips hidden files/directories and symlinks
+- Uses file creation time (macOS `birthtime`) or modification time for entry dates
+- Deterministic UUIDs based on file path (idempotent imports)
+
+**Note:** Moving or renaming files will cause duplicate imports since UUIDs include the file path.
 
 ## Basic XML Importer
 

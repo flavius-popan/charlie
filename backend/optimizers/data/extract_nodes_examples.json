@@ -1,53 +1,175 @@
 {
   "_comment": [
     "Entity type IDs must match backend/graph/entities_edges.py:",
-    "  0 = Entity (fallback)",
     "  1 = Person",
     "  2 = Place",
-    "  3 = Organization",
+    "  3 = Group",
     "  4 = Activity",
     "Update this comment block when entity types change."
   ],
   "examples": [
     {
-      "_note": "Work stress, therapy techniques, mix of person/place/org/activity",
-      "episode_content": "Today was one of those days where everything felt heavier than usual. I woke up late, which threw off my whole morning routine. By the time I got to Philz Coffee to meet Marcus, I was already in a weird headspace.\n\nMarcus could tell something was off. We sat in our usual spot by the window and he just listened while I vented about work stuff - the pressure at Stripe has been intense lately with the new payments integration launch. My manager Elena keeps saying I'm doing great but I can't shake the feeling I'm falling behind.\n\nAfter coffee, I walked through Dolores Park alone. The sun was out and families were having picnics. I did my breathing exercises on a bench near the tennis courts - the ones Dr. Patel taught me. Four counts in, hold for seven, out for eight. It helped a little.",
+      "_persona": "Mid-30s millennial, software-adjacent job, long-term relationship, intellectualizes emotions but learning to feel them",
+      "_modes": "1 (sequential names), 2 (time modifiers), 3 (possessives/normalization)",
+      "episode_content": "Priya's been stressed about her mom visiting next week and I think its starting to get to both of us. She snapped at me this morning over something dumb and I just... didn't engage. Made breakfast, kept it moving. Kenji came by later which was actually perfect timing - forgot how much I missed just shooting the shit with him. Talked for like 2 hours about everything, his job stuff, my situation with Priya, life. He's good at listening without trying to fix things you know?\n\nDid a meditation after he left. Needed to get out of my head.\n\nMet up with Wei for a late lunch at Tamarind Kitchen. Hadn't seen them since the wedding and it was nice to catch up one on one without the wedding crew being chaotic. They're thinking about moving back to Vancouver which is wild, always assumed they'd be here forever.",
       "expected_entities": [
-        {"name": "Philz Coffee", "entity_type_id": 2},
-        {"name": "Marcus", "entity_type_id": 1},
-        {"name": "Stripe", "entity_type_id": 3},
-        {"name": "Elena", "entity_type_id": 1},
-        {"name": "Dolores Park", "entity_type_id": 2},
-        {"name": "Dr. Patel", "entity_type_id": 1},
-        {"name": "breathing exercises", "entity_type_id": 4}
+        {"name": "Priya", "entity_type_id": 1},
+        {"name": "Priya's mom", "entity_type_id": 1},
+        {"name": "Kenji", "entity_type_id": 1},
+        {"name": "Wei", "entity_type_id": 1},
+        {"name": "meditation", "entity_type_id": 4},
+        {"name": "Tamarind Kitchen", "entity_type_id": 2},
+        {"name": "Vancouver", "entity_type_id": 2},
+        {"name": "wedding crew", "entity_type_id": 3}
       ]
     },
     {
-      "_note": "Running club, social breakfast, career goals - many entities",
-      "episode_content": "Had my weekly check-in with the Bay Area Runners Club this morning. We met at Crissy Field at 6am - way too early but the sunrise over the Golden Gate Bridge made it worth it. Sarah led the warm-up today since Coach Martinez was out sick.\n\nAfterward, a few of us grabbed breakfast at Mama's on Washington Square. I sat with Tom and his girlfriend Jessica. They're planning a trip to Japan next spring and couldn't stop talking about it. Tom works at Salesforce and apparently they have amazing travel benefits.\n\nSpent the afternoon at the SF Public Library working on my photography portfolio. I'm trying to get into the Adobe Creative Residency program - the deadline is next month and I still need to finish my artist statement.",
+      "_persona": "Early 20s, recent college grad, broke, socially active, writes in bursts with drama",
+      "_modes": "4 (granularity - no rooms/furniture), 5 (compound parsing - venue in city)",
+      "episode_content": "Dragged myself to brunch with Dmitri and Yuki at Cafe Lumiere in Montclair. Honestly couldn't afford it but Yuki was like \"you never come out anymore\" and guilt tripped me into it lmao. We tried sitting on the patio but it was hot as balls so we moved inside. Food was overpriced for what it was but whatever, I needed to get out of my apartment before I lost my mind.\n\nYuki's going through it rn, her situationship with that guy from her job finally imploded. Dmitri and I just listened and nodded for like an hour straight. The broke bitches do what we do best. Then she found some random bookstore downtown and completely forgot she was sad, spent 20 mins digging through shelves for a copy of Acts of Service. We just stood there like ok I guess were doing this now. Got boba after because I already blew my budget so why not. Retail therapy with these two is dangerous for my bank account but I regret nothing.",
       "expected_entities": [
-        {"name": "Bay Area Runners Club", "entity_type_id": 3},
-        {"name": "Crissy Field", "entity_type_id": 2},
-        {"name": "Golden Gate Bridge", "entity_type_id": 2},
-        {"name": "Sarah", "entity_type_id": 1},
-        {"name": "Coach Martinez", "entity_type_id": 1},
-        {"name": "Mama's on Washington Square", "entity_type_id": 2},
-        {"name": "Tom", "entity_type_id": 1},
-        {"name": "Jessica", "entity_type_id": 1},
-        {"name": "Salesforce", "entity_type_id": 3},
-        {"name": "SF Public Library", "entity_type_id": 2},
-        {"name": "Adobe Creative Residency", "entity_type_id": 3}
+        {"name": "Dmitri", "entity_type_id": 1},
+        {"name": "Yuki", "entity_type_id": 1},
+        {"name": "Cafe Lumiere", "entity_type_id": 2},
+        {"name": "Montclair", "entity_type_id": 2},
+        {"name": "broke bitches", "entity_type_id": 3},
+        {"name": "retail therapy", "entity_type_id": 4}
       ]
     },
     {
-      "_note": "Example using Entity fallback (type 0) for things that don't fit other categories",
-      "episode_content": "Couldn't sleep last night so I finally started reading that copy of Meditations by Marcus Aurelius that's been sitting on my nightstand for months. There's something about Stoic philosophy that clicks for me right now - the idea that we can only control our own reactions, not external events.\n\nI've been thinking a lot about my grandmother's old saying: 'worry is a rocking chair'. She passed it down from her mother, apparently it's an old Irish proverb. It keeps echoing in my head whenever I catch myself spiraling.\n\nMade some chamomile tea around 3am and sat with Luna on the couch. She always knows when something's off. By the time the sun came up I actually felt a little lighter.",
+      "_persona": "Late 40s, immigrant healthcare worker (15 yrs in US), parent of teenager, tired but present",
+      "_modes": "2 (activities as nouns), 6 (action vs entity confusion)",
+      "episode_content": "Long day at the hospital, longer than usual even. Monday is always like this because weekend team leaves everything half done. Spent first two hours just figuring out what happened while I was gone. Finally got to do actual patient care after lunch which is the part I actually like about this job.\n\nFatima from pharmacy came up to discuss new medication protocol. I like working with her, she is thorough, checks everything twice. We went over the changes together, took longer than expected but worth it. Omar caught me later in the hallway, stressed about staffing again. Short two nurses next month. I told him we will manage, we always do. But honestly I am tired of always managing.\n\nTook a few minutes for Asr prayer in the break room after Omar left. Needed to clear my head.\n\nLeft late to pick up Sana from dance practice at Encore Academy. She was quiet in the car which is not like her, usually talks the whole way home about the dance team and what everyone is working on. I ask whats wrong and she gives me the \"I'm fine\" with that voice. You cannot push teenagers, learned this the hard way. So I just drove and let the quiet be quiet. After dinner we played backgammon like we used to when she was little. She won twice. Watched an episode of The Bear together after, nice to see her smile again.",
       "expected_entities": [
-        {"name": "Meditations", "entity_type_id": 0},
-        {"name": "Marcus Aurelius", "entity_type_id": 1},
-        {"name": "Stoic philosophy", "entity_type_id": 0},
-        {"name": "grandmother", "entity_type_id": 1},
-        {"name": "Luna", "entity_type_id": 1}
+        {"name": "Fatima", "entity_type_id": 1},
+        {"name": "Omar", "entity_type_id": 1},
+        {"name": "Sana", "entity_type_id": 1},
+        {"name": "Asr prayer", "entity_type_id": 4},
+        {"name": "dance practice", "entity_type_id": 4},
+        {"name": "backgammon", "entity_type_id": 4},
+        {"name": "Encore Academy", "entity_type_id": 2},
+        {"name": "dance team", "entity_type_id": 3}
+      ]
+    },
+    {
+      "_persona": "New parent, sleep deprived, grateful for any help, writes in fragmented bursts",
+      "_modes": "1 (names near punctuation), 3 (normalization - typo resilience)",
+      "episode_content": "Nina slept for four hours straight last night. FOUR HOURS. I almost cried. Michael took the morning shift so I could actually shower for once, bless that man.\n\nMom, Auntie Rosa, Tia, and Juno all came by around noon with food from Pho 75. Didnt even have to ask, they just knew. Took turns holding Nina while I ate with both hands like a human being. Forgot what that felt like.\n\nThe new parents group zoom was actually helpful today? Usually I zone out but someone recommended Goodnight Moon for the bedtime routine and now micheal and I read it every night. She loves it.\n\nNina!!! She smiled at me for real this time, not just gas. Im not crying ur crying.",
+      "expected_entities": [
+        {"name": "Nina", "entity_type_id": 1},
+        {"name": "Michael", "entity_type_id": 1},
+        {"name": "mom", "entity_type_id": 1},
+        {"name": "Auntie Rosa", "entity_type_id": 1},
+        {"name": "Tia", "entity_type_id": 1},
+        {"name": "Juno", "entity_type_id": 1},
+        {"name": "Pho 75", "entity_type_id": 2},
+        {"name": "new parents group", "entity_type_id": 3},
+        {"name": "bedtime routine", "entity_type_id": 4}
+      ]
+    },
+    {
+      "_persona": "Type-A business exec, mid-40s, high-functioning, doesn't realize every story involves alcohol",
+      "_modes": "4 (granularity - work jargon not extracted), 5 (compound parsing - business entities)",
+      "episode_content": "Solid day. Closed the Meridian deal finally, been chasing that one for months. Took the team out to Flemings to celebrate, felt like the right move. Good energy, everyone needed the win.\n\nHad drinks with Patrick after at the hotel bar downstairs. Hes the CFO contact at Meridian, sharp guy. We talked through the integration timeline, knocked out a few bourbons. Productive honestly, some of the best conversations happen after hours.\n\nGolf tomorrow with the advisory board at Pinehurst. Listened to How I Built This on the drive home, always gets me fired up. Need to prep for the Kensington pitch, might bring it up on the back nine. Thats where the real work gets done if you ask me.\n\nGrabbed a nightcap at home while finishing Never Split the Difference. Need to be sharper for the presentation but I work well under pressure.",
+      "expected_entities": [
+        {"name": "Patrick", "entity_type_id": 1},
+        {"name": "Flemings", "entity_type_id": 2},
+        {"name": "Pinehurst", "entity_type_id": 2},
+        {"name": "Meridian", "entity_type_id": 3},
+        {"name": "Kensington", "entity_type_id": 3},
+        {"name": "advisory board", "entity_type_id": 3},
+        {"name": "golf", "entity_type_id": 4}
+      ]
+    },
+    {
+      "_persona": "Creative freelancer, late 20s, works from coffee shops, juggles tools and projects",
+      "_modes": "5 (slash-separated lists, possessive place names), 2 (using X pattern)",
+      "episode_content": "Productive morning at Rosie's, finally got into a flow state. Been experimenting with Figma/Framer trying to figure out which works best for prototyping. Think Im landing on Framer but still not sure.\n\nSaw a post about a design meetup next week. Might actually go this time, been too hermit mode lately. Could use some human interaction that isnt through a screen.\n\nLunch with Quinn to talk about the rebrand hes been working on. We sat outside at Marco's, nice to catch up. He convinced me to try using Notion for project tracking instead of my chaos spreadsheet. We'll see.",
+      "expected_entities": [
+        {"name": "Quinn", "entity_type_id": 1},
+        {"name": "Rosie's", "entity_type_id": 2},
+        {"name": "Marco's", "entity_type_id": 2},
+        {"name": "design meetup", "entity_type_id": 3},
+        {"name": "prototyping", "entity_type_id": 4}
+      ]
+    },
+    {
+      "_persona": "Grad student, mid-20s, finally seeing the light at the end of the tunnel, emotional and reflective",
+      "_modes": "Reinforcement: titled names stay intact (Dr., Auntie), informal activities ARE valid (retail therapy, doom scrolling)",
+      "episode_content": "Finally submitted my thesis draft to Dr. Okonkwo and I feel like I can breathe again, shes been pushing me hard but honestly I needed it. Celebrated with some retail therapy at Target and came home with way more candles than any person needs lol.\n\nCalled Auntie Pat to tell her the news and she cried which made me cry, Nana would be proud she said and that one hit different.\n\nDecompressed with some yoga then did my usual doom scrolling before bed, really need to break that habit.",
+      "expected_entities": [
+        {"name": "Dr. Okonkwo", "entity_type_id": 1},
+        {"name": "Target", "entity_type_id": 2},
+        {"name": "retail therapy", "entity_type_id": 4},
+        {"name": "Auntie Pat", "entity_type_id": 1},
+        {"name": "Nana", "entity_type_id": 1},
+        {"name": "yoga", "entity_type_id": 4},
+        {"name": "doom scrolling", "entity_type_id": 4}
+      ]
+    },
+    {
+      "_persona": "Musician, night owl, mixes creative work with day job chaos",
+      "_modes": "1 (verbose phrases), 4 (time modifiers)",
+      "_intent": "Strip verbs ('messing around in Ableton' -> 'Ableton') and time modifiers ('evening open mic' -> 'open mic')",
+      "episode_content": "Couldn't sleep again. My brain wouldn't stop replaying that conversation with Theo about whether I'm actually serious about music or just hiding from real life. He didn't mean it as an attack but it stung. Spent the early morning hours messing around in Ableton, layering synths over that drum loop from last week. Finally crashed around 5am.\n\nWoke up late, groggy. Made myself go to the evening open mic at Fender's even though I didn't feel like it. Ended up playing two songs on the house piano, forgot the bridge on the second one, whatever. Nobody noticed probably. Sometimes showing up is the whole thing.",
+      "expected_entities": [
+        {"name": "Theo", "entity_type_id": 1},
+        {"name": "Ableton", "entity_type_id": 4},
+        {"name": "open mic", "entity_type_id": 4},
+        {"name": "Fender's", "entity_type_id": 2}
+      ]
+    },
+    {
+      "_persona": "College student, gamer, crashes at friends' places, perpetually broke",
+      "_modes": "2 (room granularity), 7 (possessives)",
+      "_intent": "Extract person from possessives ('Dante's place' -> 'Dante'), keep business names ('Vinyl's Records'), omit rooms/furniture",
+      "episode_content": "- Dante's place, crashed on his couch after the LAN party went way too late\n- His roommate made us eggs in the morning, eaten standing in their kitchen because all the chairs had stuff on them\n- Mudd Library til 3, camped out in the basement stacks where nobody bothers you\n- Vinyl's Records, found a Coltrane I didn't have, the guy at the counter threw in a free poster\n- Mira's for dinner, her roommate made curry and we ate it on the floor of her living room watching bad reality TV\n- Walk back to the apt in the cold, regretted not bringing a jacket\n- Home",
+      "expected_entities": [
+        {"name": "Dante", "entity_type_id": 1},
+        {"name": "LAN party", "entity_type_id": 4},
+        {"name": "Mudd Library", "entity_type_id": 2},
+        {"name": "Vinyl's Records", "entity_type_id": 2},
+        {"name": "Mira", "entity_type_id": 1}
+      ]
+    },
+    {
+      "_persona": "Worried parent, overthinks everything, journals to process anxiety",
+      "_modes": "1 (verbose phrases), 7 (possessives)",
+      "_intent": "Extract person from possessives, omit rooms ('kitchen table') and generic activities ('dinner' without venue)",
+      "episode_content": "I keep second-guessing whether Zara is happy at swim practice or if I'm pushing her too hard. She seemed fine when I picked her up but teenagers are impossible to read. We stopped at Harbor Books because she wanted something for the beach trip and I was just grateful she wanted to do anything with me at all.\n\nAunt Viv says I worry too much. Easy for her to say. We sat at her kitchen table for like two hours while the kids played and I mostly just listened to her talk about her garden renovation. It was actually nice to not think for a while.\n\nRemi texted asking if we wanted to come for dinner. Zara actually said yes without me having to beg. Small wins.",
+      "expected_entities": [
+        {"name": "Zara", "entity_type_id": 1},
+        {"name": "swim practice", "entity_type_id": 4},
+        {"name": "Harbor Books", "entity_type_id": 2},
+        {"name": "Aunt Viv", "entity_type_id": 1},
+        {"name": "Remi", "entity_type_id": 1}
+      ]
+    },
+    {
+      "_persona": "Hiker who journals for mental clarity, nature as therapy",
+      "_modes": "2 (room granularity), 4 (time modifiers)",
+      "_intent": "Strip time modifiers ('sunrise hike' -> 'hike', 'late lunch' -> 'lunch'), omit terrain features ('creek', 'boulder')",
+      "episode_content": "Needed to clear my head so I drove out to Kestrel Ridge for a sunrise hike. Didn't even bring music, just walked. The trail runners group passed me going the other direction and I waved but didn't stop to chat. Wasn't in the mood for people.\n\nFound a spot by the creek and just sat there watching the water for I don't know how long. An hour? More? Time gets weird out there. Had a late lunch on a boulder, watched some birds I couldn't identify.\n\nStopped at REI on the way home because I needed an excuse to not go home yet. Bought gaiters I don't need. The afternoon light on the drive back was gorgeous.",
+      "expected_entities": [
+        {"name": "Kestrel Ridge", "entity_type_id": 2},
+        {"name": "hike", "entity_type_id": 4},
+        {"name": "trail runners group", "entity_type_id": 3},
+        {"name": "lunch", "entity_type_id": 4},
+        {"name": "REI", "entity_type_id": 2}
+      ]
+    },
+    {
+      "_persona": "Retiree who journals like writing a letter to a friend, tangents everywhere",
+      "_modes": "4 (time modifiers), 7 (possessives)",
+      "_intent": "Strip time modifiers ('morning pottery class' -> 'pottery class'), extract person from possessives, keep business names and named groups",
+      "episode_content": "Finally finished glazing that bowl in morning pottery class - you know, the wonky one I've been complaining about? It's still wonky but I've decided that's character.\n\nWent over to Ines's after, ostensibly to see her garden but really I think we both just wanted company. We ended up on her porch drinking iced tea and talking about absolutely nothing important for two hours. That woman has the right idea about retirement. No agenda, no rush.\n\nThursday Night Readers at Geoff's tonight. We're supposed to be discussing that mystery but honestly we spend more time gossiping than analyzing plot points. Walked home after and the stars were out. I don't remember the last time I noticed stars. Maybe that's what retirement is for - noticing things again.\n\nOh, and I had the pie at Pearl's Diner for late lunch. Still the best in town. Don't let anyone tell you otherwise.",
+      "expected_entities": [
+        {"name": "pottery class", "entity_type_id": 4},
+        {"name": "Ines", "entity_type_id": 1},
+        {"name": "Thursday Night Readers", "entity_type_id": 3},
+        {"name": "Geoff", "entity_type_id": 1},
+        {"name": "Pearl's Diner", "entity_type_id": 2},
+        {"name": "lunch", "entity_type_id": 4}
       ]
     }
   ]

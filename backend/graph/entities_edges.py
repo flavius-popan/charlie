@@ -15,14 +15,14 @@ class Place(BaseModel):
     pass
 
 
-class Organization(BaseModel):
-    """Company, team, or community group entity type."""
+class Group(BaseModel):
+    """Team, club, friend circle, or organization entity type."""
 
     pass
 
 
 class Activity(BaseModel):
-    """Event, outing, or routine entity type."""
+    """Event, occasion, outing, or routine entity type."""
 
     pass
 
@@ -30,7 +30,7 @@ class Activity(BaseModel):
 entity_types = {
     "Person": Person,
     "Place": Place,
-    "Organization": Organization,
+    "Group": Group,
     "Activity": Activity,
 }
 
@@ -49,25 +49,26 @@ def format_entity_types_for_llm(types: dict | None = None) -> str:
     if types is None:
         types = entity_types
 
-    type_list = [
-        {
-            "entity_type_id": 0,
-            "entity_type_name": "Entity",
-            "entity_type_description": "Generic entity fallback",
-        }
-    ]
+    type_list = []
+
+    type_ids = {
+        "Person": 1,
+        "Place": 2,
+        "Group": 3,
+        "Activity": 4,
+    }
 
     descriptions = {
         "Person": "individual people mentioned by name",
         "Place": "specific named locations and venues",
-        "Organization": "named companies, teams, communities, or groups",
-        "Activity": "named events, outings, routines, or recurring activities",
+        "Group": "named teams, clubs, friend circles, or organizations",
+        "Activity": "named events, occasions, outings, or recurring routines",
     }
 
-    for idx, (name, _) in enumerate(types.items(), start=1):
+    for name, _ in types.items():
         type_list.append(
             {
-                "entity_type_id": idx,
+                "entity_type_id": type_ids.get(name, 0),
                 "entity_type_name": name,
                 "entity_type_description": descriptions.get(
                     name, f"{name} entity type"
@@ -82,7 +83,7 @@ def get_type_name_from_id(type_id: int, types: dict | None = None) -> str:
     """Map entity_type_id back to type name.
 
     Args:
-        type_id: Entity type ID (0 = Entity, 1+ = custom types)
+        type_id: Entity type ID (1-4 for Person, Place, Group, Activity)
         types: Entity type dict (defaults to entity_types)
 
     Returns:
@@ -93,9 +94,6 @@ def get_type_name_from_id(type_id: int, types: dict | None = None) -> str:
     """
     if types is None:
         types = entity_types
-
-    if type_id == 0:
-        return "Entity"
 
     type_names = list(types.keys())
     array_index = type_id - 1
@@ -109,7 +107,7 @@ def get_type_name_from_id(type_id: int, types: dict | None = None) -> str:
 __all__ = [
     "Person",
     "Place",
-    "Organization",
+    "Group",
     "Activity",
     "entity_types",
     "format_entity_types_for_llm",

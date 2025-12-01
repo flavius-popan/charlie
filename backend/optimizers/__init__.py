@@ -6,6 +6,7 @@ All optimizer scripts import from here to ensure consistent settings.
 from __future__ import annotations
 
 import os
+import sys
 import logging
 from pathlib import Path
 
@@ -23,11 +24,17 @@ DATA_DIR = OPTIMIZERS_DIR / "data"
 PROMPTS_DIR.mkdir(parents=True, exist_ok=True)
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-# DSPy cache
+# DSPy cache - skip setup if --no-cache flag or DSPY_NO_CACHE env var
+_no_cache = "--no-cache" in sys.argv or os.getenv("DSPY_NO_CACHE", "").lower() in (
+    "1",
+    "true",
+    "yes",
+)
 DSPY_CACHE_DIR = PROMPTS_DIR / ".dspy_cache"
-DSPY_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-for env_var in ("DSPY_CACHEDIR", "DSPY_CACHE_DIR", "DSPY_CACHE"):
-    os.environ.setdefault(env_var, str(DSPY_CACHE_DIR))
+if not _no_cache:
+    DSPY_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    for env_var in ("DSPY_CACHEDIR", "DSPY_CACHE_DIR", "DSPY_CACHE"):
+        os.environ.setdefault(env_var, str(DSPY_CACHE_DIR))
 
 # =============================================================================
 # Model Configuration
@@ -39,7 +46,7 @@ MODEL_CONFIG = {
     "top_k": 20,
     "min_p": 0.0,
     "presence_penalty": 0.0,
-    "max_tokens": 2048,
+    "max_tokens": 1024,  # reduced to fit 4096 context with longer GEPA prompts
 }
 
 # =============================================================================
@@ -76,12 +83,15 @@ def split_examples[T](examples: list[T]) -> tuple[list[T], list[T]]:
     All remaining examples go to trainset for learning.
     """
     if len(examples) <= GEPA_VALSET_MIN:
-        raise ValueError(f"Need at least {GEPA_VALSET_MIN + 1} examples, got {len(examples)}")
+        raise ValueError(
+            f"Need at least {GEPA_VALSET_MIN + 1} examples, got {len(examples)}"
+        )
 
     # 10% baseline ensures at least 1 val example per 10 total, then clamp to [1, 3]
     val_size = min(max(GEPA_VALSET_MIN, len(examples) // 10), GEPA_VALSET_MAX)
     split_idx = len(examples) - val_size
     return examples[:split_idx], examples[split_idx:]
+
 
 # =============================================================================
 # Remote (HuggingFace) Configuration

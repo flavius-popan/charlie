@@ -58,11 +58,6 @@ class SidebarStateMachine(StateMachine):
     machine state. Guards check `data.get("key", self._key)` to prefer event data
     over stale internal state when deciding transitions.
 
-    Maintenance:
-    After modifying states, events, or transitions, regenerate the state diagram
-    using generate_diagram() to keep frontend/diagrams/sidebar_state_machine.png
-    in sync with the code.
-
     Example:
         >>> machine = SidebarStateMachine(inference_enabled=True, initial_status="pending_nodes")
         >>> # Route show event to processing_nodes based on data and guards
@@ -433,34 +428,3 @@ class SidebarStateMachine(StateMachine):
         except Exception as e:
             logger.error(f"Error applying event {event_name}: {e}", exc_info=True)
         return self.output
-
-
-def generate_diagram(output_path: str = "frontend/diagrams/sidebar_state_machine.png") -> bool:
-    """Generate state machine diagram as PNG file.
-
-    Requires python-statemachine[diagrams] extra to be installed.
-
-    IMPORTANT: When modifying SidebarStateMachine (states, events, transitions),
-    this function MUST be re-run to regenerate the diagram and prevent diagram drift.
-    Run: python -c "from frontend.state.sidebar_state_machine import generate_diagram; generate_diagram()"
-
-    Args:
-        output_path: Path where PNG diagram will be written.
-
-    Returns:
-        True if diagram generated successfully, False if dependencies missing or error occurred.
-    """
-    try:
-        machine = SidebarStateMachine()
-        machine._graph().write_png(output_path)
-        logger.info(f"Generated sidebar state machine diagram: {output_path}")
-        return True
-    except ImportError:
-        logger.warning(
-            "python-statemachine[diagrams] not installed. "
-            "Install with: uv add 'python-statemachine[diagrams]'"
-        )
-        return False
-    except Exception as e:
-        logger.error(f"Failed to generate state machine diagram: {e}", exc_info=True)
-        return False

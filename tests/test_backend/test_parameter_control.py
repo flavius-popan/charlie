@@ -2,7 +2,7 @@ import pytest
 import backend.dspy_cache  # noqa: F401  # enforce DSPy cache location
 import dspy
 
-from settings import MODEL_CONFIG
+from backend.settings import MODEL_CONFIG
 
 
 @pytest.mark.inference

@@ -18,9 +18,10 @@ class LogScreen(Screen):
 
     BINDINGS = [
         Binding("r", "reload", "Reload", show=True),
-        Binding("l", "close", "Close", show=True),
-        Binding("escape", "close", "Close", show=False),
+        Binding("escape", "close", "Close", show=True),
+        Binding("l", "close", "Close", show=False),
         Binding("q", "close", "Close", show=False),
+        Binding("h", "go_home", "Home", show=False),
     ]
 
     DEFAULT_CSS = """
@@ -52,6 +53,15 @@ class LogScreen(Screen):
 
     def action_close(self):
         self.app.pop_screen()
+
+    def action_go_home(self) -> None:
+        """Pop all screens to return to home."""
+        from frontend.screens.home_screen import HomeScreen
+
+        while len(self.app.screen_stack) > 1:
+            if isinstance(self.app.screen, HomeScreen):
+                break
+            self.app.pop_screen()
 
     async def _load_log(self):
         log_widget = self.query_one("#log-view", LogWidget)

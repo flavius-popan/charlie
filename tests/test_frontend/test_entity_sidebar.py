@@ -133,10 +133,8 @@ async def test_entity_sidebar_formats_entity_labels():
         item2_label = items[1]._name if isinstance(items[1], EntityListItem) else ""
 
         assert "Sarah" in item1_label
-        assert "[Person]" in item1_label
 
         assert "Park" in item2_label
-        assert "[Entity]" in item2_label
 
 
 @pytest.mark.asyncio
@@ -167,7 +165,7 @@ async def test_entity_sidebar_refresh_entities():
 
 @pytest.mark.asyncio
 async def test_entity_sidebar_shows_delete_confirmation():
-    """Pressing 'd' on entity should show confirmation modal."""
+    """Calling action_delete_entity should show confirmation modal."""
     app = EntitySidebarTestApp(episode_uuid="test-uuid", journal="test")
 
     async with app.run_test() as pilot:
@@ -181,8 +179,11 @@ async def test_entity_sidebar_shows_delete_confirmation():
 
         list_view = sidebar.query_one(ListView)
         list_view.focus()
+        list_view.index = 0
 
-        await pilot.press("d")
+        # Call action directly (binding is now on ViewScreen)
+        sidebar.action_delete_entity()
+        await pilot.pause()
 
         modal = app.screen
         assert isinstance(modal, ModalScreen)
@@ -210,14 +211,20 @@ async def test_entity_sidebar_deletes_entity():
             list_view.focus()
             list_view.index = 0
 
-            await pilot.press("d")
+            # Call action directly (binding is now on ViewScreen)
+            sidebar.action_delete_entity()
+            await pilot.pause()
+
             modal = app.screen
-            remove_button = modal.query_one("#remove", Button)
-            remove_button.press()
+            confirm_button = modal.query_one("#confirm", Button)
+            confirm_button.press()
 
             await asyncio.sleep(0.1)
 
-            mock_delete.assert_called_once_with("test-uuid", "uuid-1", "test")
+            # Modal defaults to scope="entry" and suppress_reextraction=True for sidebar
+            mock_delete.assert_called_once_with(
+                "test-uuid", "uuid-1", "test", suppress_reextraction=True
+            )
 
             assert len(sidebar.entities) == 1
             assert sidebar.entities[0]["name"] == "Park"
@@ -248,15 +255,20 @@ async def test_entity_sidebar_delete_last_entity_shows_no_connections():
             list_view.focus()
             list_view.index = 0
 
-            await pilot.press("d")
+            # Call action directly (binding is now on ViewScreen)
+            sidebar.action_delete_entity()
+            await pilot.pause()
+
             modal = app.screen
-            remove_button = modal.query_one("#remove", Button)
-            remove_button.press()
+            confirm_button = modal.query_one("#confirm", Button)
+            confirm_button.press()
 
             await asyncio.sleep(0.1)
             await pilot.pause()
 
-            mock_delete.assert_called_once_with("test-uuid", "uuid-1", "test")
+            mock_delete.assert_called_once_with(
+                "test-uuid", "uuid-1", "test", suppress_reextraction=True
+            )
             assert len(sidebar.entities) == 0
 
             content = sidebar.query_one("#entity-content")

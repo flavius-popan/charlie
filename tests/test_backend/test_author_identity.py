@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from pipeline.self_reference import is_self_entity_name
+from backend.database import is_self_entity_name
 
 
 def test_is_self_entity_name_exact_matches_only() -> None:

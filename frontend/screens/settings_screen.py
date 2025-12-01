@@ -50,10 +50,11 @@ class SettingsScreen(ModalScreen):
         self._toggle_worker = None
 
     BINDINGS = [
-        Binding("s", "dismiss_modal", "Close", show=True),
-        Binding("escape", "dismiss_modal", "Close", show=False),
+        Binding("escape", "dismiss_modal", "Close", show=True),
+        Binding("s", "dismiss_modal", "Close", show=False),
         Binding("j,down", "app.focus_next", "Next", show=False),
         Binding("k,up", "app.focus_previous", "Previous", show=False),
+        Binding("h", "go_home", "Home", show=False),
     ]
 
     def compose(self) -> ComposeResult:
@@ -68,6 +69,15 @@ class SettingsScreen(ModalScreen):
 
     def action_dismiss_modal(self) -> None:
         self.dismiss()
+
+    def action_go_home(self) -> None:
+        """Pop all screens to return to home."""
+        from frontend.screens.home_screen import HomeScreen
+
+        while len(self.app.screen_stack) > 1:
+            if isinstance(self.app.screen, HomeScreen):
+                break
+            self.app.pop_screen()
 
     def on_switch_changed(self, event: Switch.Changed) -> None:
         if event.switch.id != "inference-toggle":

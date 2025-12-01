@@ -5,96 +5,20 @@ from typing import Callable
 
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Container, Horizontal, Vertical
+from textual.containers import Container
 from textual.message import Message
 from textual.reactive import reactive
-from textual.screen import ModalScreen
 from textual.widgets import (
-    Button,
     Label,
     ListView,
     LoadingIndicator,
 )
 
-from backend.database.queries import delete_entity_mention
+from backend.database.queries import delete_entity_mention, delete_entity_all_mentions
 from backend.database.redis_ops import redis_ops
-from frontend.widgets import EntityListItem
+from frontend.widgets import DeleteEntityModal, DeleteEntityResult, EntityListItem
 
 logger = logging.getLogger("charlie")
-
-
-class DeleteEntityModal(ModalScreen):
-    """Confirmation modal for entity deletion."""
-
-    DEFAULT_CSS = """
-    DeleteEntityModal {
-        align: center middle;
-    }
-
-    #delete-dialog {
-        width: 80;
-        height: auto;
-        max-height: 15;
-        border: thick $background 80%;
-        background: $surface;
-        padding: 2 4;
-    }
-
-    #delete-dialog Vertical {
-        height: auto;
-    }
-
-    #delete-title {
-        text-style: bold;
-        color: $text;
-        margin-bottom: 1;
-    }
-
-    #delete-hint {
-        color: $text-muted;
-        margin-bottom: 2;
-    }
-
-    #delete-buttons {
-        align: center middle;
-    }
-
-    #delete-dialog Button {
-        margin-right: 2;
-    }
-    """
-
-    def __init__(self, entity: dict):
-        super().__init__()
-        self.entity = entity
-
-    def compose(self) -> ComposeResult:
-        name = self.entity["name"]
-        title = f"Remove '{name}'?"
-        hint = "It won't appear again in any future entries."
-
-        yield Vertical(
-            Label(title, id="delete-title"),
-            Label(hint, id="delete-hint"),
-            Horizontal(
-                Button("Cancel", id="cancel", variant="default"),
-                Button("Remove", id="remove", variant="error"),
-                id="delete-buttons",
-            ),
-            id="delete-dialog",
-        )
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "remove":
-            self.dismiss(True)
-        else:
-            self.dismiss(False)
-
-    def on_key(self, event) -> None:
-        if event.key == "escape":
-            self.dismiss(False)
-            event.stop()
-            event.prevent_default()
 
 
 class EntitySidebar(Container):
@@ -112,7 +36,8 @@ class EntitySidebar(Container):
     DEFAULT_CSS = """
     EntitySidebar {
         width: 1fr;
-        border-left: solid $accent;
+        border: solid $accent;
+        border-title-align: left;
     }
 
     EntitySidebar #entity-content {
@@ -122,24 +47,12 @@ class EntitySidebar(Container):
     EntitySidebar EntityListItem {
         padding-left: 1;
     }
-
-    EntitySidebar .sidebar-header {
-        color: $text-muted;
-        text-align: center;
-        width: 100%;
-        height: 4%;
-    }
-
-    EntitySidebar .sidebar-footer {
-        color: $text-muted;
-        text-align: center;
-        width: 100%;
-        height: 2%;
-    }
     """
 
     BINDINGS = [
-        Binding("d", "delete_entity", "Delete", show=False),
+        Binding("d", "delete_entity", "Delete", show=True),
+        Binding("j", "cursor_down", "Down", show=False),
+        Binding("k", "cursor_up", "Up", show=False),
     ]
 
     episode_uuid: reactive[str] = reactive("")
@@ -164,6 +77,7 @@ class EntitySidebar(Container):
         **kwargs,
     ):
         super().__init__(**kwargs)
+        self.border_title = "Connections"
         self.episode_uuid = episode_uuid
         self.journal = journal
         self.on_entity_deleted = on_entity_deleted
@@ -173,9 +87,7 @@ class EntitySidebar(Container):
         self.set_reactive(EntitySidebar.active_episode_uuid, active_episode_uuid)
 
     def compose(self) -> ComposeResult:
-        yield Label("Connections", classes="sidebar-header")
         yield Container(id="entity-content")
-        yield Label("d: delete | ↑↓: navigate", classes="sidebar-footer")
 
     def on_mount(self) -> None:
         """Render initial content and attempt immediate cache fetch."""
@@ -288,8 +200,9 @@ class EntitySidebar(Container):
                 if len(existing_list.children) == len(self.entities):
                     return
 
+            # Types stored but not displayed - adds visual noise without value
             items = [
-                EntityListItem(self._format_entity_label(entity), entity.get("uuid"))
+                EntityListItem(entity["name"], entity.get("uuid"))
                 for entity in self.entities
             ]
             list_view = ListView(*items)
@@ -301,12 +214,6 @@ class EntitySidebar(Container):
                 list_view.focus()
 
             self.call_after_refresh(focus_and_select)
-
-    def _format_entity_label(self, entity: dict) -> str:
-        """Format entity as 'Name [Type]'."""
-        name = entity["name"]
-        entity_type = entity.get("type", "Entity")
-        return f"{name} [{entity_type}]"
 
     async def refresh_entities(self) -> None:
         """Fetch entity data from Redis cache (single attempt, no polling)."""
@@ -347,11 +254,17 @@ class EntitySidebar(Container):
             return
 
         entity = self.entities[list_view.index]
-        self.app.push_screen(DeleteEntityModal(entity), self._handle_delete_result)
+        name = entity["name"]
+        modal = DeleteEntityModal(
+            entity_name=name,
+            default_scope="entry",
+            checkbox_default=True,
+        )
+        self.app.push_screen(modal, self._handle_delete_result)
 
-    async def _handle_delete_result(self, confirmed: bool) -> None:
+    async def _handle_delete_result(self, result: DeleteEntityResult) -> None:
         """Handle deletion confirmation result."""
-        if not confirmed:
+        if not result.confirmed:
             return
 
         list_view = self.query_one(ListView)
@@ -361,8 +274,20 @@ class EntitySidebar(Container):
         entity = self.entities[list_view.index]
 
         try:
-            # Delete from database
-            await delete_entity_mention(self.episode_uuid, entity["uuid"], self.journal)
+            # Delete from database based on scope
+            if result.scope == "entry":
+                await delete_entity_mention(
+                    self.episode_uuid,
+                    entity["uuid"],
+                    self.journal,
+                    suppress_reextraction=result.block_future,
+                )
+            else:  # scope == "all"
+                await delete_entity_all_mentions(
+                    entity["uuid"],
+                    self.journal,
+                    suppress_reextraction=result.block_future,
+                )
 
             # Remove from local state
             new_entities = [e for e in self.entities if e["uuid"] != entity["uuid"]]
@@ -382,3 +307,19 @@ class EntitySidebar(Container):
             from frontend.screens.entity_browser_screen import EntityBrowserScreen
 
             self.app.push_screen(EntityBrowserScreen(event.item.entity_uuid, self.journal))
+
+    def action_cursor_down(self) -> None:
+        """Move cursor down in entity list."""
+        try:
+            list_view = self.query_one(ListView)
+            list_view.action_cursor_down()
+        except Exception:
+            pass
+
+    def action_cursor_up(self) -> None:
+        """Move cursor up in entity list."""
+        try:
+            list_view = self.query_one(ListView)
+            list_view.action_cursor_up()
+        except Exception:
+            pass

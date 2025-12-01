@@ -19,13 +19,16 @@ from graphiti_core.utils.maintenance.dedup_helpers import (
     _normalize_string_exact,
     _resolve_with_similarity,
 )
-from graphiti_core.utils.maintenance.edge_operations import filter_existing_duplicate_of_edges
+from graphiti_core.utils.maintenance.edge_operations import (
+    filter_existing_duplicate_of_edges,
+)
 
 from backend.database.redis_ops import (
     get_suppressed_entities,
     append_unresolved_entities,
     get_unresolved_entities_count,
 )
+from backend.database.queries import get_entry_suppressed_entities
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +84,9 @@ class EntityExtractionSignature(dspy.Signature):
     """Extract meaningful entities from a personal journal entry."""
 
     episode_content: str = dspy.InputField(desc="personal journal entry text")
-    entity_types: str = dspy.InputField(desc="available entity type definitions with IDs")
+    entity_types: str = dspy.InputField(
+        desc="available entity type definitions with IDs"
+    )
     extracted_entities: ExtractedEntities = dspy.OutputField(
         desc="entities found in the journal entry, each with name and most specific type ID"
     )
@@ -126,7 +131,9 @@ class EntityExtractor(dspy.Module):
         Returns:
             ExtractedEntities containing extracted entities
         """
-        result = self.extractor(episode_content=episode_content, entity_types=entity_types)
+        result = self.extractor(
+            episode_content=episode_content, entity_types=entity_types
+        )
         return result.extracted_entities
 
 
@@ -317,7 +324,9 @@ async def _resolve_entities(
         uuid_map = {node.uuid: node.uuid for node in provisional_nodes}
         return provisional_nodes, uuid_map, []
 
-    indexes: DedupCandidateIndexes = _build_candidate_indexes(list(existing_nodes.values()))
+    indexes: DedupCandidateIndexes = _build_candidate_indexes(
+        list(existing_nodes.values())
+    )
 
     state = DedupResolutionState(
         resolved_nodes=[None] * len(provisional_nodes),
@@ -341,7 +350,9 @@ async def _resolve_entities(
         if node.uuid not in unique_nodes:
             unique_nodes[node.uuid] = node
 
-    duplicate_pairs = await filter_existing_duplicate_of_edges(driver, state.duplicate_pairs)
+    duplicate_pairs = await filter_existing_duplicate_of_edges(
+        driver, state.duplicate_pairs
+    )
 
     return list(unique_nodes.values()), state.uuid_map, duplicate_pairs
 
@@ -357,12 +368,23 @@ async def extract_nodes(
     Pipeline:
     1. Fetch episode from database
     2. Extract entities via EntityExtractor (DSPy LLM)
-    3. Fetch existing entities for deduplication
-    4. Resolve duplicates (MinHash LSH + exact matching)
-    5. Queue unresolved entities for batch LLM dedupe (or call LLM inline)
-    6. Create MENTIONS edges (episode -> entities)
-    7. Persist entities and edges
-    8. Return metadata
+    3. Filter out suppressed entities (two-tier check)
+    4. Fetch existing entities for deduplication
+    5. Resolve duplicates (MinHash LSH + exact matching)
+    6. Queue unresolved entities for batch LLM dedupe (or call LLM inline)
+    7. Create MENTIONS edges (episode -> entities)
+    8. Persist entities and edges
+    9. Return metadata
+
+    Suppression Filtering
+    ---------------------
+    Extracted entities are filtered against two suppression tiers:
+    1. Global (journal-level): Entities suppressed via delete_entity_all_mentions()
+       Stored in Redis set: journal:{journal}:suppressed_entities
+    2. Entry-level (per-episode): Entities suppressed via delete_entity_mention()
+       Stored in Redis hash field: journal:{journal}:{episode_uuid}[suppressed_entities]
+
+    Both tiers use case-insensitive matching (names normalized to lowercase).
 
     Deduplication Strategy
     ----------------------
@@ -405,13 +427,19 @@ async def extract_nodes(
     """
     from backend.database.driver import get_driver
     from backend.database.persistence import persist_entities_and_edges
-    from backend.graph.entities_edges import entity_types as default_entity_types, format_entity_types_for_llm, get_type_name_from_id
+    from backend.graph.entities_edges import (
+        entity_types as default_entity_types,
+        format_entity_types_for_llm,
+        get_type_name_from_id,
+    )
 
     if entity_types is None:
         entity_types = default_entity_types
 
     if dspy.settings.lm is None:
-        raise RuntimeError("No LLM configured. Set dspy.settings.lm before calling extract_nodes()")
+        raise RuntimeError(
+            "No LLM configured. Set dspy.settings.lm before calling extract_nodes()"
+        )
 
     driver = get_driver(journal)
 
@@ -427,13 +455,22 @@ async def extract_nodes(
 
     logger.info("Extracted %d provisional entities", len(extracted.extracted_entities))
 
-    suppressed = get_suppressed_entities(journal)
+    # Check both global (journal-level) and entry-level suppression
+    global_suppressed = get_suppressed_entities(journal)
+    try:
+        entry_suppressed = await get_entry_suppressed_entities(journal, episode_uuid)
+    except Exception as e:
+        logger.warning(
+            "Failed to get entry-level suppression for %s: %s", episode_uuid, e
+        )
+        entry_suppressed = set()
+    suppressed = global_suppressed | entry_suppressed
+
     filtered_entities = extracted.extracted_entities
     if suppressed:
         original_count = len(extracted.extracted_entities)
         filtered_entities = [
-            e for e in extracted.extracted_entities
-            if e.name.lower() not in suppressed
+            e for e in extracted.extracted_entities if e.name.lower() not in suppressed
         ]
         filtered_count = original_count - len(filtered_entities)
         if filtered_count > 0:
@@ -442,6 +479,11 @@ async def extract_nodes(
                 filtered_count,
                 episode_uuid,
             )
+
+    # Clean up entity names (strip verb prefixes, time modifiers, etc.)
+    from backend.utils.node_cleanup import cleanup_extracted_entities
+
+    filtered_entities = cleanup_extracted_entities(filtered_entities)
 
     provisional_nodes = []
     for entity in filtered_entities:
@@ -460,12 +502,16 @@ async def extract_nodes(
         )
         provisional_nodes.append(node)
 
-    existing_nodes = await _collect_candidate_nodes_by_text_search(driver, provisional_nodes, journal)
+    existing_nodes = await _collect_candidate_nodes_by_text_search(
+        driver, provisional_nodes, journal
+    )
     existing_uuid_set = set(existing_nodes.keys())
 
     logger.info("Resolving against %d existing entities", len(existing_nodes))
     if existing_nodes:
-        logger.info("Existing entity names: %s", [n.name for n in existing_nodes.values()])
+        logger.info(
+            "Existing entity names: %s", [n.name for n in existing_nodes.values()]
+        )
 
     nodes, uuid_map, duplicate_pairs = await _resolve_entities(
         provisional_nodes,
@@ -495,7 +541,9 @@ async def extract_nodes(
             )
         else:
             append_unresolved_entities(journal, unresolved_uuids)
-            logger.info("Queued %d unresolved entities for batch dedup", len(unresolved_uuids))
+            logger.info(
+                "Queued %d unresolved entities for batch dedup", len(unresolved_uuids)
+            )
 
     from backend.database.redis_ops import redis_ops
 
@@ -521,7 +569,11 @@ async def extract_nodes(
                     return result
 
                 await asyncio.to_thread(_delete_edges_sync)
-                logger.info("Deleted %d old MENTIONS edges for episode %s", len(old_edge_uuids), episode_uuid)
+                logger.info(
+                    "Deleted %d old MENTIONS edges for episode %s",
+                    len(old_edge_uuids),
+                    episode_uuid,
+                )
 
     episodic_edges = []
     for node in nodes:
@@ -546,20 +598,28 @@ async def extract_nodes(
         cache_key = f"journal:{journal}:{episode_uuid}"
         nodes_data = []
         for node in nodes:
-            most_specific_label = node.labels[-1] if len(node.labels) > 1 else "Entity"
-            nodes_data.append({
-                "uuid": node.uuid,
-                "name": node.name,
-                "type": most_specific_label,
-            })
+            most_specific_label = next(
+                (l for l in node.labels if l != "Entity"), "Entity"
+            )
+            nodes_data.append(
+                {
+                    "uuid": node.uuid,
+                    "name": node.name,
+                    "type": most_specific_label,
+                }
+            )
         r.hset(cache_key, "nodes", json.dumps(nodes_data))
 
         mentions_edge_uuids = [edge.uuid for edge in episodic_edges]
         r.hset(cache_key, "mentions_edges", json.dumps(mentions_edge_uuids))
 
     new_entities = sum(1 for node in nodes if node.uuid not in existing_uuid_set)
-    exact_matches = len([p for p in duplicate_pairs if p[0].name.lower() == p[1].name.lower()])
-    fuzzy_matches = len([p for p in duplicate_pairs if p[0].name.lower() != p[1].name.lower()])
+    exact_matches = len(
+        [p for p in duplicate_pairs if p[0].name.lower() == p[1].name.lower()]
+    )
+    fuzzy_matches = len(
+        [p for p in duplicate_pairs if p[0].name.lower() != p[1].name.lower()]
+    )
 
     logger.info(
         "Resolution complete: %d nodes (%d exact, %d fuzzy, %d new)",

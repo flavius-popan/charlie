@@ -1,27 +1,39 @@
 """Tests for ViewScreen with entity sidebar."""
 
 import asyncio
+from datetime import datetime
 import pytest
 from unittest.mock import patch, AsyncMock, MagicMock
 from textual.app import App, ComposeResult
 from textual.screen import Screen
 from textual.widgets import Markdown, LoadingIndicator
 from frontend.screens.view_screen import ViewScreen
-from frontend.screens.log_screen import LogScreen
 from frontend.widgets.entity_sidebar import EntitySidebar
 
 
 class ViewScreenTestApp(App):
     """Test app for ViewScreen."""
 
-    def __init__(self, episode_uuid: str = "test-uuid", journal: str = "test", from_edit: bool = True):
+    def __init__(
+        self,
+        episode_uuid: str = "test-uuid",
+        journal: str = "test",
+        from_edit: bool = True,
+        episodes: list[dict] | None = None,
+    ):
         super().__init__()
         self.episode_uuid = episode_uuid
         self.journal = journal
         self.from_edit = from_edit
+        self.episodes = episodes
 
     def on_mount(self) -> None:
-        self.push_screen(ViewScreen(episode_uuid=self.episode_uuid, journal=self.journal, from_edit=self.from_edit))
+        self.push_screen(ViewScreen(
+            episode_uuid=self.episode_uuid,
+            journal=self.journal,
+            from_edit=self.from_edit,
+            episodes=self.episodes,
+        ))
 
 
 @pytest.mark.asyncio
@@ -96,27 +108,6 @@ async def test_view_screen_has_header():
             from textual.widgets import Header
             headers = app.screen.query(Header)
             assert len(headers) > 0
-
-
-@pytest.mark.asyncio
-async def test_view_screen_log_viewer_toggle():
-    """Test that 'l' key navigates to log viewer."""
-    with patch("charlie.get_episode", new_callable=AsyncMock) as mock_get:
-        mock_get.return_value = {
-            "uuid": "test-uuid",
-            "content": "# Test",
-        }
-
-        app = ViewScreenTestApp(episode_uuid="test-uuid", journal="test")
-
-        async with app.run_test() as pilot:
-            await pilot.pause()
-
-            await pilot.press("l")
-
-            await pilot.pause()
-
-            assert isinstance(app.screen, LogScreen)
 
 
 @pytest.mark.asyncio
@@ -351,3 +342,253 @@ async def test_toggle_sidebar_cancels_sidebar_workers_on_hide():
             await pilot.press("c")
             await pilot.pause()
             assert sidebar.display is True, "Sidebar should be visible after 3rd press (regression check)"
+
+
+@pytest.mark.asyncio
+async def test_view_screen_find_episode_index():
+    """Test _find_episode_index helper finds correct position."""
+    episodes = [
+        {"uuid": "newest-uuid", "content": "Newest"},
+        {"uuid": "middle-uuid", "content": "Middle"},
+        {"uuid": "oldest-uuid", "content": "Oldest"},
+    ]
+
+    with patch("charlie.get_episode", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = {"uuid": "middle-uuid", "content": "Middle"}
+
+        app = ViewScreenTestApp(
+            episode_uuid="middle-uuid",
+            journal="test",
+            from_edit=False,
+            episodes=episodes,
+        )
+
+        async with app.run_test() as pilot:
+            screen: ViewScreen = app.screen
+            assert screen._current_idx == 1, "Should find middle episode at index 1"
+            assert screen._find_episode_index("newest-uuid") == 0
+            assert screen._find_episode_index("oldest-uuid") == 2
+            assert screen._find_episode_index("nonexistent") is None
+
+
+@pytest.mark.asyncio
+async def test_view_screen_prev_entry_navigation():
+    """Test left arrow navigates to older entry (higher index)."""
+    episodes = [
+        {"uuid": "newest-uuid", "content": "Newest", "valid_at": datetime(2024, 1, 3)},
+        {"uuid": "middle-uuid", "content": "Middle", "valid_at": datetime(2024, 1, 2)},
+        {"uuid": "oldest-uuid", "content": "Oldest", "valid_at": datetime(2024, 1, 1)},
+    ]
+
+    with patch("charlie.get_episode", new_callable=AsyncMock) as mock_get:
+        # Return the episode that matches the current episode_uuid
+        def get_episode_side_effect(uuid):
+            for ep in episodes:
+                if ep["uuid"] == uuid:
+                    return ep
+            return None
+
+        mock_get.side_effect = get_episode_side_effect
+
+        app = ViewScreenTestApp(
+            episode_uuid="newest-uuid",
+            journal="test",
+            from_edit=False,
+            episodes=episodes,
+        )
+
+        async with app.run_test() as pilot:
+            screen: ViewScreen = app.screen
+            await pilot.pause()
+
+            # Start at newest (index 0)
+            assert screen._current_idx == 0
+            assert screen.episode_uuid == "newest-uuid"
+
+            # Press left to go older
+            await pilot.press("left")
+            await pilot.pause()
+
+            # Should now be at middle (index 1)
+            assert screen._current_idx == 1, "Should move to index 1 (older)"
+            assert screen.episode_uuid == "middle-uuid"
+
+
+@pytest.mark.asyncio
+async def test_view_screen_next_entry_navigation():
+    """Test right arrow navigates to newer entry (lower index)."""
+    episodes = [
+        {"uuid": "newest-uuid", "content": "Newest", "valid_at": datetime(2024, 1, 3)},
+        {"uuid": "middle-uuid", "content": "Middle", "valid_at": datetime(2024, 1, 2)},
+        {"uuid": "oldest-uuid", "content": "Oldest", "valid_at": datetime(2024, 1, 1)},
+    ]
+
+    with patch("charlie.get_episode", new_callable=AsyncMock) as mock_get:
+        def get_episode_side_effect(uuid):
+            for ep in episodes:
+                if ep["uuid"] == uuid:
+                    return ep
+            return None
+
+        mock_get.side_effect = get_episode_side_effect
+
+        app = ViewScreenTestApp(
+            episode_uuid="oldest-uuid",
+            journal="test",
+            from_edit=False,
+            episodes=episodes,
+        )
+
+        async with app.run_test() as pilot:
+            screen: ViewScreen = app.screen
+            await pilot.pause()
+
+            # Start at oldest (index 2)
+            assert screen._current_idx == 2
+            assert screen.episode_uuid == "oldest-uuid"
+
+            # Press right to go newer
+            await pilot.press("right")
+            await pilot.pause()
+
+            # Should now be at middle (index 1)
+            assert screen._current_idx == 1, "Should move to index 1 (newer)"
+            assert screen.episode_uuid == "middle-uuid"
+
+
+@pytest.mark.asyncio
+async def test_view_screen_navigation_at_boundaries():
+    """Test navigation does nothing at list boundaries."""
+    episodes = [
+        {"uuid": "newest-uuid", "content": "Newest"},
+        {"uuid": "oldest-uuid", "content": "Oldest"},
+    ]
+
+    with patch("charlie.get_episode", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = {"uuid": "newest-uuid", "content": "Newest"}
+
+        app = ViewScreenTestApp(
+            episode_uuid="newest-uuid",
+            journal="test",
+            from_edit=False,
+            episodes=episodes,
+        )
+
+        async with app.run_test() as pilot:
+            screen: ViewScreen = app.screen
+            await pilot.pause()
+
+            # At newest - right should do nothing
+            assert screen._current_idx == 0
+            await pilot.press("right")
+            await pilot.pause()
+            assert screen._current_idx == 0, "Should stay at newest when pressing right"
+
+            # Go to oldest
+            mock_get.return_value = {"uuid": "oldest-uuid", "content": "Oldest"}
+            await pilot.press("left")
+            await pilot.pause()
+            assert screen._current_idx == 1
+
+            # At oldest - left should do nothing
+            await pilot.press("left")
+            await pilot.pause()
+            assert screen._current_idx == 1, "Should stay at oldest when pressing left"
+
+
+@pytest.mark.asyncio
+async def test_view_screen_navigation_without_episodes():
+    """Test navigation gracefully handles empty episodes list."""
+    with patch("charlie.get_episode", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = {"uuid": "test-uuid", "content": "Test"}
+
+        app = ViewScreenTestApp(
+            episode_uuid="test-uuid",
+            journal="test",
+            from_edit=False,
+            episodes=None,  # No episodes list
+        )
+
+        async with app.run_test() as pilot:
+            screen: ViewScreen = app.screen
+            await pilot.pause()
+
+            # Navigation should not crash
+            assert screen._current_idx is None
+            await pilot.press("left")
+            await pilot.pause()
+            await pilot.press("right")
+            await pilot.pause()
+            # Should still be showing the original episode
+            assert screen.episode_uuid == "test-uuid"
+
+
+@pytest.mark.asyncio
+async def test_view_screen_check_action_hides_bindings():
+    """Test check_action hides prev/next bindings at boundaries."""
+    episodes = [
+        {"uuid": "newest-uuid", "content": "Newest"},
+        {"uuid": "middle-uuid", "content": "Middle"},
+        {"uuid": "oldest-uuid", "content": "Oldest"},
+    ]
+
+    with patch("charlie.get_episode", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = {"uuid": "newest-uuid", "content": "Newest"}
+
+        app = ViewScreenTestApp(
+            episode_uuid="newest-uuid",
+            journal="test",
+            from_edit=False,
+            episodes=episodes,
+        )
+
+        async with app.run_test() as pilot:
+            screen: ViewScreen = app.screen
+            await pilot.pause()
+
+            # At newest (index 0): prev should be visible, next should be hidden
+            assert screen._current_idx == 0
+            assert screen.check_action("prev_entry", ()) is True, "Prev should be visible at newest"
+            assert screen.check_action("next_entry", ()) is False, "Next should be hidden at newest"
+
+            # Move to middle
+            mock_get.return_value = {"uuid": "middle-uuid", "content": "Middle"}
+            await pilot.press("left")
+            await pilot.pause()
+
+            # At middle (index 1): both should be visible
+            assert screen._current_idx == 1
+            assert screen.check_action("prev_entry", ()) is True, "Prev should be visible at middle"
+            assert screen.check_action("next_entry", ()) is True, "Next should be visible at middle"
+
+            # Move to oldest
+            mock_get.return_value = {"uuid": "oldest-uuid", "content": "Oldest"}
+            await pilot.press("left")
+            await pilot.pause()
+
+            # At oldest (index 2): next should be visible, prev should be hidden
+            assert screen._current_idx == 2
+            assert screen.check_action("prev_entry", ()) is False, "Prev should be hidden at oldest"
+            assert screen.check_action("next_entry", ()) is True, "Next should be visible at oldest"
+
+
+@pytest.mark.asyncio
+async def test_view_screen_check_action_no_episodes():
+    """Test check_action hides both bindings when no episodes list."""
+    with patch("charlie.get_episode", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = {"uuid": "test-uuid", "content": "Test"}
+
+        app = ViewScreenTestApp(
+            episode_uuid="test-uuid",
+            journal="test",
+            from_edit=False,
+            episodes=None,
+        )
+
+        async with app.run_test() as pilot:
+            screen: ViewScreen = app.screen
+            await pilot.pause()
+
+            # No episodes: both should be hidden
+            assert screen.check_action("prev_entry", ()) is False
+            assert screen.check_action("next_entry", ()) is False

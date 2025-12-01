@@ -23,6 +23,7 @@ from backend.database.persistence import (
     update_episode,
 )
 from backend.database.queries import (
+    delete_entity_all_mentions,
     episode_exists,
     get_entity_browser_data,
     get_entry_entities,
@@ -43,6 +44,7 @@ from backend.database.utils import (
     SELF_ENTITY_LABELS,
     SELF_ENTITY_NAME,
     SELF_ENTITY_UUID,
+    is_self_entity_name,
     to_cypher_literal,
     validate_journal_name,
 )
@@ -70,6 +72,7 @@ __all__ = [
     "update_episode",
     "delete_episode",
     # Query operations
+    "delete_entity_all_mentions",
     "episode_exists",
     "get_entity_browser_data",
     "get_entry_entities",
@@ -92,6 +95,7 @@ __all__ = [
     "SELF_ENTITY_UUID",
     "SELF_ENTITY_NAME",
     "SELF_ENTITY_LABELS",
+    "is_self_entity_name",
     # Utilities
     "to_cypher_literal",
     "validate_journal_name",

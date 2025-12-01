@@ -18,7 +18,6 @@ from textual.widgets import (
 )
 
 from backend.database import (
-    delete_episode,
     ensure_database_ready,
     get_entry_entities,
     get_episode_status,
@@ -218,7 +217,6 @@ class HomeScreen(Screen):
     BINDINGS = [
         Binding("n", "new_entry", "New", show=True),
         Binding("space", "view_entry", "View", show=True),
-        Binding("d", "delete_entry", "Delete", show=True),
         Binding("s", "open_settings", "Settings", show=True),
         Binding("l", "open_logs", "Logs", show=True),
         Binding("q", "quit", "Quit", show=True),
@@ -258,6 +256,8 @@ class HomeScreen(Screen):
         self._last_entries_index: int | None = None
         self._last_connections_index: int | None = None
         self._last_temporal_index: int | None = None
+        # UUID to select when returning from ViewScreen
+        self._select_uuid_on_resume: str | None = None
         # Processing state machine
         self.processing_machine = ProcessingStateMachine()
 
@@ -406,7 +406,7 @@ class HomeScreen(Screen):
                     entity_list.display = True
                     entity_list.clear()
                     self._last_connections_index = None
-                    for entity in self.entry_entities[:10]:
+                    for entity in self.entry_entities:
                         name = entity.get("name", "")
                         uuid = entity.get("uuid", "")
                         entity_list.append(EntityListItem(name, uuid))
@@ -475,7 +475,7 @@ class HomeScreen(Screen):
                     entity_list.display = True
                     entity_list.clear()
                     self._last_temporal_index = None
-                    for entity in top_entities[:25]:
+                    for entity in top_entities[:100]:
                         name = entity.get("name", "")
                         uuid = entity.get("uuid", "")
                         entity_list.append(EntityListItem(name, uuid))
@@ -771,6 +771,10 @@ class HomeScreen(Screen):
                     if new_period_idx != self.selected_period_index:
                         self.selected_period_index = new_period_idx
 
+    def _handle_view_screen_result(self, episode_uuid: str | None) -> None:
+        """Store episode UUID to select when screen resumes."""
+        self._select_uuid_on_resume = episode_uuid
+
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         """Handle ListView selection (Enter key)."""
         # Handle entries list
@@ -779,7 +783,10 @@ class HomeScreen(Screen):
                 episode_idx = self.list_index_to_episode.get(event.list_view.index)
                 if episode_idx is not None and 0 <= episode_idx < len(self.episodes):
                     episode = self.episodes[episode_idx]
-                    self.app.push_screen(ViewScreen(episode["uuid"], DEFAULT_JOURNAL))
+                    self.app.push_screen(
+                        ViewScreen(episode["uuid"], DEFAULT_JOURNAL, episodes=self.episodes),
+                        self._handle_view_screen_result,
+                    )
         # Handle connections list - navigate to entity browser
         elif event.list_view.id == "connections-list":
             if isinstance(event.item, EntityListItem) and event.item.entity_uuid:
@@ -843,12 +850,20 @@ class HomeScreen(Screen):
                     empty_state.display = False
                     main_container.display = True
 
-                    # Find first selectable index
+                    # Find index to select
                     new_index = 0
                     if self.list_index_to_episode:
                         first_selectable = min(self.list_index_to_episode.keys())
                         new_index = first_selectable
-                        if old_index in self.list_index_to_episode:
+
+                        # Priority: stored UUID from ViewScreen > previous selection
+                        if self._select_uuid_on_resume:
+                            for list_idx, ep_idx in self.list_index_to_episode.items():
+                                if new_episodes[ep_idx]["uuid"] == self._select_uuid_on_resume:
+                                    new_index = list_idx
+                                    break
+                            self._select_uuid_on_resume = None
+                        elif old_index in self.list_index_to_episode:
                             new_index = old_index
 
                     list_view.index = new_index
@@ -887,24 +902,12 @@ class HomeScreen(Screen):
                 episode_idx = self.list_index_to_episode.get(list_view.index)
                 if episode_idx is not None and 0 <= episode_idx < len(self.episodes):
                     episode = self.episodes[episode_idx]
-                    self.app.push_screen(ViewScreen(episode["uuid"], DEFAULT_JOURNAL))
+                    self.app.push_screen(
+                        ViewScreen(episode["uuid"], DEFAULT_JOURNAL, episodes=self.episodes),
+                        self._handle_view_screen_result,
+                    )
         except Exception as e:
             logger.error("Failed to open view screen: %s", e, exc_info=True)
-
-    async def action_delete_entry(self):
-        try:
-            if not self.episodes:
-                return
-            list_view = self.query_one("#episodes-list", ListView)
-            if list_view.index is not None:
-                episode_idx = self.list_index_to_episode.get(list_view.index)
-                if episode_idx is not None and 0 <= episode_idx < len(self.episodes):
-                    episode = self.episodes[episode_idx]
-                    await delete_episode(episode["uuid"])
-                    await self.load_episodes()
-        except Exception as e:
-            logger.error("Failed to delete entry: %s", e, exc_info=True)
-            self.notify("Failed to delete entry", severity="error")
 
     def action_quit(self):
         """Request graceful shutdown via unified async path (fire-and-forget)."""
@@ -922,22 +925,30 @@ class HomeScreen(Screen):
         task.add_done_callback(handle_shutdown_done)
 
     def action_cursor_down(self):
-        if not self.episodes:
-            return
-        try:
-            list_view = self.query_one("#episodes-list", ListView)
-            list_view.action_cursor_down()
-        except Exception as e:
-            logger.debug("cursor_down failed: %s", e)
+        """Move cursor down in the focused ListView."""
+        focused = self.app.focused
+        if isinstance(focused, ListView):
+            focused.action_cursor_down()
+        elif self.episodes:
+            # Fallback to episodes list if no ListView focused
+            try:
+                list_view = self.query_one("#episodes-list", ListView)
+                list_view.action_cursor_down()
+            except Exception as e:
+                logger.debug("cursor_down failed: %s", e)
 
     def action_cursor_up(self):
-        if not self.episodes:
-            return
-        try:
-            list_view = self.query_one("#episodes-list", ListView)
-            list_view.action_cursor_up()
-        except Exception as e:
-            logger.debug("cursor_up failed: %s", e)
+        """Move cursor up in the focused ListView."""
+        focused = self.app.focused
+        if isinstance(focused, ListView):
+            focused.action_cursor_up()
+        elif self.episodes:
+            # Fallback to episodes list if no ListView focused
+            try:
+                list_view = self.query_one("#episodes-list", ListView)
+                list_view.action_cursor_up()
+            except Exception as e:
+                logger.debug("cursor_up failed: %s", e)
 
     def action_focus_entries(self) -> None:
         """Focus entries list (1) and restore position."""

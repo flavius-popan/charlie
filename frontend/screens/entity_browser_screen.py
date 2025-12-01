@@ -9,7 +9,7 @@ from textual.reactive import reactive
 from textual.screen import Screen
 from textual.widgets import Footer, Header, ListItem, ListView, Markdown, Static
 
-from backend.database import get_entity_browser_data, get_entry_entities_with_counts, get_n_plus_one_neighbors
+from backend.database import get_entity_browser_data, get_entry_entities_with_counts, get_n_plus_one_neighbors, delete_entity_all_mentions
 from backend.database.queries import (
     extract_entity_sentences,
     ENTITY_QUOTE_TARGET_LENGTH,
@@ -21,6 +21,7 @@ from frontend.utils import (
     emphasize_rich,
     get_display_title,
 )
+from frontend.widgets import DeleteEntityModal, DeleteEntityResult
 
 logger = logging.getLogger("charlie")
 
@@ -211,9 +212,13 @@ class EntityBrowserScreen(Screen):
 
     BINDINGS = [
         Binding("escape", "back", "Back", show=True),
-        Binding("enter", "read_entry", "Read", show=True),
+        Binding("enter", "select_entry", "Open", show=True),
+        Binding("tab", "toggle_focus", "Switch Pane", show=True),
+        Binding("d", "delete_entity", "Delete", show=True),
         Binding("h", "go_home", "Home", show=True),
         Binding("q", "back", "Back", show=False),
+        Binding("j", "cursor_down", "Down", show=False),
+        Binding("k", "cursor_up", "Up", show=False),
     ]
 
     DEFAULT_CSS = """
@@ -324,7 +329,7 @@ class EntityBrowserScreen(Screen):
     """
 
     entity_data: reactive[dict | None] = reactive(None)
-    reader_open: reactive[bool] = reactive(False)
+    reader_open: reactive[bool] = reactive(False, bindings=True)
     selected_episode_uuid: reactive[str | None] = reactive(None)
 
     def __init__(self, entity_uuid: str, journal: str = DEFAULT_JOURNAL, *, initial_reader_open: bool = False):
@@ -333,6 +338,13 @@ class EntityBrowserScreen(Screen):
         self.journal = journal
         self._initial_reader_open = initial_reader_open
         self._has_been_suspended = False
+
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        """Conditionally show/hide bindings based on state."""
+        if action == "toggle_focus":
+            # Only show tab binding in wide dual-pane mode with reader open
+            return self.reader_open and self._is_wide_screen()
+        return True
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False, icon="")
@@ -682,6 +694,9 @@ class EntityBrowserScreen(Screen):
             reader_panel = self.query_one("#reader-panel", VerticalScroll)
             reader_panel.scroll_home(animate=False)
 
+            # Focus reader panel for keyboard scrolling
+            reader_panel.focus()
+
             # Refresh n+1 neighbors if reader already open (watcher won't fire on same value)
             if self.reader_open:
                 self.run_worker(
@@ -725,8 +740,8 @@ class EntityBrowserScreen(Screen):
             self.app.open_url(href)
 
     def action_back(self) -> None:
-        # On narrow screen with reader open: close reader first
-        if self.reader_open and not self._is_wide_screen():
+        # If reader is open, close it first (both narrow and wide screens)
+        if self.reader_open:
             self.reader_open = False
             self.remove_class("narrow")
             try:
@@ -735,20 +750,63 @@ class EntityBrowserScreen(Screen):
             except Exception as e:
                 logger.debug("Failed to focus quotes list: %s", e)
         else:
-            # Wide screen or reader already closed: pop screen
+            # Reader already closed: pop screen
             self.app.pop_screen()
 
-    def action_read_entry(self) -> None:
+    def action_select_entry(self) -> None:
+        """Open reader panel, or push full ViewScreen if reader already open."""
         if not self.selected_episode_uuid:
             return
-        if self.reader_open and not self._is_wide_screen():
-            # Narrow screen with reader open - push full ViewScreen
+        if self.reader_open:
+            # Reader already open - push full ViewScreen for connections sidebar
             from frontend.screens.view_screen import ViewScreen
 
             self.app.push_screen(ViewScreen(self.selected_episode_uuid, self.journal))
         else:
-            # Wide screen or reader not open - open/update the reader panel
+            # Reader not open - open the reader panel
             self._open_reader(self.selected_episode_uuid)
+
+    def action_toggle_focus(self) -> None:
+        """Toggle focus between quotes list and reader panel."""
+        if not self.reader_open or not self._is_wide_screen():
+            return
+        try:
+            quotes_list = self.query_one("#quotes-list", ListView)
+            reader_panel = self.query_one("#reader-panel", VerticalScroll)
+            if quotes_list.has_focus:
+                reader_panel.focus()
+            else:
+                quotes_list.focus()
+        except Exception:
+            pass
+
+    def action_cursor_down(self) -> None:
+        """Move cursor down in quotes list, or scroll reader if focused."""
+        focused = self.app.focused
+        if self.reader_open:
+            try:
+                reader_panel = self.query_one("#reader-panel", VerticalScroll)
+                if reader_panel.has_focus or (focused and reader_panel in focused.ancestors_with_self):
+                    reader_panel.scroll_down(animate=False)
+                    return
+            except Exception:
+                pass
+        quotes_list = self.query_one("#quotes-list", ListView)
+        quotes_list.action_cursor_down()
+
+    def action_cursor_up(self) -> None:
+        """Move cursor up in quotes list, or scroll reader if focused."""
+        focused = self.app.focused
+        if self.reader_open:
+            try:
+                reader_panel = self.query_one("#reader-panel", VerticalScroll)
+                if reader_panel.has_focus or (focused and reader_panel in focused.ancestors_with_self):
+                    reader_panel.scroll_up(animate=False)
+                    return
+            except Exception:
+                pass
+        quotes_list = self.query_one("#quotes-list", ListView)
+        quotes_list.action_cursor_up()
 
     def action_go_home(self) -> None:
         """Pop all screens to return to home."""
@@ -767,3 +825,64 @@ class EntityBrowserScreen(Screen):
             if isinstance(self.app.screen, HomeScreen):
                 break
             self.app.pop_screen()
+
+    def action_delete_entity(self) -> None:
+        """Open delete modal with context-appropriate defaults.
+
+        If reader is open (episode selected): show both scope options with "entry" default
+        If no episode selected: only show "all entries" option (hide scope radio)
+        """
+        if self.entity_data is None:
+            return
+
+        entity_name = self.entity_data["entity"]["name"]
+
+        # Determine if we have an episode context (reader is open)
+        has_episode_context = self.reader_open and self.selected_episode_uuid is not None
+
+        modal = DeleteEntityModal(
+            entity_name=entity_name,
+            default_scope="entry" if has_episode_context else "all",
+            checkbox_default=True,
+            show_scope=has_episode_context,
+        )
+        self.app.push_screen(modal, self._handle_delete_result)
+
+    async def _handle_delete_result(self, result: DeleteEntityResult) -> None:
+        """Handle deletion confirmation result."""
+        if not result.confirmed:
+            return
+
+        if self.entity_data is None:
+            return
+
+        try:
+            if result.scope == "entry":
+                # For entry scope, delete from just this entry
+                from backend.database import delete_entity_mention
+
+                if self.selected_episode_uuid:
+                    await delete_entity_mention(
+                        self.selected_episode_uuid,
+                        self.entity_uuid,
+                        self.journal,
+                        suppress_reextraction=result.block_future,
+                    )
+                    # Refresh the entity data to show remaining entries
+                    self.run_worker(
+                        self._load_entity_data(), exclusive=True, group="entity-data"
+                    )
+                    # Close the reader panel since we just deleted from it
+                    self.reader_open = False
+                    self.remove_class("narrow")
+            else:  # scope == "all"
+                await delete_entity_all_mentions(
+                    self.entity_uuid,
+                    self.journal,
+                    suppress_reextraction=result.block_future,
+                )
+                # Pop back to previous screen
+                self.app.pop_screen()
+
+        except Exception as e:
+            logger.error(f"Failed to delete entity: {e}", exc_info=True)
