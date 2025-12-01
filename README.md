@@ -4,6 +4,8 @@ The most over-engineered journaling app in the world.
 
 ## Quick Start
 
+**NOTE: Currently only works on Linux & M-Series Macs!**
+
 ```bash
 ./setup.sh
 ```
