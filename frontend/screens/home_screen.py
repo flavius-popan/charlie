@@ -925,22 +925,30 @@ class HomeScreen(Screen):
         task.add_done_callback(handle_shutdown_done)
 
     def action_cursor_down(self):
-        if not self.episodes:
-            return
-        try:
-            list_view = self.query_one("#episodes-list", ListView)
-            list_view.action_cursor_down()
-        except Exception as e:
-            logger.debug("cursor_down failed: %s", e)
+        """Move cursor down in the focused ListView."""
+        focused = self.app.focused
+        if isinstance(focused, ListView):
+            focused.action_cursor_down()
+        elif self.episodes:
+            # Fallback to episodes list if no ListView focused
+            try:
+                list_view = self.query_one("#episodes-list", ListView)
+                list_view.action_cursor_down()
+            except Exception as e:
+                logger.debug("cursor_down failed: %s", e)
 
     def action_cursor_up(self):
-        if not self.episodes:
-            return
-        try:
-            list_view = self.query_one("#episodes-list", ListView)
-            list_view.action_cursor_up()
-        except Exception as e:
-            logger.debug("cursor_up failed: %s", e)
+        """Move cursor up in the focused ListView."""
+        focused = self.app.focused
+        if isinstance(focused, ListView):
+            focused.action_cursor_up()
+        elif self.episodes:
+            # Fallback to episodes list if no ListView focused
+            try:
+                list_view = self.query_one("#episodes-list", ListView)
+                list_view.action_cursor_up()
+            except Exception as e:
+                logger.debug("cursor_up failed: %s", e)
 
     def action_focus_entries(self) -> None:
         """Focus entries list (1) and restore position."""

@@ -122,6 +122,18 @@ class CharlieApp(App):
 
     TITLE = "Charlie"
 
+    BINDINGS = [
+        Binding("?", "toggle_help_panel", "Help", show=True),
+    ]
+
+    def action_toggle_help_panel(self) -> None:
+        """Toggle help panel visibility."""
+        help_panels = self.screen.query("HelpPanel")
+        if help_panels:
+            help_panels.remove()
+        else:
+            self.action_show_help_panel()
+
     def __init__(self):
         super().__init__()
         from frontend.settings import get_theme

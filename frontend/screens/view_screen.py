@@ -37,16 +37,17 @@ class ViewScreen(Screen):
         Binding("e", "edit_entry", "Edit", show=True),
         Binding("d", "delete", "Delete", show=True),
         Binding("c", "toggle_connections", "Connections", show=True),
-        Binding("q", "back", "Back", show=True),
+        Binding("escape", "back", "Back", show=True),
         Binding("left", "prev_entry", "Prev", show=True),
         Binding("right", "next_entry", "Next", show=True),
-        Binding("escape", "back", "Back", show=False),
+        Binding("q", "back", "Back", show=False),
         Binding("space", "back", "Back", show=False),
         Binding("enter", "back", "Back", show=False),
         Binding("up", "scroll_up", "Scroll Up", show=False),
         Binding("down", "scroll_down", "Scroll Down", show=False),
         Binding("k", "scroll_up", "Scroll Up", show=False),
         Binding("j", "scroll_down", "Scroll Down", show=False),
+        Binding("h", "go_home", "Home", show=False),
     ]
 
     DEFAULT_CSS = """
@@ -359,34 +360,14 @@ class ViewScreen(Screen):
 
         self.app.push_screen(EditScreen(self.episode_uuid))
 
-    def _sidebar_entity_focused(self) -> bool:
-        """Check if sidebar is visible with an entity focused."""
-        try:
-            sidebar = self.query_one("#entity-sidebar", EntitySidebar)
-            if sidebar.display and sidebar.entities:
-                list_view = sidebar.query_one(ListView)
-                if (
-                    list_view.has_focus
-                    and list_view.index is not None
-                    and list_view.index >= 0
-                ):
-                    return True
-        except NoMatches:
-            pass
-        return False
-
     def action_delete(self):
-        """Context-aware delete: connection if sidebar focused, otherwise entry."""
-        if self._sidebar_entity_focused():
-            sidebar = self.query_one("#entity-sidebar", EntitySidebar)
-            sidebar.action_delete_entity()
-        else:
-            modal = ConfirmationModal(
-                title="Delete this entry?",
-                hint="This action cannot be undone.",
-                confirm_label="Delete",
-            )
-            self.app.push_screen(modal, self._handle_entry_delete_result)
+        """Delete the current entry."""
+        modal = ConfirmationModal(
+            title="Delete this entry?",
+            hint="This action cannot be undone.",
+            confirm_label="Delete",
+        )
+        self.app.push_screen(modal, self._handle_entry_delete_result)
 
     async def _handle_entry_delete_result(self, confirmed: bool) -> None:
         """Handle entry deletion confirmation result."""
@@ -638,6 +619,15 @@ class ViewScreen(Screen):
             markdown.scroll_down(animate=False)
         except NoMatches:
             pass
+
+    def action_go_home(self) -> None:
+        """Pop all screens to return to home."""
+        from frontend.screens.home_screen import HomeScreen
+
+        while len(self.app.screen_stack) > 1:
+            if isinstance(self.app.screen, HomeScreen):
+                break
+            self.app.pop_screen()
 
     def action_prev_entry(self) -> None:
         """Navigate to older entry (next index since list is newest-first)."""

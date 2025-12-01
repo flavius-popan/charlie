@@ -49,7 +49,11 @@ class EntitySidebar(Container):
     }
     """
 
-    BINDINGS = []
+    BINDINGS = [
+        Binding("d", "delete_entity", "Delete", show=True),
+        Binding("j", "cursor_down", "Down", show=False),
+        Binding("k", "cursor_up", "Up", show=False),
+    ]
 
     episode_uuid: reactive[str] = reactive("")
     journal: reactive[str] = reactive("")
@@ -308,3 +312,19 @@ class EntitySidebar(Container):
             from frontend.screens.entity_browser_screen import EntityBrowserScreen
 
             self.app.push_screen(EntityBrowserScreen(event.item.entity_uuid, self.journal))
+
+    def action_cursor_down(self) -> None:
+        """Move cursor down in entity list."""
+        try:
+            list_view = self.query_one(ListView)
+            list_view.action_cursor_down()
+        except Exception:
+            pass
+
+    def action_cursor_up(self) -> None:
+        """Move cursor up in entity list."""
+        try:
+            list_view = self.query_one(ListView)
+            list_view.action_cursor_up()
+        except Exception:
+            pass
