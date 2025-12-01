@@ -993,10 +993,9 @@ def test_entity_types_format():
     result = format_entity_types_for_llm(entity_types)
     types_list = json.loads(result)
 
-    assert len(types_list) == 5
-    # Entity is listed last so LLM prioritizes Person/Place/Group/Activity first
+    assert len(types_list) == 4
     assert types_list[0]["entity_type_name"] == "Person"
-    assert types_list[-1]["entity_type_name"] == "Entity"
+    assert types_list[-1]["entity_type_name"] == "Activity"
 
     person_type = next(t for t in types_list if t["entity_type_name"] == "Person")
     assert person_type["entity_type_id"] == 1

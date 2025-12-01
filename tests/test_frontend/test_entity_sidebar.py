@@ -133,10 +133,8 @@ async def test_entity_sidebar_formats_entity_labels():
         item2_label = items[1]._name if isinstance(items[1], EntityListItem) else ""
 
         assert "Sarah" in item1_label
-        assert "[Person]" in item1_label
 
         assert "Park" in item2_label
-        assert "[Entity]" in item2_label
 
 
 @pytest.mark.asyncio

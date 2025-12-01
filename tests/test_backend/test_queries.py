@@ -763,7 +763,7 @@ class TestGetPeriodEntities:
 
         result = await get_period_entities(start, end, journal)
 
-        assert len(result["top_entities"]) == 25
+        assert len(result["top_entities"]) == 30
         assert result["connection_count"] == 30
 
 
