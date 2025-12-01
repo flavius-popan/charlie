@@ -130,7 +130,7 @@ class HomeScreen(Screen):
     }
 
     HomeScreen #temporal-pane {
-        height: 2fr;
+        height: 1fr;
         border: solid $accent;
         border-title-align: left;
         border-subtitle-align: left;
@@ -406,7 +406,7 @@ class HomeScreen(Screen):
                     entity_list.display = True
                     entity_list.clear()
                     self._last_connections_index = None
-                    for entity in self.entry_entities[:10]:
+                    for entity in self.entry_entities:
                         name = entity.get("name", "")
                         uuid = entity.get("uuid", "")
                         entity_list.append(EntityListItem(name, uuid))
@@ -475,7 +475,7 @@ class HomeScreen(Screen):
                     entity_list.display = True
                     entity_list.clear()
                     self._last_temporal_index = None
-                    for entity in top_entities[:25]:
+                    for entity in top_entities[:100]:
                         name = entity.get("name", "")
                         uuid = entity.get("uuid", "")
                         entity_list.append(EntityListItem(name, uuid))
