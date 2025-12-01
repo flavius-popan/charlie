@@ -36,7 +36,8 @@ class EntitySidebar(Container):
     DEFAULT_CSS = """
     EntitySidebar {
         width: 1fr;
-        border-left: solid $accent;
+        border: solid $accent;
+        border-title-align: left;
     }
 
     EntitySidebar #entity-content {
@@ -45,13 +46,6 @@ class EntitySidebar(Container):
 
     EntitySidebar EntityListItem {
         padding-left: 1;
-    }
-
-    EntitySidebar .sidebar-header {
-        color: $text-muted;
-        text-align: center;
-        width: 100%;
-        height: 4%;
     }
     """
 
@@ -79,6 +73,7 @@ class EntitySidebar(Container):
         **kwargs,
     ):
         super().__init__(**kwargs)
+        self.border_title = "Connections"
         self.episode_uuid = episode_uuid
         self.journal = journal
         self.on_entity_deleted = on_entity_deleted
@@ -88,7 +83,6 @@ class EntitySidebar(Container):
         self.set_reactive(EntitySidebar.active_episode_uuid, active_episode_uuid)
 
     def compose(self) -> ComposeResult:
-        yield Label("Connections", classes="sidebar-header")
         yield Container(id="entity-content")
 
     def on_mount(self) -> None:

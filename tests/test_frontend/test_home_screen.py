@@ -170,9 +170,11 @@ async def test_home_screen_displays_episode_list(mock_home_db):
 async def test_navigating_entries_updates_period_on_boundary_crossing(mock_home_db):
     """Temporal pane should update when navigating across period boundaries."""
     from datetime import timedelta, timezone
+    import datetime as dt_module
 
-    now = datetime(2025, 11, 27, 12, 0, 0, tzinfo=timezone.utc)
-    this_week_start = now - timedelta(days=now.weekday())
+    # Fixed reference time - Thursday Nov 27, 2025
+    fixed_now = datetime(2025, 11, 27, 12, 0, 0, tzinfo=timezone.utc)
+    this_week_start = fixed_now - timedelta(days=fixed_now.weekday())
     last_week = this_week_start - timedelta(days=3)
 
     mock_episodes = [
@@ -180,7 +182,7 @@ async def test_navigating_entries_updates_period_on_boundary_crossing(mock_home_
             "uuid": "this-week-entry",
             "name": "This Week Entry",
             "preview": "Entry from this week",
-            "valid_at": now - timedelta(days=1),
+            "valid_at": fixed_now - timedelta(days=1),
         },
         {
             "uuid": "last-week-entry",
@@ -191,26 +193,36 @@ async def test_navigating_entries_updates_period_on_boundary_crossing(mock_home_
     ]
     mock_home_db["get_home"].return_value = mock_episodes
 
-    app = HomeScreenTestApp()
-    async with home_test_context(app) as pilot:
-        await pilot.pause()
+    # Create a datetime wrapper that returns fixed_now for now() but works normally otherwise
+    class FrozenDatetime(dt_module.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            if tz:
+                return fixed_now.astimezone(tz)
+            return fixed_now.replace(tzinfo=None)
 
-        home_screen = app.screen
-        assert isinstance(home_screen, HomeScreen)
-        assert len(home_screen.periods) == 2
-        assert home_screen.periods[0]["label"] == "This Week"
-        assert home_screen.periods[1]["label"] == "Last Week"
+    # Patch datetime in frontend.utils so calculate_periods uses our fixed time
+    with patch("frontend.utils.datetime", FrozenDatetime):
+        app = HomeScreenTestApp()
+        async with home_test_context(app) as pilot:
+            await pilot.pause()
 
-        # Initially should be on first period (This Week)
-        assert home_screen.selected_period_index == 0
+            home_screen = app.screen
+            assert isinstance(home_screen, HomeScreen)
+            assert len(home_screen.periods) == 2
+            assert home_screen.periods[0]["label"] == "This Week"
+            assert home_screen.periods[1]["label"] == "Last Week"
 
-        # Navigate down to Last Week entry (skip divider, skip This Week entry, land on Last Week)
-        await pilot.press("down")  # Move to Last Week divider (skipped)
-        await pilot.press("down")  # Move to Last Week entry
-        await pilot.pause()
+            # Initially should be on first period (This Week)
+            assert home_screen.selected_period_index == 0
 
-        # Period should have updated to Last Week
-        assert home_screen.selected_period_index == 1
+            # Navigate down to Last Week entry (skip divider, skip This Week entry, land on Last Week)
+            await pilot.press("down")  # Move to Last Week divider (skipped)
+            await pilot.press("down")  # Move to Last Week entry
+            await pilot.pause()
+
+            # Period should have updated to Last Week
+            assert home_screen.selected_period_index == 1
 
 
 @pytest.mark.asyncio
@@ -695,3 +707,45 @@ async def test_connections_pane_shows_loading_for_actively_processing_entry(mock
             from textual.widgets import LoadingIndicator
             indicators = app.screen.query(LoadingIndicator)
             assert len(indicators) > 0
+
+
+@pytest.mark.asyncio
+async def test_home_screen_selects_episode_on_resume(mock_home_db):
+    """HomeScreen should select episode specified by _select_uuid_on_resume on load."""
+    mock_episodes = [
+        {
+            "uuid": "first-entry",
+            "name": "First Entry",
+            "preview": "Content",
+            "valid_at": datetime(2025, 11, 27, 10, 0, 0),
+        },
+        {
+            "uuid": "second-entry",
+            "name": "Second Entry",
+            "preview": "Content",
+            "valid_at": datetime(2025, 11, 26, 10, 0, 0),
+        },
+        {
+            "uuid": "third-entry",
+            "name": "Third Entry",
+            "preview": "Content",
+            "valid_at": datetime(2025, 11, 25, 10, 0, 0),
+        },
+    ]
+    mock_home_db["get_home"].return_value = mock_episodes
+
+    app = HomeScreenTestApp()
+    async with home_test_context(app) as pilot:
+        await pilot.pause()
+
+        home_screen = app.screen
+
+        # Simulate returning from ViewScreen with a different episode selected
+        home_screen._select_uuid_on_resume = "third-entry"
+        await home_screen.load_episodes()
+        await pilot.pause()
+
+        # Should have selected the third entry
+        assert home_screen.selected_entry_uuid == "third-entry"
+        # UUID should be cleared after use
+        assert home_screen._select_uuid_on_resume is None

@@ -256,6 +256,8 @@ class HomeScreen(Screen):
         self._last_entries_index: int | None = None
         self._last_connections_index: int | None = None
         self._last_temporal_index: int | None = None
+        # UUID to select when returning from ViewScreen
+        self._select_uuid_on_resume: str | None = None
         # Processing state machine
         self.processing_machine = ProcessingStateMachine()
 
@@ -769,6 +771,10 @@ class HomeScreen(Screen):
                     if new_period_idx != self.selected_period_index:
                         self.selected_period_index = new_period_idx
 
+    def _handle_view_screen_result(self, episode_uuid: str | None) -> None:
+        """Store episode UUID to select when screen resumes."""
+        self._select_uuid_on_resume = episode_uuid
+
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         """Handle ListView selection (Enter key)."""
         # Handle entries list
@@ -777,7 +783,10 @@ class HomeScreen(Screen):
                 episode_idx = self.list_index_to_episode.get(event.list_view.index)
                 if episode_idx is not None and 0 <= episode_idx < len(self.episodes):
                     episode = self.episodes[episode_idx]
-                    self.app.push_screen(ViewScreen(episode["uuid"], DEFAULT_JOURNAL))
+                    self.app.push_screen(
+                        ViewScreen(episode["uuid"], DEFAULT_JOURNAL, episodes=self.episodes),
+                        self._handle_view_screen_result,
+                    )
         # Handle connections list - navigate to entity browser
         elif event.list_view.id == "connections-list":
             if isinstance(event.item, EntityListItem) and event.item.entity_uuid:
@@ -841,12 +850,20 @@ class HomeScreen(Screen):
                     empty_state.display = False
                     main_container.display = True
 
-                    # Find first selectable index
+                    # Find index to select
                     new_index = 0
                     if self.list_index_to_episode:
                         first_selectable = min(self.list_index_to_episode.keys())
                         new_index = first_selectable
-                        if old_index in self.list_index_to_episode:
+
+                        # Priority: stored UUID from ViewScreen > previous selection
+                        if self._select_uuid_on_resume:
+                            for list_idx, ep_idx in self.list_index_to_episode.items():
+                                if new_episodes[ep_idx]["uuid"] == self._select_uuid_on_resume:
+                                    new_index = list_idx
+                                    break
+                            self._select_uuid_on_resume = None
+                        elif old_index in self.list_index_to_episode:
                             new_index = old_index
 
                     list_view.index = new_index
@@ -885,7 +902,10 @@ class HomeScreen(Screen):
                 episode_idx = self.list_index_to_episode.get(list_view.index)
                 if episode_idx is not None and 0 <= episode_idx < len(self.episodes):
                     episode = self.episodes[episode_idx]
-                    self.app.push_screen(ViewScreen(episode["uuid"], DEFAULT_JOURNAL))
+                    self.app.push_screen(
+                        ViewScreen(episode["uuid"], DEFAULT_JOURNAL, episodes=self.episodes),
+                        self._handle_view_screen_result,
+                    )
         except Exception as e:
             logger.error("Failed to open view screen: %s", e, exc_info=True)
 

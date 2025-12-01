@@ -4,6 +4,11 @@ import re
 from datetime import datetime, timedelta, timezone
 
 
+def rough_token_estimate(text: str) -> int:
+    """Estimate token count using average of char/4 and words*1.33."""
+    return int(((len(text) / 4) + (len(text.split()) * 1.33)) / 2)
+
+
 def _extract_preview_from_content(content: str, max_chars: int) -> str:
     """Extract preview from content - markdown title or first line."""
     lines = content.strip().split("\n")
