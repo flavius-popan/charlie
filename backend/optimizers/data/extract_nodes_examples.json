@@ -106,6 +106,71 @@
         {"name": "yoga", "entity_type_id": 4},
         {"name": "doom scrolling", "entity_type_id": 4}
       ]
+    },
+    {
+      "_persona": "Musician, night owl, mixes creative work with day job chaos",
+      "_modes": "1 (verbose phrases), 4 (time modifiers)",
+      "_intent": "Strip verbs ('messing around in Ableton' -> 'Ableton') and time modifiers ('evening open mic' -> 'open mic')",
+      "episode_content": "Couldn't sleep again. My brain wouldn't stop replaying that conversation with Theo about whether I'm actually serious about music or just hiding from real life. He didn't mean it as an attack but it stung. Spent the early morning hours messing around in Ableton, layering synths over that drum loop from last week. Finally crashed around 5am.\n\nWoke up late, groggy. Made myself go to the evening open mic at Fender's even though I didn't feel like it. Ended up playing two songs on the house piano, forgot the bridge on the second one, whatever. Nobody noticed probably. Sometimes showing up is the whole thing.",
+      "expected_entities": [
+        {"name": "Theo", "entity_type_id": 1},
+        {"name": "Ableton", "entity_type_id": 4},
+        {"name": "open mic", "entity_type_id": 4},
+        {"name": "Fender's", "entity_type_id": 2}
+      ]
+    },
+    {
+      "_persona": "College student, gamer, crashes at friends' places, perpetually broke",
+      "_modes": "2 (room granularity), 7 (possessives)",
+      "_intent": "Extract person from possessives ('Dante's place' -> 'Dante'), keep business names ('Vinyl's Records'), omit rooms/furniture",
+      "episode_content": "- Dante's place, crashed on his couch after the LAN party went way too late\n- His roommate made us eggs in the morning, eaten standing in their kitchen because all the chairs had stuff on them\n- Mudd Library til 3, camped out in the basement stacks where nobody bothers you\n- Vinyl's Records, found a Coltrane I didn't have, the guy at the counter threw in a free poster\n- Mira's for dinner, her roommate made curry and we ate it on the floor of her living room watching bad reality TV\n- Walk back to the apt in the cold, regretted not bringing a jacket\n- Home",
+      "expected_entities": [
+        {"name": "Dante", "entity_type_id": 1},
+        {"name": "LAN party", "entity_type_id": 4},
+        {"name": "Mudd Library", "entity_type_id": 2},
+        {"name": "Vinyl's Records", "entity_type_id": 2},
+        {"name": "Mira", "entity_type_id": 1}
+      ]
+    },
+    {
+      "_persona": "Worried parent, overthinks everything, journals to process anxiety",
+      "_modes": "1 (verbose phrases), 7 (possessives)",
+      "_intent": "Extract person from possessives, omit rooms ('kitchen table') and generic activities ('dinner' without venue)",
+      "episode_content": "I keep second-guessing whether Zara is happy at swim practice or if I'm pushing her too hard. She seemed fine when I picked her up but teenagers are impossible to read. We stopped at Harbor Books because she wanted something for the beach trip and I was just grateful she wanted to do anything with me at all.\n\nAunt Viv says I worry too much. Easy for her to say. We sat at her kitchen table for like two hours while the kids played and I mostly just listened to her talk about her garden renovation. It was actually nice to not think for a while.\n\nRemi texted asking if we wanted to come for dinner. Zara actually said yes without me having to beg. Small wins.",
+      "expected_entities": [
+        {"name": "Zara", "entity_type_id": 1},
+        {"name": "swim practice", "entity_type_id": 4},
+        {"name": "Harbor Books", "entity_type_id": 2},
+        {"name": "Aunt Viv", "entity_type_id": 1},
+        {"name": "Remi", "entity_type_id": 1}
+      ]
+    },
+    {
+      "_persona": "Hiker who journals for mental clarity, nature as therapy",
+      "_modes": "2 (room granularity), 4 (time modifiers)",
+      "_intent": "Strip time modifiers ('sunrise hike' -> 'hike', 'late lunch' -> 'lunch'), omit terrain features ('creek', 'boulder')",
+      "episode_content": "Needed to clear my head so I drove out to Kestrel Ridge for a sunrise hike. Didn't even bring music, just walked. The trail runners group passed me going the other direction and I waved but didn't stop to chat. Wasn't in the mood for people.\n\nFound a spot by the creek and just sat there watching the water for I don't know how long. An hour? More? Time gets weird out there. Had a late lunch on a boulder, watched some birds I couldn't identify.\n\nStopped at REI on the way home because I needed an excuse to not go home yet. Bought gaiters I don't need. The afternoon light on the drive back was gorgeous.",
+      "expected_entities": [
+        {"name": "Kestrel Ridge", "entity_type_id": 2},
+        {"name": "hike", "entity_type_id": 4},
+        {"name": "trail runners group", "entity_type_id": 3},
+        {"name": "lunch", "entity_type_id": 4},
+        {"name": "REI", "entity_type_id": 2}
+      ]
+    },
+    {
+      "_persona": "Retiree who journals like writing a letter to a friend, tangents everywhere",
+      "_modes": "4 (time modifiers), 7 (possessives)",
+      "_intent": "Strip time modifiers ('morning pottery class' -> 'pottery class'), extract person from possessives, keep business names and named groups",
+      "episode_content": "Finally finished glazing that bowl in morning pottery class - you know, the wonky one I've been complaining about? It's still wonky but I've decided that's character.\n\nWent over to Ines's after, ostensibly to see her garden but really I think we both just wanted company. We ended up on her porch drinking iced tea and talking about absolutely nothing important for two hours. That woman has the right idea about retirement. No agenda, no rush.\n\nThursday Night Readers at Geoff's tonight. We're supposed to be discussing that mystery but honestly we spend more time gossiping than analyzing plot points. Walked home after and the stars were out. I don't remember the last time I noticed stars. Maybe that's what retirement is for - noticing things again.\n\nOh, and I had the pie at Pearl's Diner for late lunch. Still the best in town. Don't let anyone tell you otherwise.",
+      "expected_entities": [
+        {"name": "pottery class", "entity_type_id": 4},
+        {"name": "Ines", "entity_type_id": 1},
+        {"name": "Thursday Night Readers", "entity_type_id": 3},
+        {"name": "Geoff", "entity_type_id": 1},
+        {"name": "Pearl's Diner", "entity_type_id": 2},
+        {"name": "lunch", "entity_type_id": 4}
+      ]
     }
   ]
 }
