@@ -18,7 +18,7 @@ TCP_PASSWORD = None
 
 # Model configuration
 MODEL_REPO_ID = "unsloth/Qwen3-4B-Instruct-2507-GGUF"
-MODEL_QUANTIZATION = "Q4_K_M"
+MODEL_QUANTIZATION = "Q8_0"
 
 # llama.cpp inference settings (OS/hardware specific)
 LLAMA_CPP_N_CTX = int(os.getenv("LLAMA_CTX_SIZE", "4096"))
