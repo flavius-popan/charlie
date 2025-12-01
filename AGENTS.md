@@ -64,6 +64,59 @@ async def test_with_llm_call(isolated_graph, require_llm):
     # Test code that makes LLM calls via DSPy
 ```
 
+## Querying the Knowledge Graph (FalkorDB)
+
+Use inline Python to query entities and episodes. The graph uses Cypher syntax (no regex support).
+
+**Basic entity query:**
+```python
+python3 -c "
+import asyncio
+from backend.database.driver import get_driver
+
+async def query():
+    driver = get_driver()  # defaults to 'default' journal
+    records, _, _ = await driver.execute_query('''
+        MATCH (e:Entity)
+        WHERE toLower(e.name) CONTAINS 'search_term'
+        RETURN e.name as name, e.uuid as uuid
+        LIMIT 20
+    ''')
+    for r in records:
+        print(r['name'])
+
+asyncio.run(query())
+"
+```
+
+**Check entity types from Redis cache:**
+```python
+python3 -c "
+import asyncio, json
+from backend.database.driver import get_driver
+from backend.database.redis_ops import redis_ops
+
+async def check_types():
+    driver = get_driver()
+    records, _, _ = await driver.execute_query('MATCH (ep:Episodic) RETURN ep.uuid as uuid')
+
+    with redis_ops() as r:
+        for rec in records:
+            nodes_json = r.hget(f'journal:default:{rec[\"uuid\"]}', 'nodes')
+            if nodes_json:
+                for n in json.loads(nodes_json.decode()):
+                    print(f'{n.get(\"name\"):30} -> {n.get(\"type\")}')
+
+asyncio.run(check_types())
+"
+```
+
+**Key patterns:**
+- `MATCH (e:Entity)` - query entities
+- `MATCH (ep:Episodic)` - query episodes/entries
+- `MATCH (ep:Episodic)-[:MENTIONS]->(e:Entity)` - episodes mentioning entities
+- Redis cache key: `journal:{journal_name}:{episode_uuid}` with fields: `nodes`, `status`, `mentions_edges`
+
 ### Misc. Things to Remember
 
 - Use the respective conftest.py file for a given test suite for fixtures.

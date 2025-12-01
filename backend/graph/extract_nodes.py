@@ -566,7 +566,7 @@ async def extract_nodes(
         cache_key = f"journal:{journal}:{episode_uuid}"
         nodes_data = []
         for node in nodes:
-            most_specific_label = node.labels[-1] if len(node.labels) > 1 else "Entity"
+            most_specific_label = next((l for l in node.labels if l != "Entity"), "Entity")
             nodes_data.append({
                 "uuid": node.uuid,
                 "name": node.name,
