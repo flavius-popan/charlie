@@ -200,8 +200,9 @@ class EntitySidebar(Container):
                 if len(existing_list.children) == len(self.entities):
                     return
 
+            # Types stored but not displayed - adds visual noise without value
             items = [
-                EntityListItem(self._format_entity_label(entity), entity.get("uuid"))
+                EntityListItem(entity["name"], entity.get("uuid"))
                 for entity in self.entities
             ]
             list_view = ListView(*items)
@@ -213,12 +214,6 @@ class EntitySidebar(Container):
                 list_view.focus()
 
             self.call_after_refresh(focus_and_select)
-
-    def _format_entity_label(self, entity: dict) -> str:
-        """Format entity as 'Name [Type]'."""
-        name = entity["name"]
-        entity_type = entity.get("type", "Entity")
-        return f"{name} [{entity_type}]"
 
     async def refresh_entities(self) -> None:
         """Fetch entity data from Redis cache (single attempt, no polling)."""
