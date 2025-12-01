@@ -25,7 +25,11 @@ PROMPTS_DIR.mkdir(parents=True, exist_ok=True)
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 # DSPy cache - skip setup if --no-cache flag or DSPY_NO_CACHE env var
-_no_cache = "--no-cache" in sys.argv or os.getenv("DSPY_NO_CACHE", "").lower() in ("1", "true", "yes")
+_no_cache = "--no-cache" in sys.argv or os.getenv("DSPY_NO_CACHE", "").lower() in (
+    "1",
+    "true",
+    "yes",
+)
 DSPY_CACHE_DIR = PROMPTS_DIR / ".dspy_cache"
 if not _no_cache:
     DSPY_CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -48,11 +52,9 @@ MODEL_CONFIG = {
 # =============================================================================
 # GEPA Configuration
 # =============================================================================
-REFLECTION_MODEL = os.getenv("REFLECTION_MODEL", "openai/gpt-5-mini")
-# gpt-5-mini is a reasoning model: temperature must be 1.0, max_tokens >= 16000
-REFLECTION_MAX_TOKENS = int(os.getenv("REFLECTION_MAX_TOKENS", "16000"))
-REFLECTION_REASONING_EFFORT = os.getenv("REFLECTION_REASONING_EFFORT", "low")
-REFLECTION_VERBOSITY = os.getenv("REFLECTION_VERBOSITY", "low")
+REFLECTION_MODEL = os.getenv("REFLECTION_MODEL", "openai/gpt-4o-mini")
+REFLECTION_TEMPERATURE = float(os.getenv("REFLECTION_TEMPERATURE", "0.7"))
+REFLECTION_MAX_TOKENS = int(os.getenv("REFLECTION_MAX_TOKENS", "2048"))
 
 # auto mode: "light" (quick), "medium" (balanced), "heavy" (production)
 GEPA_AUTO_MODE = os.getenv("GEPA_AUTO_MODE", "light")
@@ -126,11 +128,7 @@ def get_task_lm(*, remote: bool = False) -> dspy.LM:
 
 
 def get_reflection_lm() -> dspy.LM:
-    """Get reflection LM for GEPA (requires OPENAI_API_KEY).
-
-    Uses gpt-5-mini with reasoning_effort=high for thorough analysis
-    and verbosity=low for concise outputs.
-    """
+    """Get reflection LM for GEPA (requires OPENAI_API_KEY)."""
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         raise ValueError(
@@ -139,10 +137,8 @@ def get_reflection_lm() -> dspy.LM:
     return dspy.LM(
         model=REFLECTION_MODEL,
         api_key=api_key,
-        temperature=1.0,  # required for reasoning models
+        temperature=REFLECTION_TEMPERATURE,
         max_tokens=REFLECTION_MAX_TOKENS,
-        reasoning_effort=REFLECTION_REASONING_EFFORT,
-        verbosity=REFLECTION_VERBOSITY,
     )
 
 
