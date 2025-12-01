@@ -551,8 +551,8 @@ async def get_period_entities(
                     "type": node.get("type", "Entity"),
                 }
 
-    # Get top 25 entities by mention frequency
-    top_entities = [entity_info[name] for name, _ in entity_counts.most_common(25)]
+    # Get top 100 entities by mention frequency
+    top_entities = [entity_info[name] for name, _ in entity_counts.most_common(100)]
 
     return {
         "entry_count": entry_count,

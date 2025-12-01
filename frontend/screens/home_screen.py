@@ -130,7 +130,7 @@ class HomeScreen(Screen):
     }
 
     HomeScreen #temporal-pane {
-        height: 1fr;
+        height: 2fr;
         border: solid $accent;
         border-title-align: left;
         border-subtitle-align: left;
