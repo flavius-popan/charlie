@@ -463,6 +463,10 @@ async def extract_nodes(
                 episode_uuid,
             )
 
+    # Clean up entity names (strip verb prefixes, time modifiers, etc.)
+    from backend.utils.node_cleanup import cleanup_extracted_entities
+    filtered_entities = cleanup_extracted_entities(filtered_entities)
+
     provisional_nodes = []
     for entity in filtered_entities:
         type_name = get_type_name_from_id(entity.entity_type_id, entity_types)
