@@ -9,7 +9,7 @@ DB_PATH = Path(os.getenv("CHARLIE_DB_PATH", "data/charlie.db"))
 DEFAULT_JOURNAL = "default"
 
 # Single switch to expose FalkorDB/Redis over TCP. Set to True to enable.
-REDIS_TCP_ENABLED = True
+REDIS_TCP_ENABLED = False
 
 # TCP server defaults (bind to localhost for safety).
 TCP_HOST = "127.0.0.1"
