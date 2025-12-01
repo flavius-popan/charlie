@@ -1,7 +1,6 @@
 {
   "_comment": [
     "Entity type IDs must match backend/graph/entities_edges.py:",
-    "  0 = Entity (fallback)",
     "  1 = Person",
     "  2 = Place",
     "  3 = Group",
@@ -34,7 +33,6 @@
         {"name": "Cafe Lumiere", "entity_type_id": 2},
         {"name": "Montclair", "entity_type_id": 2},
         {"name": "broke bitches", "entity_type_id": 3},
-        {"name": "Acts of Service", "entity_type_id": 0},
         {"name": "retail therapy", "entity_type_id": 4}
       ]
     },
@@ -50,8 +48,7 @@
         {"name": "dance practice", "entity_type_id": 4},
         {"name": "backgammon", "entity_type_id": 4},
         {"name": "Encore Academy", "entity_type_id": 2},
-        {"name": "dance team", "entity_type_id": 3},
-        {"name": "The Bear", "entity_type_id": 0}
+        {"name": "dance team", "entity_type_id": 3}
       ]
     },
     {
@@ -67,7 +64,6 @@
         {"name": "Juno", "entity_type_id": 1},
         {"name": "Pho 75", "entity_type_id": 2},
         {"name": "new parents group", "entity_type_id": 3},
-        {"name": "Goodnight Moon", "entity_type_id": 0},
         {"name": "bedtime routine", "entity_type_id": 4}
       ]
     },
@@ -82,9 +78,7 @@
         {"name": "Meridian", "entity_type_id": 3},
         {"name": "Kensington", "entity_type_id": 3},
         {"name": "advisory board", "entity_type_id": 3},
-        {"name": "golf", "entity_type_id": 4},
-        {"name": "How I Built This", "entity_type_id": 0},
-        {"name": "Never Split the Difference", "entity_type_id": 0}
+        {"name": "golf", "entity_type_id": 4}
       ]
     },
     {
@@ -95,10 +89,7 @@
         {"name": "Quinn", "entity_type_id": 1},
         {"name": "Rosie's", "entity_type_id": 2},
         {"name": "Marco's", "entity_type_id": 2},
-        {"name": "Figma", "entity_type_id": 0},
-        {"name": "Framer", "entity_type_id": 0},
         {"name": "design meetup", "entity_type_id": 3},
-        {"name": "Notion", "entity_type_id": 0},
         {"name": "prototyping", "entity_type_id": 4}
       ]
     },
