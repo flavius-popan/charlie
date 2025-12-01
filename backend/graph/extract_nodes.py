@@ -26,6 +26,7 @@ from backend.database.redis_ops import (
     append_unresolved_entities,
     get_unresolved_entities_count,
 )
+from backend.database.queries import get_entry_suppressed_entities
 
 logger = logging.getLogger(__name__)
 
@@ -357,12 +358,23 @@ async def extract_nodes(
     Pipeline:
     1. Fetch episode from database
     2. Extract entities via EntityExtractor (DSPy LLM)
-    3. Fetch existing entities for deduplication
-    4. Resolve duplicates (MinHash LSH + exact matching)
-    5. Queue unresolved entities for batch LLM dedupe (or call LLM inline)
-    6. Create MENTIONS edges (episode -> entities)
-    7. Persist entities and edges
-    8. Return metadata
+    3. Filter out suppressed entities (two-tier check)
+    4. Fetch existing entities for deduplication
+    5. Resolve duplicates (MinHash LSH + exact matching)
+    6. Queue unresolved entities for batch LLM dedupe (or call LLM inline)
+    7. Create MENTIONS edges (episode -> entities)
+    8. Persist entities and edges
+    9. Return metadata
+
+    Suppression Filtering
+    ---------------------
+    Extracted entities are filtered against two suppression tiers:
+    1. Global (journal-level): Entities suppressed via delete_entity_all_mentions()
+       Stored in Redis set: journal:{journal}:suppressed_entities
+    2. Entry-level (per-episode): Entities suppressed via delete_entity_mention()
+       Stored in Redis hash field: journal:{journal}:{episode_uuid}[suppressed_entities]
+
+    Both tiers use case-insensitive matching (names normalized to lowercase).
 
     Deduplication Strategy
     ----------------------
@@ -427,7 +439,15 @@ async def extract_nodes(
 
     logger.info("Extracted %d provisional entities", len(extracted.extracted_entities))
 
-    suppressed = get_suppressed_entities(journal)
+    # Check both global (journal-level) and entry-level suppression
+    global_suppressed = get_suppressed_entities(journal)
+    try:
+        entry_suppressed = await get_entry_suppressed_entities(journal, episode_uuid)
+    except Exception as e:
+        logger.warning("Failed to get entry-level suppression for %s: %s", episode_uuid, e)
+        entry_suppressed = set()
+    suppressed = global_suppressed | entry_suppressed
+
     filtered_entities = extracted.extracted_entities
     if suppressed:
         original_count = len(extracted.extracted_entities)

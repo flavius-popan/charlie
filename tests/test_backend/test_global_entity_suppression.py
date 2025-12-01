@@ -28,18 +28,18 @@ def clear_suppression():
 @pytest.mark.inference
 @pytest.mark.asyncio
 async def test_deletion_suppresses_globally_across_episodes(isolated_graph, require_llm):
-    """Test that deleting an entity from one episode suppresses it globally.
+    """Test that deleting an entity globally suppresses it across all episodes.
 
     Verifies:
     - Episode A extracts Alice and Bob
-    - Deleting Bob from Episode A adds Bob to global suppression list
+    - Using delete_entity_all_mentions with suppress_reextraction adds Bob to global suppression
     - Episode B extraction filters out Bob (only Charlie extracted)
     - Suppression list contains "bob" (lowercase)
     """
     from backend import add_journal_entry, extract_nodes
     from backend.settings import DEFAULT_JOURNAL
     from backend.database import get_driver
-    from backend.database.queries import delete_entity_mention
+    from backend.database.queries import delete_entity_all_mentions
     from backend.database.redis_ops import get_suppressed_entities
 
     content_a = "Today I met Alice and Bob at the park."
@@ -62,7 +62,8 @@ async def test_deletion_suppresses_globally_across_episodes(isolated_graph, requ
 
     bob_uuid = bob_entity["e.uuid"]
 
-    await delete_entity_mention(episode_a_uuid, bob_uuid, DEFAULT_JOURNAL)
+    # Use delete_entity_all_mentions for global suppression (cross-episode)
+    await delete_entity_all_mentions(bob_uuid, DEFAULT_JOURNAL, suppress_reextraction=True)
 
     suppressed = get_suppressed_entities(DEFAULT_JOURNAL)
     assert "bob" in suppressed, "Bob should be in global suppression list after deletion"
@@ -90,13 +91,13 @@ async def test_deletion_suppresses_globally_across_episodes(isolated_graph, requ
 @pytest.mark.inference
 @pytest.mark.asyncio
 async def test_reextraction_respects_suppression(isolated_graph, require_llm):
-    """Test that re-extraction filters out suppressed entities.
+    """Test that re-extraction filters out entry-level suppressed entities.
 
     Verifies:
     - Episode initially has Alice and Bob
-    - Delete Bob (adds to suppression)
+    - Delete Bob with suppress_reextraction=True (adds to entry-level suppression)
     - Edit episode to mention Alice, Bob, and Charlie
-    - Re-extraction should only extract Alice and Charlie (Bob suppressed)
+    - Re-extraction should only extract Alice and Charlie (Bob suppressed at entry level)
     """
     from backend import add_journal_entry, extract_nodes
     from backend.settings import DEFAULT_JOURNAL
@@ -126,7 +127,8 @@ async def test_reextraction_respects_suppression(isolated_graph, require_llm):
 
     bob_uuid = bob_entity["e.uuid"]
 
-    await delete_entity_mention(episode_uuid, bob_uuid, DEFAULT_JOURNAL)
+    # Entry-level suppression: suppress Bob only for this episode's re-extractions
+    await delete_entity_mention(episode_uuid, bob_uuid, DEFAULT_JOURNAL, suppress_reextraction=True)
 
     episode = await EpisodicNode.get_by_uuid(driver, episode_uuid)
     episode.content = "Alice and Bob and Charlie had dinner together."
@@ -172,17 +174,17 @@ async def test_cache_state_after_deletion(isolated_graph, require_llm):
 
     Verifies:
     - Episode extracts Alice and Bob (cache populated)
-    - Delete Bob
+    - Delete Bob with suppress_reextraction=True
     - nodes cache updated (Bob removed)
     - mentions_edges cache updated (Bob's edge removed)
     - uuid_map cache updated (Bob's mappings removed)
-    - suppressed_entities contains "bob"
+    - entry-level suppressed_entities contains "bob"
     """
     from backend import add_journal_entry, extract_nodes
     from backend.settings import DEFAULT_JOURNAL
     from backend.database import get_driver
-    from backend.database.queries import delete_entity_mention
-    from backend.database.redis_ops import redis_ops, get_suppressed_entities
+    from backend.database.queries import delete_entity_mention, get_entry_suppressed_entities
+    from backend.database.redis_ops import redis_ops
 
     content = "Alice and Bob are friends."
     episode_uuid = await add_journal_entry(content)
@@ -219,7 +221,8 @@ async def test_cache_state_after_deletion(isolated_graph, require_llm):
         assert len(edges_before) >= 2, "Should have at least 2 edges cached"
         assert bob_edge_uuid in edges_before, "Bob's edge should be in cache before deletion"
 
-    await delete_entity_mention(episode_uuid, bob_uuid, DEFAULT_JOURNAL)
+    # Entry-level suppression with flag
+    await delete_entity_mention(episode_uuid, bob_uuid, DEFAULT_JOURNAL, suppress_reextraction=True)
 
     with redis_ops() as r:
         cache_key = f"journal:{DEFAULT_JOURNAL}:{episode_uuid}"
@@ -236,24 +239,25 @@ async def test_cache_state_after_deletion(isolated_graph, require_llm):
         edges_after = json.loads(edges_after_json.decode())
         assert bob_edge_uuid not in edges_after, "Bob's edge should be removed from cache"
 
-    suppressed = get_suppressed_entities(DEFAULT_JOURNAL)
-    assert "bob" in suppressed, "Bob should be in suppressed_entities"
+    # Check entry-level suppression
+    suppressed = await get_entry_suppressed_entities(DEFAULT_JOURNAL, episode_uuid)
+    assert "bob" in suppressed, "Bob should be in entry-level suppressed_entities"
 
 
 @pytest.mark.inference
 @pytest.mark.asyncio
 async def test_case_insensitive_suppression(isolated_graph, require_llm):
-    """Test that suppression matching is case-insensitive.
+    """Test that global suppression matching is case-insensitive.
 
     Verifies:
-    - Delete "bob" (lowercase stored)
-    - Extract content with "Bob" (capitalized)
+    - Delete "bob" globally (lowercase stored)
+    - Extract content with "Bob" (capitalized) in a new episode
     - "Bob" should be filtered out despite different case
     """
     from backend import add_journal_entry, extract_nodes
     from backend.settings import DEFAULT_JOURNAL
     from backend.database import get_driver
-    from backend.database.queries import delete_entity_mention
+    from backend.database.queries import delete_entity_all_mentions
     from backend.database.redis_ops import get_suppressed_entities
 
     content_v1 = "I met bob at the store."
@@ -276,10 +280,11 @@ async def test_case_insensitive_suppression(isolated_graph, require_llm):
 
     bob_uuid = bob_entity["e.uuid"]
 
-    await delete_entity_mention(episode_uuid, bob_uuid, DEFAULT_JOURNAL)
+    # Global suppression for cross-episode case-insensitivity test
+    await delete_entity_all_mentions(bob_uuid, DEFAULT_JOURNAL, suppress_reextraction=True)
 
     suppressed = get_suppressed_entities(DEFAULT_JOURNAL)
-    assert "bob" in suppressed, "bob should be in suppression list (lowercase)"
+    assert "bob" in suppressed, "bob should be in global suppression list (lowercase)"
 
     content_v2 = "Bob and Alice went to the park."
     episode2_uuid = await add_journal_entry(content_v2)
@@ -304,11 +309,11 @@ async def test_case_insensitive_suppression(isolated_graph, require_llm):
 @pytest.mark.inference
 @pytest.mark.asyncio
 async def test_all_entities_suppressed(isolated_graph, require_llm):
-    """Test that extraction handles all entities being suppressed.
+    """Test that extraction handles all entities being suppressed at entry level.
 
     Verifies:
     - Episode has Alice and Bob
-    - Extract, then delete both
+    - Extract, then delete both with suppress_reextraction=True
     - Re-extract same content
     - Extraction result is empty (0 entities)
     - Cache updated with empty arrays
@@ -334,8 +339,9 @@ async def test_all_entities_suppressed(isolated_graph, require_llm):
     entities_result = await driver.execute_query(entities_query)
     entities = entities_result[0]
 
+    # Suppress all entities at entry level
     for entity in entities:
-        await delete_entity_mention(episode_uuid, entity["e.uuid"], DEFAULT_JOURNAL)
+        await delete_entity_mention(episode_uuid, entity["e.uuid"], DEFAULT_JOURNAL, suppress_reextraction=True)
 
     from graphiti_core.nodes import EpisodicNode
     from backend.database.lifecycle import _ensure_graph
