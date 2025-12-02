@@ -70,6 +70,25 @@ fi
 
 echo "Using Python: $PYTHON_CMD ($($PYTHON_CMD --version))"
 
+# Check macOS version for ARM64
+# The falkordblite package (embedded FalkorDB) only provides ARM64 binaries
+# compiled for macOS 15.0+. Rosetta 2 is not a workaround because x86_64
+# processes cannot load ARM64 Mach-O binaries.
+# See: https://github.com/FalkorDB/falkordblite/pull/9
+if [[ "$(uname -s)" == "Darwin" && "$(uname -m)" == "arm64" ]]; then
+    macos_version=$(sw_vers -productVersion)
+    major_version=$(echo "$macos_version" | cut -d. -f1)
+    if [[ "$major_version" -lt 15 ]]; then
+        echo ""
+        echo "Your Mac needs macOS 15 (Sequoia) or later to run Charlie."
+        echo "Current version: macOS $macos_version"
+        echo ""
+        echo "To upgrade: System Settings > General > Software Update"
+        echo ""
+        fail "macOS 15+ required for Apple Silicon"
+    fi
+fi
+
 # Check internet connectivity (lightweight check before 4.5GB download)
 if ! curl -s --head --connect-timeout 5 https://huggingface.co > /dev/null; then
     fail "Cannot reach huggingface.co. Check your internet connection."
