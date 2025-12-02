@@ -70,6 +70,25 @@ fi
 
 echo "Using Python: $PYTHON_CMD ($($PYTHON_CMD --version))"
 
+# Check macOS version for ARM64
+# The falkordblite package (embedded FalkorDB) only provides ARM64 binaries
+# compiled for macOS 15.0+. Rosetta 2 is not a workaround because x86_64
+# processes cannot load ARM64 Mach-O binaries.
+# See: https://github.com/FalkorDB/falkordblite/pull/9
+if [[ "$(uname -s)" == "Darwin" && "$(uname -m)" == "arm64" ]]; then
+    macos_version=$(sw_vers -productVersion)
+    major_version=$(echo "$macos_version" | cut -d. -f1)
+    if [[ "$major_version" -lt 15 ]]; then
+        echo ""
+        echo "Your Mac needs macOS 15 (Sequoia) or later to run Charlie."
+        echo "Current version: macOS $macos_version"
+        echo ""
+        echo "To upgrade: System Settings > General > Software Update"
+        echo ""
+        fail "macOS 15+ required for Apple Silicon"
+    fi
+fi
+
 # Check internet connectivity (lightweight check before 4.5GB download)
 if ! curl -s --head --connect-timeout 5 https://huggingface.co > /dev/null; then
     fail "Cannot reach huggingface.co. Check your internet connection."
@@ -231,6 +250,9 @@ echo "  1) Text files (.txt, .md, .rtf from a directory)"
 echo "  2) Day One export (.zip file)"
 echo "  3) Skip import"
 echo ""
+echo "You can always import more files later by running the importers directly."
+echo "See importers/IMPORTING.md for details."
+echo ""
 read -p "Choose [1/2/3]: " import_choice
 
 case "$import_choice" in
@@ -238,8 +260,11 @@ case "$import_choice" in
         read -p "Path to journal directory: " journal_path
         if [[ -n "$journal_path" ]]; then
             echo ""
-            echo "Options: --recursive, --date-source created|modified, --dry-run"
+            echo "Common options: --recursive, --dry-run"
+            echo "Run 'python importers/files.py -h' for all options"
             read -p "Additional options (or press Enter for defaults): " import_opts
+            echo ""
+            echo "Scanning directory (may take a while for cloud-synced folders)..."
             python importers/files.py "$journal_path" $import_opts
         fi
         ;;
@@ -269,6 +294,9 @@ if [[ ! "$launch_choice" =~ ^[Nn]$ ]]; then
 else
     echo ""
     echo "To start Charlie later, run:"
+    echo "  ./charlie.sh"
+    echo ""
+    echo "Or manually:"
     echo "  source .venv/bin/activate"
     echo "  python charlie.py"
 fi

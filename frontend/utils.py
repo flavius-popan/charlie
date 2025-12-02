@@ -3,6 +3,8 @@
 import re
 from datetime import datetime, timedelta, timezone
 
+from rich.markup import escape as escape_rich_markup
+
 
 def rough_token_estimate(text: str) -> int:
     """Estimate token count using average of char/4 and words*1.33."""
@@ -270,16 +272,20 @@ def emphasize_rich(content: str, text: str) -> str:
     """Wrap occurrences of text with Rich bold markup ([bold]text[/bold]).
 
     For use with Textual Static widgets that support Rich markup.
+    Escapes any existing Rich markup in content to prevent parsing errors.
 
     Args:
         content: Raw text
         text: The text to emphasize (case-insensitive matching)
 
     Returns:
-        Text with Rich bold markup applied
+        Text with Rich bold markup applied (and existing markup escaped)
     """
+    # Escape Rich markup characters in content first
+    escaped_content = escape_rich_markup(content)
+
     if not text or len(text) < 2:
-        return content
+        return escaped_content
 
     escaped_text = re.escape(text)
 
@@ -293,7 +299,7 @@ def emphasize_rich(content: str, text: str) -> str:
         matched_text = match.group(0)
         return f"[bold]{matched_text}[/bold]"
 
-    return re.sub(pattern, make_replacement, content, flags=re.IGNORECASE)
+    return re.sub(pattern, make_replacement, escaped_content, flags=re.IGNORECASE)
 
 
 def emphasize_text(content: str, text: str) -> str:

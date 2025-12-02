@@ -4,7 +4,40 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from frontend.utils import calculate_periods, get_display_title, group_entries_by_period
+from frontend.utils import calculate_periods, emphasize_rich, get_display_title, group_entries_by_period
+
+
+class TestEmphasizeRich:
+    """Tests for emphasize_rich function."""
+
+    def test_basic_emphasis(self):
+        """Should wrap entity name with bold markup."""
+        result = emphasize_rich("Hello Bob today", "Bob")
+        assert result == "Hello [bold]Bob[/bold] today"
+
+    def test_escapes_brackets_in_content(self):
+        """Content with brackets should be escaped to prevent markup errors."""
+        result = emphasize_rich("He said [quote] about Bob", "Bob")
+        assert "[bold]Bob[/bold]" in result
+        # Rich escapes opening bracket as \[ to prevent tag parsing
+        assert "\\[quote]" in result
+
+    def test_escapes_rich_tags_in_content(self):
+        """Literal Rich tags in content should be escaped."""
+        result = emphasize_rich("Text with [/bold] and Bob", "Bob")
+        assert "[bold]Bob[/bold]" in result
+        # The literal [/bold] in content should be escaped
+        assert "\\[/bold]" in result
+
+    def test_short_text_skipped(self):
+        """Text shorter than 2 chars should not be emphasized."""
+        result = emphasize_rich("A B C", "B")
+        assert "[bold]" not in result
+
+    def test_escapes_even_when_no_match(self):
+        """Brackets should be escaped even when entity not found."""
+        result = emphasize_rich("Some [tag] text", "Bob")
+        assert "\\[tag]" in result
 
 
 class TestGetDisplayTitle:
