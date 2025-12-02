@@ -393,3 +393,58 @@ async def test_delete_modal_show_scope_true_by_default():
         # Scope radio should exist
         radio_set = modal_screen.query_one("#delete-scope", RadioSet)
         assert radio_set is not None, "Scope radio should be visible by default"
+
+
+@pytest.mark.asyncio
+async def test_delete_modal_left_right_navigation():
+    """Left/right arrow keys should navigate between Cancel and Delete buttons."""
+    app = DeleteModalTestApp("Quinn", default_scope="entry")
+
+    async with app.run_test() as pilot:
+        modal = DeleteEntityModal("Quinn", default_scope="entry", checkbox_default=True)
+        app.push_screen(modal)
+        await pilot.pause()
+
+        modal_screen = app.screen
+        cancel_btn = modal_screen.query_one("#cancel", Button)
+        confirm_btn = modal_screen.query_one("#confirm", Button)
+
+        # Focus the Cancel button first
+        cancel_btn.focus()
+        await pilot.pause()
+        assert cancel_btn.has_focus, "Cancel button should have focus"
+
+        # Press right to move to Confirm button
+        await pilot.press("right")
+        await pilot.pause()
+        assert confirm_btn.has_focus, (
+            "Right arrow should move focus to Confirm button. "
+            "Bug: Binding uses 'focus_next' instead of 'app.focus_next'"
+        )
+
+
+@pytest.mark.asyncio
+async def test_delete_modal_vim_navigation():
+    """Vim keys (h/l) should navigate between buttons."""
+    app = DeleteModalTestApp("Quinn", default_scope="entry")
+
+    async with app.run_test() as pilot:
+        modal = DeleteEntityModal("Quinn", default_scope="entry", checkbox_default=True)
+        app.push_screen(modal)
+        await pilot.pause()
+
+        modal_screen = app.screen
+        cancel_btn = modal_screen.query_one("#cancel", Button)
+        confirm_btn = modal_screen.query_one("#confirm", Button)
+
+        cancel_btn.focus()
+        await pilot.pause()
+        assert cancel_btn.has_focus
+
+        await pilot.press("l")
+        await pilot.pause()
+        assert confirm_btn.has_focus, "'l' should move focus to next button"
+
+        await pilot.press("h")
+        await pilot.pause()
+        assert cancel_btn.has_focus, "'h' should move focus to previous button"

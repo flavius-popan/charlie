@@ -242,6 +242,13 @@ class EntitySidebar(Container):
             self.cache_loading = False
             self.post_message(self.CacheCheckComplete(entities_found=False))
 
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        """Disable delete_entity action when sidebar is hidden."""
+        if action == "delete_entity":
+            if not self.display:
+                return False
+        return True
+
     def action_delete_entity(self) -> None:
         """Show delete confirmation for selected entity."""
         list_view = self.query_one(ListView)

@@ -592,3 +592,66 @@ async def test_view_screen_check_action_no_episodes():
             # No episodes: both should be hidden
             assert screen.check_action("prev_entry", ()) is False
             assert screen.check_action("next_entry", ()) is False
+
+
+@pytest.mark.asyncio
+async def test_edit_binding_hidden_when_sidebar_open():
+    """Edit binding should be hidden when sidebar is visible to avoid confusion."""
+    with patch("charlie.get_episode", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = {"uuid": "test-uuid", "content": "Test"}
+
+        app = ViewScreenTestApp(
+            episode_uuid="test-uuid",
+            journal="test",
+            from_edit=False,
+        )
+
+        async with app.run_test() as pilot:
+            screen: ViewScreen = app.screen
+            sidebar = screen.query_one(EntitySidebar)
+            await pilot.pause()
+
+            assert sidebar.display is False
+            assert screen.check_action("edit_entry", ()) is True, "Edit should be visible when sidebar hidden"
+
+            sidebar.display = True
+            assert screen.check_action("edit_entry", ()) is False, "Edit should be hidden when sidebar visible"
+
+            sidebar.display = False
+            assert screen.check_action("edit_entry", ()) is True, "Edit should be visible when sidebar hidden again"
+
+
+@pytest.mark.asyncio
+async def test_delete_from_home_shows_modal_without_sidebar_toggle():
+    """Pressing 'd' from home screen should show delete modal immediately.
+
+    This tests the full user flow: HomeScreen -> ViewScreen -> press 'd' -> modal appears.
+    The bug was that 'd' did nothing until after opening/closing the sidebar.
+    """
+    from frontend.widgets.confirmation_modal import ConfirmationModal
+
+    with patch("charlie.get_episode", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = {
+            "uuid": "test-uuid",
+            "content": "# Test Entry\nThis entry should be deletable.",
+        }
+
+        app = ViewScreenTestApp(
+            episode_uuid="test-uuid",
+            journal="test",
+            from_edit=False,  # Coming from HomeScreen
+        )
+
+        async with app.run_test() as pilot:
+            screen: ViewScreen = app.screen
+            await pilot.pause()
+
+            # Press 'd' to delete - should show confirmation modal
+            await pilot.press("d")
+            await pilot.pause()
+
+            # Verify the confirmation modal is now the active screen
+            assert isinstance(app.screen, ConfirmationModal), (
+                f"Expected ConfirmationModal after pressing 'd', got {type(app.screen).__name__}. "
+                "Bug: Delete binding not working from home screen without toggling sidebar first."
+            )

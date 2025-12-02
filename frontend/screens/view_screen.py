@@ -122,15 +122,20 @@ class ViewScreen(Screen):
         self._sync_machine_output()
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
-        """Conditionally hide prev/next bindings based on navigation state."""
-        if action == "prev_entry":
-            # Hide if no episodes, no index, or at oldest
+        """Conditionally hide bindings based on UI state."""
+        if action == "edit_entry":
+            try:
+                sidebar = self.query_one("#entity-sidebar", EntitySidebar)
+                if sidebar.display:
+                    return False
+            except NoMatches:
+                pass
+        elif action == "prev_entry":
             if not self.episodes or self._current_idx is None:
                 return False
             if self._current_idx >= len(self.episodes) - 1:
                 return False
         elif action == "next_entry":
-            # Hide if no episodes, no index, or at newest
             if not self.episodes or self._current_idx is None:
                 return False
             if self._current_idx <= 0:
@@ -157,8 +162,10 @@ class ViewScreen(Screen):
             active_episode_uuid=ViewScreen.active_episode_uuid,
         )
 
+        markdown = Markdown("Loading...", id="journal-content", open_links=False)
+        markdown.can_focus = True
         content_wrapper = Container(
-            Markdown("Loading...", id="journal-content", open_links=False),
+            markdown,
             id="content-wrapper",
         )
 
@@ -183,6 +190,8 @@ class ViewScreen(Screen):
             if self.sidebar_machine.output.visible:
                 self.sidebar_machine.send("hide")
             self._sync_machine_output()
+            # Defer focus until after screen is fully rendered
+            self.call_after_refresh(self._focus_content)
             return  # Skip polling and cache check when sidebar hidden
 
         # Polling decision now handled by on_entity_sidebar_cache_check_complete
@@ -404,12 +413,12 @@ class ViewScreen(Screen):
             current_visible = self.sidebar_machine.output.visible
 
             if current_visible:
-                # Hide sidebar
                 self.sidebar_machine.send("hide")
                 self._sync_machine_output()
-                self.active_processing = False  # No spinner when hidden
+                self.active_processing = False
                 sidebar.display = False
-                # IMPORTANT: Cancel ALL workers when hiding to prevent race conditions.
+                self.refresh_bindings()
+                # Cancel ALL workers when hiding to prevent race conditions.
                 # Workers started on child widgets (sidebar.run_worker) continue running
                 # even when the widget is hidden. If not cancelled, they race with the
                 # next "show" operation, corrupting state. Always cancel child widget
@@ -417,8 +426,8 @@ class ViewScreen(Screen):
                 self.workers.cancel_group(self, "status-poll")
                 sidebar.workers.cancel_all()
             else:
-                # Show sidebar - refresh context and route event
                 sidebar.display = True
+                self.refresh_bindings()
 
                 # Batch all Redis reads into a single call for minimal latency
                 (
@@ -530,6 +539,15 @@ class ViewScreen(Screen):
             except Exception as exc:
                 logger.exception(f"Status poll error: {exc}")
                 break
+
+    def _focus_content(self) -> None:
+        """Set focus to content area so screen bindings work correctly."""
+        try:
+            markdown = self.query_one("#journal-content", Markdown)
+            self.set_focus(markdown)
+            self.refresh_bindings()
+        except Exception:
+            pass
 
     def _on_entity_deleted(self, entities_present: bool) -> None:
         """Handle entity deletion event from sidebar.

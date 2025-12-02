@@ -11,8 +11,10 @@ class ConfirmationModal(ModalScreen):
     """Generic confirmation modal for destructive actions."""
 
     BINDINGS = [
-        Binding("left", "focus_previous", show=False),
-        Binding("right", "focus_next", show=False),
+        Binding("left", "app.focus_previous", show=False),
+        Binding("right", "app.focus_next", show=False),
+        Binding("h", "app.focus_previous", show=False),
+        Binding("l", "app.focus_next", show=False),
     ]
 
     DEFAULT_CSS = """
