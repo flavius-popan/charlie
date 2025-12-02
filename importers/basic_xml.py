@@ -20,6 +20,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import asyncio
+import re
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
@@ -36,10 +37,21 @@ def parse_date(date_str: str, tz: ZoneInfo) -> datetime:
     return local_dt.astimezone(timezone.utc)
 
 
+def sanitize_xml_content(raw_xml: str) -> str:
+    """Escape unescaped ampersands in XML content.
+
+    Fixes common issue where source data contains raw & characters
+    that should be &amp; for valid XML. Preserves already-escaped entities.
+    """
+    # Match & not followed by valid entity: amp; lt; gt; quot; apos; or numeric
+    return re.sub(r"&(?!(amp|lt|gt|quot|apos|#\d+|#x[0-9a-fA-F]+);)", "&amp;", raw_xml)
+
+
 def parse_xml(path: Path, tz: ZoneInfo) -> list[tuple[str, datetime, str]]:
     """Parse XML file with <date>/<post> structure."""
-    tree = ET.parse(path)
-    root = tree.getroot()
+    raw_content = path.read_text(encoding="utf-8")
+    clean_content = sanitize_xml_content(raw_content)
+    root = ET.fromstring(clean_content)
 
     entries = []
     current_date = None
