@@ -250,6 +250,9 @@ echo "  1) Text files (.txt, .md, .rtf from a directory)"
 echo "  2) Day One export (.zip file)"
 echo "  3) Skip import"
 echo ""
+echo "You can always import more files later by running the importers directly."
+echo "See importers/IMPORTING.md for details."
+echo ""
 read -p "Choose [1/2/3]: " import_choice
 
 case "$import_choice" in
@@ -257,8 +260,11 @@ case "$import_choice" in
         read -p "Path to journal directory: " journal_path
         if [[ -n "$journal_path" ]]; then
             echo ""
-            echo "Options: --recursive, --date-source created|modified, --dry-run"
+            echo "Common options: --recursive, --dry-run"
+            echo "Run 'python importers/files.py -h' for all options"
             read -p "Additional options (or press Enter for defaults): " import_opts
+            echo ""
+            echo "Scanning directory (may take a while for cloud-synced folders)..."
             python importers/files.py "$journal_path" $import_opts
         fi
         ;;

@@ -250,6 +250,8 @@ async def main():
     else:
         extensions = DEFAULT_EXTENSIONS
 
+    console.print(f"Scanning {input_path.name}...")
+
     # Parse entries
     entries, errors = parse_entries(
         input_path,
