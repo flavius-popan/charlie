@@ -19,7 +19,7 @@ jobs:
     - name: Install system dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y build-essential
+        sudo apt-get install -y libomp-dev
 
     - name: Install uv
       uses: astral-sh/setup-uv@v4
