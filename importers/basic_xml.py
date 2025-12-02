@@ -38,13 +38,14 @@ def parse_date(date_str: str, tz: ZoneInfo) -> datetime:
 
 
 def sanitize_xml_content(raw_xml: str) -> str:
-    """Escape unescaped ampersands in XML content.
+    """Sanitize content for valid XML 1.0 parsing.
 
-    Fixes common issue where source data contains raw & characters
-    that should be &amp; for valid XML. Preserves already-escaped entities.
+    Fixes:
+    - Control characters (0x00-0x08, 0x0B-0x0C, 0x0E-0x1F) invalid in XML 1.0
+    - Raw & characters that should be &amp;
     """
-    # Match & not followed by valid entity: amp; lt; gt; quot; apos; or numeric
-    return re.sub(r"&(?!(amp|lt|gt|quot|apos|#\d+|#x[0-9a-fA-F]+);)", "&amp;", raw_xml)
+    clean = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", raw_xml)
+    return re.sub(r"&(?!(amp|lt|gt|quot|apos|#\d+|#x[0-9a-fA-F]+);)", "&amp;", clean)
 
 
 def parse_xml(path: Path, tz: ZoneInfo) -> list[tuple[str, datetime, str]]:
