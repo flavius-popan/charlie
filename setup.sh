@@ -288,6 +288,9 @@ if [[ ! "$launch_choice" =~ ^[Nn]$ ]]; then
 else
     echo ""
     echo "To start Charlie later, run:"
+    echo "  ./charlie.sh"
+    echo ""
+    echo "Or manually:"
     echo "  source .venv/bin/activate"
     echo "  python charlie.py"
 fi

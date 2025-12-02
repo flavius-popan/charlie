@@ -38,6 +38,12 @@ See [importers/IMPORTING.md](importers/IMPORTING.md) for all options.
 ## Running
 
 ```bash
+./charlie.sh
+```
+
+Or manually activate the virtual environment:
+
+```bash
 source .venv/bin/activate
 python charlie.py
 ```
