@@ -26,13 +26,25 @@ LLAMA_CPP_GPU_LAYERS = int(os.getenv("LLAMA_GPU_LAYERS", "-1"))
 LLAMA_CPP_VERBOSE = False
 
 # Generation parameters
+#
+# Token budget for entity extraction (4096 context window):
+#   - Output reserve: 1024 tokens (CoT reasoning + JSON entities)
+#   - Prompt overhead: ~500 tokens (system prompt, entity types, field labels)
+#   - Available for journal: ~2,500 tokens (~1,700 words)
+#
+# Entries over ~1,700 words will be silently truncated at the context boundary,
+# potentially missing entities mentioned near the end. To increase capacity,
+# set LLAMA_CTX_SIZE env var (model supports up to 32K).
+#
+# If extraction output exceeds max_tokens, JSON may be malformed. The task
+# runner catches this and marks the episode as "dead" to prevent stuck state.
 MODEL_CONFIG = {
     "temp": 0.0,
     "top_p": 0.8,
     "top_k": 20,
     "min_p": 0.0,
     "presence_penalty": 0.0,
-    "max_tokens": 2048,
+    "max_tokens": 1024,
 }
 
 # Startup delay before model loading allowed (lets app initialize first)
