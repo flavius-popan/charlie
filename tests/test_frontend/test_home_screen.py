@@ -11,9 +11,9 @@ import pytest
 from unittest.mock import patch, AsyncMock, MagicMock
 from datetime import datetime
 from textual.app import App
-from textual.widgets import Header, Footer
+from textual.widgets import Header, Footer, ListView
 
-from frontend.screens.home_screen import HomeScreen
+from frontend.screens.home_screen import HomeScreen, EntryLabel, PeriodDivider
 from frontend.state.processing_state_machine import ProcessingOutput
 
 
@@ -773,6 +773,257 @@ async def test_home_screen_selects_episode_on_resume(mock_home_db):
 class TestHomeScreenPagination:
     """Tests for home screen pagination behavior."""
 
+    @pytest.mark.asyncio
+    async def test_load_more_handles_database_error(self, mock_home_db):
+        """Backend error should not disable pagination permanently."""
+        initial_episodes = make_test_episodes(100)
+        mock_home_db["get_home_paginated"].return_value = (initial_episodes, True)
+
+        app = HomeScreenTestApp()
+        async with home_test_context(app) as pilot:
+            await pilot.pause()
+
+            home_screen = app.screen
+            assert len(home_screen.episodes) == 100
+            assert home_screen._has_more is True
+
+            # Next call raises, simulating transient failure
+            mock_home_db["get_home_paginated"].side_effect = RuntimeError("db down")
+
+            home_screen._check_load_more(95)
+            await pilot.pause()
+            await pilot.pause()
+
+            # Pagination should remain enabled for retries
+            assert home_screen._has_more is True
+            assert home_screen._is_loading_more is False
+            assert len(home_screen.episodes) == 100
+
+    @pytest.mark.asyncio
+    async def test_load_more_error_allows_retry(self, mock_home_db):
+        """After an error, a subsequent load_more call should succeed."""
+        initial_episodes = make_test_episodes(100)
+        mock_home_db["get_home_paginated"].return_value = (initial_episodes, True)
+
+        app = HomeScreenTestApp()
+        async with home_test_context(app) as pilot:
+            await pilot.pause()
+
+            home_screen = app.screen
+
+            more_episodes = make_test_episodes(50, start_offset=100)
+            mock_home_db["get_home_paginated"].side_effect = [
+                RuntimeError("db down"),
+                (more_episodes, False),
+            ]
+
+            home_screen._check_load_more(95)
+            await pilot.pause()
+            await pilot.pause()
+
+            # Retry should be possible
+            home_screen._check_load_more(95)
+            await pilot.pause()
+            await pilot.pause()
+
+            assert len(home_screen.episodes) == 150
+            assert home_screen._has_more is False
+
+    @pytest.mark.asyncio
+    async def test_reload_during_load_more_discards_stale(self, mock_home_db):
+        """Responses from previous generation should be discarded."""
+        initial_episodes = make_test_episodes(100)
+        mock_home_db["get_home_paginated"].return_value = (initial_episodes, True)
+
+        app = HomeScreenTestApp()
+        async with home_test_context(app) as pilot:
+            await pilot.pause()
+
+            home_screen = app.screen
+
+            async def bump_generation(*args, **kwargs):
+                home_screen._pagination_generation += 1
+                return (make_test_episodes(10, start_offset=100), True)
+
+            mock_home_db["get_home_paginated"].side_effect = bump_generation
+
+            home_screen._check_load_more(95)
+            await pilot.pause()
+            await pilot.pause()
+
+            # Episodes list should remain unchanged
+            assert len(home_screen.episodes) == 100
+            assert home_screen._current_offset == 100
+            assert home_screen._is_loading_more is False
+
+    @pytest.mark.asyncio
+    async def test_load_more_appends_to_list(self, mock_home_db):
+        """New page should append episodes to list and model."""
+        initial_episodes = make_test_episodes(100)
+        mock_home_db["get_home_paginated"].return_value = (initial_episodes, True)
+
+        app = HomeScreenTestApp()
+        async with home_test_context(app) as pilot:
+            await pilot.pause()
+
+            home_screen = app.screen
+
+            more_episodes = make_test_episodes(50, start_offset=100)
+            mock_home_db["get_home_paginated"].return_value = (more_episodes, False)
+
+            home_screen._check_load_more(95)
+            await pilot.pause()
+            await pilot.pause()
+
+            assert len(home_screen.episodes) == 150
+            assert home_screen._has_more is False
+
+    @pytest.mark.asyncio
+    async def test_list_index_mapping_correct_after_append(self, mock_home_db):
+        """list_index_to_episode should map appended items to correct indices."""
+        initial_episodes = make_test_episodes(100)
+        mock_home_db["get_home_paginated"].return_value = (initial_episodes, True)
+
+        app = HomeScreenTestApp()
+        async with home_test_context(app) as pilot:
+            await pilot.pause()
+
+            home_screen = app.screen
+
+            more_episodes = make_test_episodes(5, start_offset=100)
+            mock_home_db["get_home_paginated"].return_value = (more_episodes, False)
+
+            home_screen._check_load_more(95)
+            await pilot.pause()
+            await pilot.pause()
+
+            # Find list index for appended episode 102
+            target_uuid = "ep-102"
+            list_idx = None
+            for idx, ep_idx in home_screen.list_index_to_episode.items():
+                if home_screen.episodes[ep_idx]["uuid"] == target_uuid:
+                    list_idx = idx
+                    break
+
+            assert list_idx is not None
+            list_view = home_screen.query_one("#episodes-list", ListView)
+            item = list_view.children[list_idx]
+            assert isinstance(item.children[0], EntryLabel)
+            assert item.children[0].episode_uuid == target_uuid
+
+    @pytest.mark.asyncio
+    async def test_period_dividers_not_duplicated(self, mock_home_db):
+        """Same-period episodes across pages should keep a single divider."""
+        # Use 25 episodes (> threshold of 20) to prevent automatic load-more
+        # All episodes in January 2025 to test same-period behavior
+        from datetime import timedelta
+
+        base = datetime(2025, 1, 31)
+        initial = [
+            {
+                "uuid": f"jan-{i}",
+                "name": f"Jan {i}",
+                "preview": f"Content {i}",
+                "valid_at": base - timedelta(days=i),
+            }
+            for i in range(25)
+        ]
+        more = [
+            {
+                "uuid": "jan-25",
+                "name": "Jan 25",
+                "preview": "More content",
+                "valid_at": base - timedelta(days=25),
+            }
+        ]
+        mock_home_db["get_home_paginated"].return_value = (initial, True)
+
+        app = HomeScreenTestApp()
+        async with home_test_context(app) as pilot:
+            await pilot.pause()
+
+            home_screen = app.screen
+            assert len(home_screen.episodes) == 25
+
+            mock_home_db["get_home_paginated"].return_value = (more, False)
+
+            home_screen._check_load_more(24)
+            await pilot.pause()
+            await pilot.pause()
+
+            assert len(home_screen.episodes) == 26
+
+            list_view = home_screen.query_one("#episodes-list", ListView)
+            divider_count = len(list_view.query(PeriodDivider))
+            assert divider_count == 1
+
+    @pytest.mark.asyncio
+    async def test_new_period_gets_divider_and_periods_update(self, mock_home_db):
+        """Older period should add divider and update periods list."""
+        initial = [
+            {
+                "uuid": "jan-1",
+                "name": "Jan 1",
+                "preview": "A",
+                "valid_at": datetime(2025, 1, 5),
+            }
+        ]
+        mock_home_db["get_home_paginated"].return_value = (initial, True)
+
+        app = HomeScreenTestApp()
+        async with home_test_context(app) as pilot:
+            await pilot.pause()
+
+            home_screen = app.screen
+
+            more = [
+                {
+                    "uuid": "dec-1",
+                    "name": "Dec 1",
+                    "preview": "D",
+                    "valid_at": datetime(2024, 12, 20),
+                }
+            ]
+            mock_home_db["get_home_paginated"].return_value = (more, False)
+
+            home_screen._check_load_more(0)
+            await pilot.pause()
+            await pilot.pause()
+
+            list_view = home_screen.query_one("#episodes-list", ListView)
+            divider_count = len(list_view.query(PeriodDivider))
+            assert divider_count == 2
+            assert len(home_screen.periods) == 2
+
+    @pytest.mark.asyncio
+    async def test_periods_recalculated_after_append(self, mock_home_db):
+        """Periods should reflect all loaded episodes."""
+        initial_episodes = make_test_episodes(2)
+        mock_home_db["get_home_paginated"].return_value = (initial_episodes, True)
+
+        app = HomeScreenTestApp()
+        async with home_test_context(app) as pilot:
+            await pilot.pause()
+
+            home_screen = app.screen
+            # Older month to create new period
+            more_episodes = [
+                {
+                    "uuid": "older-1",
+                    "name": "Older",
+                    "preview": "Old",
+                    "valid_at": datetime(2024, 12, 15),
+                }
+            ]
+            mock_home_db["get_home_paginated"].return_value = (more_episodes, False)
+
+            home_screen._check_load_more(1)
+            await pilot.pause()
+            await pilot.pause()
+
+            labels = [p["label"] for p in home_screen.periods]
+            assert len(labels) == 2
+            assert any("December 2024" in label for label in labels)
     @pytest.mark.asyncio
     async def test_initial_load_uses_pagination(self, mock_home_db):
         """Should call get_home_screen_paginated with limit=100, offset=0 on initial load."""

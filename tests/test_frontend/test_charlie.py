@@ -82,7 +82,7 @@ async def app_test_context(app):
             # HomeScreen may be in the screen stack even if not the current screen
             for screen in app.screen_stack:
                 if isinstance(screen, HomeScreen):
-                    for group in ["processing_poll", "entities", "period_stats"]:
+                    for group in ["processing_poll", "entities", "period_stats", "load_more"]:
                         screen.workers.cancel_group(screen, group)
                     # Wait for workers to actually finish cancellation
                     for _ in range(10):

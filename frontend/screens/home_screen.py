@@ -63,6 +63,7 @@ class PeriodDivider(Static):
     """
 
     def __init__(self, label: str):
+        self.label = label
         super().__init__(f"── {label} ──")
 
 
@@ -624,8 +625,6 @@ class HomeScreen(Screen):
             raise
         except Exception as e:
             logger.error("Failed to load more episodes: %s", e, exc_info=True)
-            # Stop pagination on error to prevent retry loops
-            self._has_more = False
         finally:
             # Always clear flag to unblock future pagination
             self._is_loading_more = False
@@ -635,6 +634,16 @@ class HomeScreen(Screen):
         list_view = self.query_one("#episodes-list", ListView)
         grouped = group_entries_by_period(new_episodes)
 
+        # Derive last period label from existing list to avoid duplicate dividers
+        last_label = self._last_period_label
+        if last_label is None:
+            for child in reversed(list_view.children):
+                if isinstance(child, ListItem) and child.children:
+                    divider = child.children[0]
+                    if isinstance(divider, PeriodDivider):
+                        last_label = divider.label
+                        break
+
         items: list[ListItem] = []
         current_list_idx = len(list_view.children)  # Start index for new items
         episode_offset = len(self.episodes)  # Start index in episodes list
@@ -642,10 +651,10 @@ class HomeScreen(Screen):
         with self.app.batch_update():
             for period_label, period_episodes in grouped:
                 # Only add divider if NEW period
-                if period_label != self._last_period_label:
+                if period_label != last_label:
                     items.append(ListItem(PeriodDivider(period_label), disabled=True))
                     current_list_idx += 1
-                    self._last_period_label = period_label
+                    last_label = period_label
 
                 for episode in period_episodes:
                     date_str = self._format_date(episode["valid_at"])
@@ -672,6 +681,7 @@ class HomeScreen(Screen):
             # Update data model
             self.episodes.extend(new_episodes)
             self.periods = calculate_periods(self.episodes)
+            self._last_period_label = last_label
 
     @staticmethod
     def _format_date(valid_at) -> str:
