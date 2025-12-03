@@ -4,7 +4,9 @@ The most over-engineered journaling app in the world.
 
 ## Quick Start
 
-**NOTE: Currently only works on Linux & M-Series Macs!**
+**System Requirements:**
+- Linux (x86_64)
+- macOS 15+ (Sequoia) on Apple Silicon (M-series)
 
 ```bash
 ./setup.sh

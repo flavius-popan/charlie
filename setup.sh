@@ -95,17 +95,6 @@ if ! curl -s --head --connect-timeout 5 https://huggingface.co > /dev/null; then
 fi
 echo "Internet connectivity: OK"
 
-# Check for port conflict from previous crash (hard fail - data corruption risk)
-if lsof -i :6379 &>/dev/null 2>&1; then
-    echo "ERROR: Port 6379 already in use."
-    echo "This could be from a previous Charlie crash or another Redis instance."
-    echo ""
-    echo "To fix, find and kill the process:"
-    echo "  lsof -i :6379  # Find the PID"
-    echo "  kill <PID>     # Terminate it"
-    fail "Cannot proceed with port 6379 in use (risk of data corruption)"
-fi
-
 # Check if Charlie is already running
 if pgrep -f "charlie.py" > /dev/null 2>&1; then
     fail "Charlie appears to be already running. Stop it before running setup.sh"

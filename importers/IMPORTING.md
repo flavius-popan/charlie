@@ -6,9 +6,9 @@ Import journal entries from external sources into charlie.
 
 | Format | Command |
 |--------|---------|
+| Text Files | `python importers/files.py ~/journals/` |
 | Day One | `python importers/dayone.py export.zip` |
 | Basic XML | `python importers/basic_xml.py corpus.xml --timezone UTC` |
-| Text Files | `python importers/files.py ~/journals/` |
 
 ## Common Options
 
@@ -17,21 +17,6 @@ All importers support:
 - `-h, --help` - Show help message and usage
 - `--dry-run` - Show what would be imported without persisting
 - `--journal NAME` - Target journal (default: charlie's default journal)
-
-## Day One Importer
-
-Imports from Day One JSON exports (`.json` or `.zip`).
-
-```bash
-python importers/dayone.py ~/Downloads/DayOneExport.zip
-python importers/dayone.py ~/Downloads/Journal.json --dry-run
-```
-
-Features:
-- Handles both `.zip` and `.json` exports
-- Preserves original Day One UUIDs
-- Cleans markdown escape characters
-- Skips empty entries
 
 ## Files Importer
 
@@ -57,6 +42,21 @@ Features:
 - Deterministic UUIDs based on file path (idempotent imports)
 
 **Note:** Moving or renaming files will cause duplicate imports since UUIDs include the file path.
+
+## Day One Importer
+
+Imports from Day One JSON exports (`.json` or `.zip`).
+
+```bash
+python importers/dayone.py ~/Downloads/DayOneExport.zip
+python importers/dayone.py ~/Downloads/Journal.json --dry-run
+```
+
+Features:
+- Handles both `.zip` and `.json` exports
+- Preserves original Day One UUIDs
+- Cleans markdown escape characters
+- Skips empty entries
 
 ## Basic XML Importer
 
