@@ -651,3 +651,77 @@ class TestQueueAwareVisibility:
         }
         output = machine.apply_status(status)
         assert output.pane_visible is True
+
+
+class TestRetryDisplay:
+    """Test retry count display in status text."""
+
+    def test_status_text_shows_extracting_when_no_retries(self):
+        """Status text shows 'Extracting:' when retry_count is 0."""
+        machine = ProcessingStateMachine()
+        status = {
+            "model_state": "inferring",
+            "active_uuid": "ep-1",
+            "pending_count": 3,
+            "inference_enabled": True,
+            "retry_count": 0,
+            "max_retries": 3,
+        }
+        output = machine.apply_status(status)
+        assert output.status_text == "Extracting:"
+
+    def test_status_text_shows_retry_when_retry_count_positive(self):
+        """Status text shows 'Retry X of Y:' when retry_count > 0."""
+        machine = ProcessingStateMachine()
+        status = {
+            "model_state": "inferring",
+            "active_uuid": "ep-1",
+            "pending_count": 3,
+            "inference_enabled": True,
+            "retry_count": 1,
+            "max_retries": 3,
+        }
+        output = machine.apply_status(status)
+        assert output.status_text == "Retry 1 of 3:"
+
+    def test_status_text_shows_retry_second_attempt(self):
+        """Status text shows 'Retry 2 of 3:' on second retry."""
+        machine = ProcessingStateMachine()
+        status = {
+            "model_state": "inferring",
+            "active_uuid": "ep-1",
+            "pending_count": 3,
+            "inference_enabled": True,
+            "retry_count": 2,
+            "max_retries": 3,
+        }
+        output = machine.apply_status(status)
+        assert output.status_text == "Retry 2 of 3:"
+
+    def test_retry_count_defaults_to_zero(self):
+        """Retry count defaults to 0 when not provided in status."""
+        machine = ProcessingStateMachine()
+        status = {
+            "model_state": "inferring",
+            "active_uuid": "ep-1",
+            "pending_count": 3,
+            "inference_enabled": True,
+            # No retry_count or max_retries
+        }
+        output = machine.apply_status(status)
+        assert output.status_text == "Extracting:"
+
+    def test_retry_takes_precedence_over_finishing(self):
+        """Retry display takes precedence over 'Finishing extracting:' when both apply."""
+        machine = ProcessingStateMachine()
+        status = {
+            "model_state": "inferring",
+            "active_uuid": "ep-1",
+            "pending_count": 3,
+            "inference_enabled": False,  # Would normally show "Finishing extracting:"
+            "retry_count": 1,
+            "max_retries": 3,
+        }
+        output = machine.apply_status(status)
+        # Retry takes precedence
+        assert output.status_text == "Retry 1 of 3:"

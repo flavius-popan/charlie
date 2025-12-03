@@ -275,6 +275,8 @@ def test_extract_nodes_task_cleanup_called_on_exception(episode_uuid):
         patch("backend.database.redis_ops.clear_active_episode"),
         patch("backend.database.redis_ops.set_model_state"),
         patch("backend.database.redis_ops.clear_model_state"),
+        patch("backend.database.redis_ops.increment_and_check_retry_count") as mock_retry,
+        patch("backend.database.redis_ops.remove_pending_episode"),
         patch("backend.inference.manager.get_model") as mock_get_model,
         patch("backend.inference.manager.is_model_loading_blocked") as mock_blocked,
         patch("backend.graph.extract_nodes.extract_nodes") as mock_extract,
@@ -286,6 +288,7 @@ def test_extract_nodes_task_cleanup_called_on_exception(episode_uuid):
         mock_get_active.return_value = episode_uuid
         mock_get_model.return_value = Mock()
         mock_extract.side_effect = RuntimeError("Extraction failed")
+        mock_retry.return_value = (3, True)  # Simulate max retries reached
 
         with pytest.raises(RuntimeError, match="Extraction failed"):
             extract_nodes_task.call_local(episode_uuid, DEFAULT_JOURNAL)
@@ -581,3 +584,108 @@ def test_extract_nodes_task_handles_episode_deleted_error(episode_uuid):
         assert result["episode_deleted"] is True
         assert result["uuid"] == episode_uuid
         mock_remove.assert_called_once_with(episode_uuid, DEFAULT_JOURNAL)
+
+
+# =============================================================================
+# Retry Logic Tests
+# =============================================================================
+
+
+def test_extract_nodes_task_increments_retry_on_failure(episode_uuid):
+    """Retry counter increments on each failure, not marking dead until max reached."""
+    from backend.services.tasks import extract_nodes_task
+
+    with (
+        patch("backend.database.redis_ops.get_episode_status") as mock_status,
+        patch("backend.database.redis_ops.get_inference_enabled", create=True) as mock_enabled,
+        patch("backend.database.redis_ops.set_episode_status") as mock_set_status,
+        patch("backend.database.redis_ops.set_active_episode"),
+        patch("backend.database.redis_ops.get_active_episode_uuid") as mock_get_active,
+        patch("backend.database.redis_ops.clear_active_episode"),
+        patch("backend.database.redis_ops.set_model_state"),
+        patch("backend.database.redis_ops.clear_model_state"),
+        patch("backend.database.redis_ops.increment_and_check_retry_count") as mock_retry,
+        patch("backend.database.redis_ops.remove_pending_episode"),
+        patch("backend.inference.manager.get_model") as mock_get_model,
+        patch("backend.inference.manager.is_model_loading_blocked") as mock_blocked,
+        patch("backend.graph.extract_nodes.extract_nodes") as mock_extract,
+        patch("backend.inference.manager.cleanup_if_no_work"),
+    ):
+        mock_status.return_value = "pending_nodes"
+        mock_enabled.return_value = True
+        mock_blocked.return_value = False
+        mock_get_active.return_value = episode_uuid
+        mock_get_model.return_value = Mock()
+        mock_extract.side_effect = RuntimeError("Extraction failed")
+        mock_retry.return_value = (1, False)  # First failure, not max yet
+
+        with pytest.raises(RuntimeError, match="Extraction failed"):
+            extract_nodes_task.call_local(episode_uuid, DEFAULT_JOURNAL)
+
+        # Should NOT mark dead on first failure
+        mock_set_status.assert_not_called()
+        mock_retry.assert_called_once()
+
+
+def test_extract_nodes_task_resets_retry_on_success(episode_uuid):
+    """Retry counter is reset to 0 after successful extraction."""
+    from backend.services.tasks import extract_nodes_task
+
+    mock_result = ExtractNodesResult(
+        episode_uuid=episode_uuid,
+        extracted_count=2,
+        resolved_count=1,
+        new_entities=1,
+        exact_matches=1,
+        fuzzy_matches=0,
+        entity_uuids=["uuid1"],
+        uuid_map={},
+    )
+
+    with (
+        patch("backend.database.redis_ops.get_episode_status") as mock_status,
+        patch("backend.database.redis_ops.get_inference_enabled", create=True) as mock_enabled,
+        patch("backend.database.redis_ops.set_episode_status"),
+        patch("backend.database.redis_ops.set_active_episode"),
+        patch("backend.database.redis_ops.get_active_episode_uuid") as mock_get_active,
+        patch("backend.database.redis_ops.clear_active_episode"),
+        patch("backend.database.redis_ops.set_model_state"),
+        patch("backend.database.redis_ops.clear_model_state"),
+        patch("backend.database.redis_ops.reset_retry_count") as mock_reset,
+        patch("backend.database.redis_ops.remove_pending_episode"),
+        patch("backend.inference.manager.get_model") as mock_get_model,
+        patch("backend.inference.manager.is_model_loading_blocked") as mock_blocked,
+        patch("backend.graph.extract_nodes.extract_nodes") as mock_extract,
+        patch("backend.inference.manager.cleanup_if_no_work"),
+    ):
+        mock_status.return_value = "pending_nodes"
+        mock_enabled.return_value = True
+        mock_blocked.return_value = False
+        mock_get_active.return_value = episode_uuid
+        mock_get_model.return_value = Mock()
+        mock_extract.return_value = mock_result
+
+        extract_nodes_task.call_local(episode_uuid, DEFAULT_JOURNAL)
+
+        mock_reset.assert_called_once_with(episode_uuid, DEFAULT_JOURNAL)
+
+
+def test_extract_nodes_task_does_not_increment_on_cancellation(episode_uuid):
+    """TaskCancelled does NOT increment retry counter."""
+    from backend.services.tasks import extract_nodes_task
+    import backend.database.lifecycle as lifecycle
+
+    with (
+        patch("backend.database.redis_ops.get_episode_status") as mock_status,
+        patch("backend.database.redis_ops.increment_and_check_retry_count") as mock_retry,
+        patch("backend.inference.manager.cleanup_if_no_work"),
+    ):
+        mock_status.return_value = "pending_nodes"
+
+        lifecycle._shutdown_requested = True
+        try:
+            result = extract_nodes_task.call_local(episode_uuid, DEFAULT_JOURNAL)
+            assert result == {"cancelled": True}
+            mock_retry.assert_not_called()
+        finally:
+            lifecycle._shutdown_requested = False

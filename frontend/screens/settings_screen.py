@@ -4,13 +4,17 @@ import logging
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
+from textual.reactive import reactive
 from textual.screen import ModalScreen
-from textual.widgets import Footer, Label, Switch
+from textual.widgets import Button, Footer, Label, Switch
 
 from backend.database.redis_ops import (
+    get_dead_episodes_count,
     get_inference_enabled,
+    retry_dead_episodes,
     set_inference_enabled,
 )
+from backend.settings import DEFAULT_JOURNAL
 
 logger = logging.getLogger("charlie")
 
@@ -34,10 +38,21 @@ class SettingsScreen(ModalScreen):
         padding-bottom: 1;
     }
 
+    #retry-dead-btn {
+        margin-top: 1;
+        width: 100%;
+    }
+
+    #retry-dead-btn.hidden {
+        display: none;
+    }
+
     SettingsScreen {
         align: center middle;
     }
     """
+
+    dead_count = reactive(0)
 
     def __init__(self):
         super().__init__()
@@ -63,9 +78,51 @@ class SettingsScreen(ModalScreen):
             Label(""),
             Label("Enable background inference"),
             Switch(id="inference-toggle", value=self.inference_enabled),
+            Button("", id="retry-dead-btn", classes="hidden"),
             id="settings-dialog",
         )
         yield Footer()
+
+    def on_mount(self) -> None:
+        self._update_dead_count()
+
+    def _update_dead_count(self) -> None:
+        try:
+            self.dead_count = get_dead_episodes_count(DEFAULT_JOURNAL)
+        except Exception:
+            self.dead_count = 0
+
+    @property
+    def _retry_button_label(self) -> str:
+        if self.dead_count <= 0:
+            return ""
+        elif self.dead_count == 1:
+            return "Retry 1 failed entry"
+        return f"Retry {self.dead_count} failed entries"
+
+    def watch_dead_count(self, dead_count: int) -> None:
+        try:
+            button = self.query_one("#retry-dead-btn", Button)
+            if dead_count <= 0:
+                button.add_class("hidden")
+            else:
+                button.remove_class("hidden")
+                button.label = self._retry_button_label
+        except Exception:
+            pass
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "retry-dead-btn":
+            self.run_worker(self._retry_dead_episodes(), exclusive=True)
+
+    async def _retry_dead_episodes(self) -> None:
+        count = await retry_dead_episodes(DEFAULT_JOURNAL)
+        if count == 0:
+            self.notify("No failed entries to retry")
+        else:
+            entry_word = "entry" if count == 1 else "entries"
+            self.notify(f"Retrying {count} {entry_word}...")
+        self._update_dead_count()
 
     def action_dismiss_modal(self) -> None:
         self.dismiss()

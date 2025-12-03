@@ -62,11 +62,14 @@ def extract_nodes_task(episode_uuid: str, journal: str):
         get_active_episode_uuid,
         get_episode_status,
         get_inference_enabled,
+        increment_and_check_retry_count,
         remove_pending_episode,
+        reset_retry_count,
         set_active_episode,
         set_episode_status,
         set_model_state,
     )
+    from backend.settings import MAX_EXTRACTION_RETRIES
     from backend.graph.extract_nodes import extract_nodes
     from backend.inference.manager import cleanup_if_no_work, get_model, is_model_loading_blocked
 
@@ -154,6 +157,7 @@ def extract_nodes_task(episode_uuid: str, journal: str):
         # immediately after node extraction so the UI stops showing spinners.
         # When extract_edges_task lands, switch this back to pending_edges and
         # enqueue the edges task.
+        reset_retry_count(episode_uuid, journal)
         if result.extracted_count > 0:
             set_episode_status(episode_uuid, "done", journal, uuid_map=result.uuid_map)
             logger.info(
@@ -192,13 +196,26 @@ def extract_nodes_task(episode_uuid: str, journal: str):
         remove_episode_from_queue(episode_uuid, journal)
         return {"episode_deleted": True, "uuid": episode_uuid}
     except Exception:
-        try:
-            set_episode_status(episode_uuid, "dead", journal)
-        except Exception:
-            logger.warning(
-                "Failed to mark episode %s as dead after exception", episode_uuid, exc_info=True
+        retry_count, should_mark_dead = increment_and_check_retry_count(
+            episode_uuid, journal, MAX_EXTRACTION_RETRIES
+        )
+        if should_mark_dead:
+            try:
+                set_episode_status(episode_uuid, "dead", journal)
+                remove_pending_episode(episode_uuid, journal)
+            except Exception:
+                logger.warning(
+                    "Failed to mark episode %s as dead", episode_uuid, exc_info=True
+                )
+            logger.error(
+                "Episode %s marked dead after %d failed attempts",
+                episode_uuid, retry_count
             )
-        logger.exception("extract_nodes_task failed for episode %s", episode_uuid)
+        else:
+            logger.warning(
+                "Episode %s failed (attempt %d/%d), will retry",
+                episode_uuid, retry_count, MAX_EXTRACTION_RETRIES
+            )
         raise
     finally:
         # Clear in reverse dependency order to minimize inconsistency window

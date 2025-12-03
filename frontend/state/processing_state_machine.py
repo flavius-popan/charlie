@@ -89,19 +89,26 @@ class ProcessingStateMachine(StateMachine):
         self._queue_count: int = 0
         self._inference_enabled: bool = True
         self._model_loading_blocked: bool = False
+        self._retry_count: int = 0
+        self._max_retries: int = 3
 
     @property
     def output(self) -> ProcessingOutput:
         """Compute output based on current state and internal data."""
         state_name = self.current_state.id
 
-        # Status text with "Finishing extracting:" variant
+        # Status text with variants for finishing/retrying
         if state_name == "idle":
             status_text = ""
         elif state_name == "loading":
             status_text = "Loading model..."
         elif state_name == "inferring":
-            status_text = "Finishing extracting:" if not self._inference_enabled else "Extracting:"
+            if self._retry_count > 0:
+                status_text = f"Retry {self._retry_count} of {self._max_retries}:"
+            elif not self._inference_enabled:
+                status_text = "Finishing extracting:"
+            else:
+                status_text = "Extracting:"
         elif state_name == "unloading":
             status_text = "Unloading model..."
         else:
@@ -146,6 +153,8 @@ class ProcessingStateMachine(StateMachine):
         self._queue_count = status.get("pending_count", 0)
         self._inference_enabled = status.get("inference_enabled", True)
         self._model_loading_blocked = status.get("model_loading_blocked", False)
+        self._retry_count = status.get("retry_count", 0)
+        self._max_retries = status.get("max_retries", 3)
 
         # Route to appropriate state based on model_state (default to idle)
         model_state = status.get("model_state", "idle")

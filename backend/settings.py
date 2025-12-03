@@ -56,3 +56,6 @@ ORCHESTRATOR_INTERVAL_SECONDS = 1
 # Huey task queue configuration
 HUEY_WORKER_TYPE = "thread"
 HUEY_WORKERS = 1
+
+# Extraction retry configuration
+MAX_EXTRACTION_RETRIES = 3

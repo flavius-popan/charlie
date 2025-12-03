@@ -131,15 +131,40 @@ def set_episode_status(
     Note:
         Episode metadata is stored in unified journal cache key.
         Deletion is explicit (when episode is removed from graph).
-        This keeps Redis/graph state in sync.
+        Uses Lua script to atomically update status and dead set.
     """
     with redis_ops() as r:
         cache_key = get_journal_cache_key(journal, episode_uuid)
-        r.hset(cache_key, "status", status)
-        r.hset(cache_key, "journal", journal)
+        dead_set_key = f"journal:{journal}:dead_episodes"
+        uuid_map_json = json.dumps(uuid_map) if uuid_map is not None else ""
 
-        if uuid_map is not None:
-            r.hset(cache_key, "uuid_map", json.dumps(uuid_map))
+        # Atomic status update with dead set maintenance
+        lua_script = """
+        local cache_key = KEYS[1]
+        local dead_set_key = KEYS[2]
+        local episode_uuid = ARGV[1]
+        local new_status = ARGV[2]
+        local journal = ARGV[3]
+        local uuid_map_json = ARGV[4]
+
+        local old_status = redis.call('HGET', cache_key, 'status')
+        redis.call('HSET', cache_key, 'status', new_status)
+        redis.call('HSET', cache_key, 'journal', journal)
+
+        if uuid_map_json ~= '' then
+            redis.call('HSET', cache_key, 'uuid_map', uuid_map_json)
+        end
+
+        if new_status == 'dead' then
+            redis.call('SADD', dead_set_key, episode_uuid)
+        elseif old_status == 'dead' and new_status ~= 'dead' then
+            redis.call('SREM', dead_set_key, episode_uuid)
+        end
+
+        return 1
+        """
+        r.eval(lua_script, 2, cache_key, dead_set_key,
+               episode_uuid, status, journal, uuid_map_json)
 
 
 def get_episode_status(episode_uuid: str, journal: str | None = None) -> str | None:
@@ -232,7 +257,11 @@ def get_episodes_by_status(status: str) -> list[str]:
 
 
 def remove_episode_from_queue(episode_uuid: str, journal: str) -> None:
-    """Remove episode from processing queue.
+    """Remove episode from all Redis tracking structures.
+
+    Cleans: episode hash, pending ZSET, dead episodes Set.
+    Called when episode is deleted or fully processed.
+    Uses pipeline for atomic cleanup.
 
     Args:
         episode_uuid: Episode UUID
@@ -240,7 +269,11 @@ def remove_episode_from_queue(episode_uuid: str, journal: str) -> None:
     """
     with redis_ops() as r:
         cache_key = get_journal_cache_key(journal, episode_uuid)
-        r.delete(cache_key)
+        pipe = r.pipeline()
+        pipe.delete(cache_key)
+        pipe.zrem(f"pending:nodes:{journal}", episode_uuid)
+        pipe.srem(f"journal:{journal}:dead_episodes", episode_uuid)
+        pipe.execute()
 
 
 def get_inference_enabled() -> bool:
@@ -496,7 +529,11 @@ def get_processing_status(journal: str) -> dict:
         - 'pending_count' (int): Number of episodes in queue
         - 'model_state' (str): "idle", "loading", "inferring", or "unloading"
         - 'inference_enabled' (bool): Whether inference is enabled
+        - 'retry_count' (int): Current retry count for active/next episode
+        - 'max_retries' (int): Max retries before marking dead
     """
+    from backend.settings import MAX_EXTRACTION_RETRIES
+
     with redis_ops() as r:
         # Use pipeline for atomic reads - all values are from the same point in time
         pipe = r.pipeline()
@@ -528,6 +565,15 @@ def get_processing_status(journal: str) -> dict:
         inference_enabled_raw = results[3]
         inference_enabled = inference_enabled_raw != b"false" if inference_enabled_raw else True
 
+        # Get retry count for active episode or next pending episode
+        retry_count = 0
+        if active_uuid:
+            retry_count = get_retry_count(active_uuid, journal)
+        elif pending_count > 0:
+            pending_uuids = get_pending_episodes(journal)
+            if pending_uuids:
+                retry_count = get_retry_count(pending_uuids[0], journal)
+
         # Check if model loading is blocked (grace period or editing)
         from backend.inference.manager import is_model_loading_blocked
 
@@ -537,6 +583,8 @@ def get_processing_status(journal: str) -> dict:
             "model_state": model_state,
             "inference_enabled": inference_enabled,
             "model_loading_blocked": is_model_loading_blocked(),
+            "retry_count": retry_count,
+            "max_retries": MAX_EXTRACTION_RETRIES,
         }
 
 
@@ -604,6 +652,193 @@ def clear_transient_state() -> None:
         r.delete("task:active_episode")
         r.delete("editing:active")
     logger.info("Cleared transient processing state on startup")
+
+
+# =============================================================================
+# Episode Retry Tracking
+# =============================================================================
+
+
+def increment_and_check_retry_count(
+    episode_uuid: str, journal: str, max_retries: int
+) -> tuple[int, bool]:
+    """Atomically increment retry count and check if max reached.
+
+    Returns: (current_count, should_mark_dead)
+
+    Note: Fail-safe behavior - marks dead on Redis errors to prevent infinite loops.
+    """
+    try:
+        with redis_ops() as r:
+            cache_key = get_journal_cache_key(journal, episode_uuid)
+            lua_script = """
+            local key = KEYS[1]
+            local max = tonumber(ARGV[1])
+            local count = redis.call('HINCRBY', key, 'retry_count', 1)
+            local should_die = count >= max and 1 or 0
+            return {count, should_die}
+            """
+            result = r.eval(lua_script, 1, cache_key, max_retries)
+
+            # Validate result structure
+            if not isinstance(result, (list, tuple)) or len(result) != 2:
+                logger.error("Lua script returned malformed result: %r", result)
+                return (max_retries, True)  # Fail-safe: mark dead
+
+            return int(result[0]), bool(result[1])
+
+    except (ValueError, TypeError, IndexError) as e:
+        logger.error("Failed to parse retry count result: %s", e)
+        return (max_retries, True)  # Fail-safe: mark dead
+    except Exception as e:
+        logger.error("Redis unavailable during retry tracking: %s", e)
+        return (max_retries, True)  # Fail-safe: mark dead to prevent stuck state
+
+
+def reset_retry_count(episode_uuid: str, journal: str) -> None:
+    """Reset retry count for an episode (called on success)."""
+    with redis_ops() as r:
+        cache_key = get_journal_cache_key(journal, episode_uuid)
+        r.hset(cache_key, "retry_count", "0")
+
+
+def get_retry_count(episode_uuid: str, journal: str) -> int:
+    """Get current retry count for an episode."""
+    with redis_ops() as r:
+        cache_key = get_journal_cache_key(journal, episode_uuid)
+        count = r.hget(cache_key, "retry_count")
+        return int(count.decode()) if count else 0
+
+
+# =============================================================================
+# Dead Episodes Tracking
+# =============================================================================
+
+
+def get_dead_episodes(journal: str) -> list[str]:
+    """Get all dead episode UUIDs for a journal."""
+    with redis_ops() as r:
+        members = r.smembers(f"journal:{journal}:dead_episodes")
+        return [m.decode() for m in members] if members else []
+
+
+def get_dead_episodes_count(journal: str) -> int:
+    """Get count of dead episodes for a journal (O(1) via Set cardinality)."""
+    with redis_ops() as r:
+        return r.scard(f"journal:{journal}:dead_episodes")
+
+
+def migrate_dead_episodes(journal: str) -> int:
+    """One-time migration: populate dead Set and retry_count for existing dead episodes.
+
+    Finds episodes with status="dead" that aren't in the tracking Set yet,
+    adds them to the Set, and sets retry_count=3 (already exhausted).
+    Idempotent - safe to run multiple times.
+    """
+    from backend.settings import MAX_EXTRACTION_RETRIES
+
+    migrated = 0
+    with redis_ops() as r:
+        dead_set_key = f"journal:{journal}:dead_episodes"
+
+        # Scan for episodes with status="dead"
+        for key in r.scan_iter(match=f"journal:{journal}:*"):
+            key_str = key.decode()
+            if key_str.endswith(":suppressed_entities"):
+                continue
+            if r.type(key) != b"hash":
+                continue
+
+            status = r.hget(key, "status")
+            if status and status.decode() == "dead":
+                episode_uuid = key_str.split(":")[-1]
+
+                # Add to Set if not already present
+                added = r.sadd(dead_set_key, episode_uuid)
+                if added:
+                    # Set retry_count to max (already exhausted)
+                    if not r.hexists(key, "retry_count"):
+                        r.hset(key, "retry_count", str(MAX_EXTRACTION_RETRIES))
+                    migrated += 1
+
+    if migrated > 0:
+        logger.info("Migrated %d dead episodes to tracking Set", migrated)
+    return migrated
+
+
+async def retry_dead_episodes(journal: str) -> int:
+    """Reset dead episodes to pending and re-add to queue.
+
+    Queries graph for valid_at timestamps. Skips actively processing
+    and deleted episodes. Uses atomic Lua script to prevent race conditions.
+    """
+    from backend.database.queries import get_episode
+
+    dead_uuids = get_dead_episodes(journal)
+    if not dead_uuids:
+        return 0
+
+    retried = 0
+
+    # Lua script atomically checks active status and resets if not active
+    lua_reset_if_not_active = """
+    local cache_key = KEYS[1]
+    local dead_set_key = KEYS[2]
+    local active_key = KEYS[3]
+    local episode_uuid = ARGV[1]
+
+    -- Check if this episode is currently active
+    local active_uuid = redis.call('HGET', active_key, 'uuid')
+    if active_uuid == episode_uuid then
+        return 0  -- Skip, episode is active
+    end
+
+    -- Reset status and retry count atomically
+    redis.call('HSET', cache_key, 'status', 'pending_nodes')
+    redis.call('HSET', cache_key, 'retry_count', '0')
+    redis.call('SREM', dead_set_key, episode_uuid)
+
+    return 1  -- Success
+    """
+
+    for episode_uuid in dead_uuids:
+        try:
+            episode = await get_episode(episode_uuid, journal)
+        except Exception as e:
+            logger.warning("Failed to fetch episode %s for retry: %s", episode_uuid, e)
+            continue
+
+        if episode is None:
+            # Episode deleted from graph - clean up Redis
+            with redis_ops() as r:
+                cache_key = get_journal_cache_key(journal, episode_uuid)
+                pipe = r.pipeline()
+                pipe.delete(cache_key)
+                pipe.srem(f"journal:{journal}:dead_episodes", episode_uuid)
+                pipe.execute()
+            continue
+
+        # Atomically reset if not actively processing
+        with redis_ops() as r:
+            cache_key = get_journal_cache_key(journal, episode_uuid)
+            dead_set_key = f"journal:{journal}:dead_episodes"
+            result = r.eval(
+                lua_reset_if_not_active, 3,
+                cache_key, dead_set_key, "task:active_episode",
+                episode_uuid
+            )
+
+        if result == 0:
+            logger.warning("Skipping retry of %s - currently processing", episode_uuid)
+            continue
+
+        try:
+            add_pending_episode(episode_uuid, journal, episode["valid_at"])
+            retried += 1
+        except Exception:
+            logger.warning("Failed to re-queue episode %s after reset", episode_uuid, exc_info=True)
+
+    return retried
 
 
 # =============================================================================

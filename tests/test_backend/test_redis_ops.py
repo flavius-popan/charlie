@@ -812,3 +812,289 @@ def test_get_processing_status_idle_state(redis_client):
 
     assert result["active_uuid"] is None
     assert result["pending_count"] == 0
+
+
+# =============================================================================
+# Retry Counter Tests
+# =============================================================================
+
+
+def test_increment_and_check_retry_count_first_failure(redis_client):
+    """First failure increments retry count to 1."""
+    from backend.database.redis_ops import increment_and_check_retry_count
+
+    episode_uuid = str(uuid4())
+    count, should_die = increment_and_check_retry_count(episode_uuid, DEFAULT_JOURNAL, 3)
+
+    assert count == 1
+    assert should_die is False
+
+
+def test_increment_and_check_retry_count_marks_dead_at_max(redis_client):
+    """Episode marked dead when retry count reaches max."""
+    from backend.database.redis_ops import increment_and_check_retry_count
+
+    episode_uuid = str(uuid4())
+
+    # First two attempts
+    count1, die1 = increment_and_check_retry_count(episode_uuid, DEFAULT_JOURNAL, 3)
+    count2, die2 = increment_and_check_retry_count(episode_uuid, DEFAULT_JOURNAL, 3)
+
+    assert count1 == 1 and die1 is False
+    assert count2 == 2 and die2 is False
+
+    # Third attempt should mark dead
+    count3, die3 = increment_and_check_retry_count(episode_uuid, DEFAULT_JOURNAL, 3)
+    assert count3 == 3
+    assert die3 is True
+
+
+def test_reset_retry_count_sets_to_zero(redis_client):
+    """reset_retry_count sets the counter back to 0."""
+    from backend.database.redis_ops import (
+        increment_and_check_retry_count,
+        reset_retry_count,
+        get_retry_count,
+    )
+
+    episode_uuid = str(uuid4())
+
+    # Increment a few times
+    increment_and_check_retry_count(episode_uuid, DEFAULT_JOURNAL, 3)
+    increment_and_check_retry_count(episode_uuid, DEFAULT_JOURNAL, 3)
+    assert get_retry_count(episode_uuid, DEFAULT_JOURNAL) == 2
+
+    # Reset
+    reset_retry_count(episode_uuid, DEFAULT_JOURNAL)
+    assert get_retry_count(episode_uuid, DEFAULT_JOURNAL) == 0
+
+
+def test_get_retry_count_returns_zero_for_new_episode(redis_client):
+    """get_retry_count returns 0 for episodes without retry field."""
+    from backend.database.redis_ops import get_retry_count
+
+    episode_uuid = str(uuid4())
+    assert get_retry_count(episode_uuid, DEFAULT_JOURNAL) == 0
+
+
+# =============================================================================
+# Dead Episodes Tracking Tests
+# =============================================================================
+
+
+def test_set_episode_status_adds_to_dead_set(redis_client):
+    """Setting status to 'dead' adds episode to dead set."""
+    from backend.database.redis_ops import get_dead_episodes
+
+    episode_uuid = str(uuid4())
+    set_episode_status(episode_uuid, "dead", DEFAULT_JOURNAL)
+
+    dead_episodes = get_dead_episodes(DEFAULT_JOURNAL)
+    assert episode_uuid in dead_episodes
+
+
+def test_set_episode_status_removes_from_dead_set_on_recovery(redis_client):
+    """Changing status from 'dead' removes episode from dead set."""
+    from backend.database.redis_ops import get_dead_episodes
+
+    episode_uuid = str(uuid4())
+
+    # Mark dead
+    set_episode_status(episode_uuid, "dead", DEFAULT_JOURNAL)
+    assert episode_uuid in get_dead_episodes(DEFAULT_JOURNAL)
+
+    # Recover
+    set_episode_status(episode_uuid, "pending_nodes", DEFAULT_JOURNAL)
+    assert episode_uuid not in get_dead_episodes(DEFAULT_JOURNAL)
+
+
+def test_get_dead_episodes_returns_only_dead(redis_client):
+    """get_dead_episodes returns only episodes in dead set."""
+    from backend.database.redis_ops import get_dead_episodes
+
+    dead_uuid = str(uuid4())
+    pending_uuid = str(uuid4())
+
+    set_episode_status(dead_uuid, "dead", DEFAULT_JOURNAL)
+    set_episode_status(pending_uuid, "pending_nodes", DEFAULT_JOURNAL)
+
+    dead_episodes = get_dead_episodes(DEFAULT_JOURNAL)
+    assert dead_uuid in dead_episodes
+    assert pending_uuid not in dead_episodes
+
+
+def test_get_dead_episodes_count(redis_client):
+    """get_dead_episodes_count returns O(1) count via SCARD."""
+    from backend.database.redis_ops import get_dead_episodes_count
+
+    assert get_dead_episodes_count(DEFAULT_JOURNAL) == 0
+
+    uuids = [str(uuid4()) for _ in range(3)]
+    for uuid in uuids:
+        set_episode_status(uuid, "dead", DEFAULT_JOURNAL)
+
+    assert get_dead_episodes_count(DEFAULT_JOURNAL) == 3
+
+
+def test_remove_episode_from_queue_cleans_all_structures(redis_client):
+    """remove_episode_from_queue cleans hash, ZSET, and dead set."""
+    from datetime import datetime, timezone
+    from backend.database.redis_ops import (
+        add_pending_episode,
+        get_dead_episodes,
+        get_pending_episodes,
+        get_journal_cache_key,
+    )
+
+    episode_uuid = str(uuid4())
+
+    # Set up in all structures
+    set_episode_status(episode_uuid, "dead", DEFAULT_JOURNAL)
+    add_pending_episode(episode_uuid, DEFAULT_JOURNAL, datetime.now(timezone.utc))
+
+    # Verify setup
+    cache_key = get_journal_cache_key(DEFAULT_JOURNAL, episode_uuid)
+    assert redis_client.exists(cache_key)
+    assert episode_uuid in get_dead_episodes(DEFAULT_JOURNAL)
+    assert episode_uuid in get_pending_episodes(DEFAULT_JOURNAL)
+
+    # Remove
+    remove_episode_from_queue(episode_uuid, DEFAULT_JOURNAL)
+
+    # Verify cleanup
+    assert not redis_client.exists(cache_key)
+    assert episode_uuid not in get_dead_episodes(DEFAULT_JOURNAL)
+    assert episode_uuid not in get_pending_episodes(DEFAULT_JOURNAL)
+
+
+def test_migrate_dead_episodes_populates_set(redis_client):
+    """migrate_dead_episodes adds existing dead episodes to tracking set."""
+    from backend.database.redis_ops import (
+        migrate_dead_episodes,
+        get_dead_episodes,
+        get_journal_cache_key,
+    )
+
+    episode_uuid = str(uuid4())
+    cache_key = get_journal_cache_key(DEFAULT_JOURNAL, episode_uuid)
+
+    # Manually set status to dead without using set_episode_status
+    # (simulating pre-migration state)
+    redis_client.hset(cache_key, "status", "dead")
+    redis_client.hset(cache_key, "journal", DEFAULT_JOURNAL)
+
+    # Run migration
+    migrated = migrate_dead_episodes(DEFAULT_JOURNAL)
+    assert migrated == 1
+
+    # Verify in set
+    assert episode_uuid in get_dead_episodes(DEFAULT_JOURNAL)
+
+    # Verify retry_count set
+    retry_count = redis_client.hget(cache_key, "retry_count")
+    assert retry_count == b"3"
+
+
+def test_migrate_dead_episodes_idempotent(redis_client):
+    """migrate_dead_episodes can be run multiple times safely."""
+    from backend.database.redis_ops import (
+        migrate_dead_episodes,
+        get_dead_episodes_count,
+        get_journal_cache_key,
+    )
+
+    episode_uuid = str(uuid4())
+    cache_key = get_journal_cache_key(DEFAULT_JOURNAL, episode_uuid)
+
+    # Manually set status to dead
+    redis_client.hset(cache_key, "status", "dead")
+    redis_client.hset(cache_key, "journal", DEFAULT_JOURNAL)
+
+    # Run migration twice
+    first = migrate_dead_episodes(DEFAULT_JOURNAL)
+    second = migrate_dead_episodes(DEFAULT_JOURNAL)
+
+    assert first == 1
+    assert second == 0  # Already migrated
+    assert get_dead_episodes_count(DEFAULT_JOURNAL) == 1
+
+
+def test_processing_status_includes_retry_info(redis_client):
+    """get_processing_status includes retry_count and max_retries."""
+    from backend.database.redis_ops import get_processing_status
+
+    redis_client.delete("task:active_episode")
+    redis_client.delete(f"pending:nodes:{DEFAULT_JOURNAL}")
+
+    result = get_processing_status(DEFAULT_JOURNAL)
+
+    assert "retry_count" in result
+    assert "max_retries" in result
+    assert result["max_retries"] == 3
+
+
+def test_processing_status_retry_count_for_active_episode(redis_client):
+    """get_processing_status returns retry_count for active episode."""
+    from backend.database.redis_ops import (
+        get_processing_status,
+        increment_and_check_retry_count,
+    )
+
+    episode_uuid = str(uuid4())
+
+    # Set as active and increment retry
+    redis_client.hset("task:active_episode", mapping={"uuid": episode_uuid, "journal": DEFAULT_JOURNAL})
+    increment_and_check_retry_count(episode_uuid, DEFAULT_JOURNAL, 3)
+
+    result = get_processing_status(DEFAULT_JOURNAL)
+    assert result["retry_count"] == 1
+
+    # Cleanup
+    redis_client.delete("task:active_episode")
+
+
+@pytest.mark.asyncio
+async def test_retry_dead_episodes_integration(isolated_graph):
+    """Integration test: retry_dead_episodes resets dead episode and re-queues it."""
+    from backend.database.redis_ops import (
+        retry_dead_episodes,
+        get_dead_episodes,
+        get_pending_episodes,
+        get_episode_status,
+        get_journal_cache_key,
+        remove_pending_episode,
+        remove_episode_from_queue,
+    )
+    import backend.database.lifecycle as lifecycle
+
+    # Create a real episode in the graph
+    episode_uuid = await add_journal_entry("Integration test entry for retry.")
+
+    # Remove from pending (simulating it was processed and failed)
+    remove_pending_episode(episode_uuid, DEFAULT_JOURNAL)
+
+    # Mark as dead with high retry count
+    set_episode_status(episode_uuid, "dead", DEFAULT_JOURNAL)
+    cache_key = get_journal_cache_key(DEFAULT_JOURNAL, episode_uuid)
+    redis_client = lifecycle._db.client
+    redis_client.hset(cache_key, "retry_count", "3")
+
+    # Verify setup
+    assert episode_uuid in get_dead_episodes(DEFAULT_JOURNAL)
+    assert episode_uuid not in get_pending_episodes(DEFAULT_JOURNAL)
+
+    # Retry dead episodes
+    retried = await retry_dead_episodes(DEFAULT_JOURNAL)
+
+    # Verify retry succeeded
+    assert retried == 1
+    assert episode_uuid not in get_dead_episodes(DEFAULT_JOURNAL)
+    assert episode_uuid in get_pending_episodes(DEFAULT_JOURNAL)
+    assert get_episode_status(episode_uuid, DEFAULT_JOURNAL) == "pending_nodes"
+
+    # Verify retry_count was reset
+    retry_count = redis_client.hget(cache_key, "retry_count")
+    assert retry_count == b"0"
+
+    # Cleanup
+    remove_episode_from_queue(episode_uuid, DEFAULT_JOURNAL)
