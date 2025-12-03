@@ -22,6 +22,7 @@ from backend.database import (
     get_entry_entities,
     get_episode_status,
     get_home_screen,
+    get_home_screen_paginated,
     get_period_entities,
     get_processing_status,
 )
@@ -260,6 +261,15 @@ class HomeScreen(Screen):
         self._select_uuid_on_resume: str | None = None
         # Processing state machine
         self.processing_machine = ProcessingStateMachine()
+        # Pagination state
+        self._has_more: bool = True
+        self._is_loading_more: bool = False
+        self._current_offset: int = 0
+        self._page_size: int = 100
+        self._pagination_generation: int = 0  # Detect stale responses after reload
+        self._last_period_label: str | None = None  # Avoid duplicate dividers at page boundary
+        # O(1) UUID to episode index lookup for _is_episode_in_current_period
+        self._uuid_to_episode_idx: dict[str, int] = {}
 
     def _update_entry_processing_dots(self, active_uuid: str | None) -> None:
         """Update processing dots on all entry labels.
@@ -566,6 +576,103 @@ class HomeScreen(Screen):
                     logger.debug("Failed to scroll to period: %s", e)
                 break
 
+    # Number of episodes from end to trigger loading more
+    PAGINATION_THRESHOLD = 20
+
+    def _check_load_more(self, episode_idx: int) -> None:
+        """Check if we need to load more episodes based on cursor position."""
+        if not self._has_more or self._is_loading_more:
+            return
+
+        if episode_idx >= len(self.episodes) - self.PAGINATION_THRESHOLD:
+            # Set flag BEFORE spawning worker to prevent race condition
+            self._is_loading_more = True
+            self.run_worker(
+                self._load_more_episodes(),
+                exclusive=True,
+                group="load_more",
+            )
+
+    async def _load_more_episodes(self) -> None:
+        """Load more episodes when scrolling near end of list.
+
+        Note: _is_loading_more is set by _check_load_more() before this worker starts.
+        """
+        from textual.worker import WorkerCancelled
+
+        my_generation = self._pagination_generation
+
+        try:
+            new_episodes, has_more = await get_home_screen_paginated(
+                limit=self._page_size,
+                offset=self._current_offset,
+            )
+
+            # Stale check: discard if reload happened
+            if my_generation != self._pagination_generation:
+                return
+
+            if not new_episodes:
+                self._has_more = False
+                return
+
+            self._has_more = has_more
+            self._current_offset += len(new_episodes)
+            await self._append_episodes_to_list(new_episodes)
+
+        except WorkerCancelled:
+            raise
+        except Exception as e:
+            logger.error("Failed to load more episodes: %s", e, exc_info=True)
+            # Stop pagination on error to prevent retry loops
+            self._has_more = False
+        finally:
+            # Always clear flag to unblock future pagination
+            self._is_loading_more = False
+
+    async def _append_episodes_to_list(self, new_episodes: list[dict]) -> None:
+        """Append new episodes to the existing list."""
+        list_view = self.query_one("#episodes-list", ListView)
+        grouped = group_entries_by_period(new_episodes)
+
+        items: list[ListItem] = []
+        current_list_idx = len(list_view.children)  # Start index for new items
+        episode_offset = len(self.episodes)  # Start index in episodes list
+
+        with self.app.batch_update():
+            for period_label, period_episodes in grouped:
+                # Only add divider if NEW period
+                if period_label != self._last_period_label:
+                    items.append(ListItem(PeriodDivider(period_label), disabled=True))
+                    current_list_idx += 1
+                    self._last_period_label = period_label
+
+                for episode in period_episodes:
+                    date_str = self._format_date(episode["valid_at"])
+                    preview = get_display_title(episode)
+                    text = f"[bold]{date_str}[/bold]  {preview}"
+                    entry_label = EntryLabel(text, episode["uuid"])
+
+                    # Check if this episode is currently being processed
+                    if (
+                        self.processing_output.is_inferring
+                        and episode["uuid"] == self.processing_output.active_episode_uuid
+                    ):
+                        entry_label.set_processing(True)
+
+                    item = ListItem(entry_label)
+                    self.list_index_to_episode[current_list_idx] = episode_offset
+                    self._uuid_to_episode_idx[episode["uuid"]] = episode_offset
+                    items.append(item)
+                    current_list_idx += 1
+                    episode_offset += 1
+
+            await list_view.extend(items)
+
+            # Update data model
+            self.episodes.extend(new_episodes)
+            self.periods = calculate_periods(self.episodes)
+
     @staticmethod
     def _format_date(valid_at) -> str:
         """Format date as 'Day Mon DD' for list rendering."""
@@ -660,6 +767,7 @@ class HomeScreen(Screen):
         self.workers.cancel_group(self, "processing_poll")
         self.workers.cancel_group(self, "entities")
         self.workers.cancel_group(self, "period_stats")
+        self.workers.cancel_group(self, "load_more")
 
         # Clear selected entry so watcher fires when load_episodes sets it again.
         # This ensures entities are re-fetched (the previous fetch may have been
@@ -674,6 +782,7 @@ class HomeScreen(Screen):
         self.workers.cancel_group(self, "processing_poll")
         self.workers.cancel_group(self, "entities")
         self.workers.cancel_group(self, "period_stats")
+        self.workers.cancel_group(self, "load_more")
         # Clear saved positions since data may change while suspended
         self._last_entries_index = None
         self._last_connections_index = None
@@ -748,11 +857,12 @@ class HomeScreen(Screen):
         if not self.periods or self.selected_period_index >= len(self.periods):
             return False
 
-        for idx, ep in enumerate(self.episodes):
-            if ep["uuid"] == episode_uuid:
-                ep_period_idx = self._get_period_for_episode(idx)
-                return ep_period_idx == self.selected_period_index
-        return False
+        # O(1) lookup using UUID-to-index map
+        idx = self._uuid_to_episode_idx.get(episode_uuid)
+        if idx is None:
+            return False
+        ep_period_idx = self._get_period_for_episode(idx)
+        return ep_period_idx == self.selected_period_index
 
     def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
         """Handle ListView cursor movement (↑↓ navigation)."""
@@ -770,6 +880,9 @@ class HomeScreen(Screen):
                     new_period_idx = self._get_period_for_episode(episode_idx)
                     if new_period_idx != self.selected_period_index:
                         self.selected_period_index = new_period_idx
+
+                # Check if we need to load more episodes
+                self._check_load_more(episode_idx)
 
     def _handle_view_screen_result(self, episode_uuid: str | None) -> None:
         """Store episode UUID to select when screen resumes."""
@@ -797,8 +910,20 @@ class HomeScreen(Screen):
                 self.app.push_screen(EntityBrowserScreen(event.item.entity_uuid, DEFAULT_JOURNAL))
 
     async def load_episodes(self):
+        # Reset pagination state at start
+        self._current_offset = 0
+        self._has_more = True
+        self._is_loading_more = False
+        self._pagination_generation += 1  # Invalidate in-flight requests
+        self._last_period_label = None
+
         try:
-            new_episodes = await get_home_screen()
+            new_episodes, has_more = await get_home_screen_paginated(
+                limit=self._page_size, offset=0
+            )
+            self._has_more = has_more
+            self._current_offset = len(new_episodes)
+
             list_view = self.query_one("#episodes-list", ListView)
             empty_state = self.query_one("#empty-state", Static)
             main_container = self.query_one("#main-container", Horizontal)
@@ -808,6 +933,7 @@ class HomeScreen(Screen):
                     self.episodes = []
                     self.periods = []
                     self.list_index_to_episode = {}
+                    self._uuid_to_episode_idx = {}
                     await list_view.clear()
                     self._last_entries_index = None
                     main_container.display = False
@@ -821,11 +947,13 @@ class HomeScreen(Screen):
                     grouped = group_entries_by_period(new_episodes)
                     items: list[ListItem] = []
                     self.list_index_to_episode = {}
+                    self._uuid_to_episode_idx = {}
                     episode_idx = 0
 
                     for period_label, period_episodes in grouped:
                         divider = ListItem(PeriodDivider(period_label), disabled=True)
                         items.append(divider)
+                        self._last_period_label = period_label
 
                         for episode in period_episodes:
                             date_str = self._format_date(episode["valid_at"])
@@ -840,6 +968,7 @@ class HomeScreen(Screen):
                                 entry_label.set_processing(True)
                             item = ListItem(entry_label)
                             self.list_index_to_episode[len(items)] = episode_idx
+                            self._uuid_to_episode_idx[episode["uuid"]] = episode_idx
                             items.append(item)
                             episode_idx += 1
 

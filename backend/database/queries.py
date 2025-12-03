@@ -161,6 +161,59 @@ async def get_home_screen(journal: str = DEFAULT_JOURNAL) -> list[dict]:
     return episodes
 
 
+async def get_home_screen_paginated(
+    journal: str = DEFAULT_JOURNAL,
+    limit: int = 100,
+    offset: int = 0,
+) -> tuple[list[dict], bool]:
+    """Paginated version of get_home_screen.
+
+    Returns: (episodes, has_more) where episodes has same shape as get_home_screen:
+        - uuid: str
+        - name: str
+        - valid_at: datetime
+        - preview: str (truncated content)
+
+    Uses SKIP/LIMIT for offset-based pagination. ORDER BY valid_at DESC, uuid DESC
+    ensures deterministic ordering even when multiple entries have identical timestamps.
+    """
+    driver = get_driver(journal)
+    limit_plus_one = limit + 1  # Fetch one extra to detect has_more
+
+    records, _, _ = await driver.execute_query(
+        f"""
+        MATCH (e:Episodic)
+        WHERE e.group_id = $group_id
+        RETURN e.uuid AS uuid,
+               e.name AS name,
+               e.valid_at AS valid_at,
+               SUBSTRING(e.content, 0, {HOME_PREVIEW_SOURCE_CHARS}) AS content_preview
+        ORDER BY e.valid_at DESC, e.uuid DESC
+        SKIP $offset
+        LIMIT $limit_plus_one
+        """,
+        group_id=journal,
+        offset=offset,
+        limit_plus_one=limit_plus_one,
+    )
+
+    episodes: list[dict] = []
+    for record in records:
+        valid_at = _parse_valid_at(record.get("valid_at"))
+        preview = _build_preview(record.get("content_preview") or "")
+        episodes.append(
+            {
+                "uuid": record.get("uuid"),
+                "name": record.get("name"),
+                "valid_at": valid_at,
+                "preview": preview,
+            }
+        )
+
+    has_more = len(episodes) > limit
+    return (episodes[:limit], has_more)
+
+
 async def delete_entity_mention(
     episode_uuid: str,
     entity_uuid: str,
@@ -942,6 +995,7 @@ __all__ = [
     "get_episode",
     "episode_exists",
     "get_home_screen",
+    "get_home_screen_paginated",
     "delete_entity_mention",
     "delete_entity_all_mentions",
     "get_entry_entities",

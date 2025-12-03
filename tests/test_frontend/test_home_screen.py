@@ -17,6 +17,21 @@ from frontend.screens.home_screen import HomeScreen
 from frontend.state.processing_state_machine import ProcessingOutput
 
 
+def make_test_episodes(count: int, start_offset: int = 0) -> list[dict]:
+    """Generate mock episodes for pagination tests."""
+    from datetime import timedelta
+    base = datetime(2025, 1, 1)
+    return [
+        {
+            "uuid": f"ep-{start_offset + i}",
+            "name": f"Episode {start_offset + i}",
+            "preview": f"Content {start_offset + i}",
+            "valid_at": base - timedelta(days=start_offset + i),
+        }
+        for i in range(count)
+    ]
+
+
 @asynccontextmanager
 async def home_test_context(app):
     """Context manager that cancels HomeScreen workers before cleanup.
@@ -30,7 +45,7 @@ async def home_test_context(app):
             # Cancel HomeScreen workers before cleanup
             for screen in app.screen_stack:
                 if isinstance(screen, HomeScreen):
-                    for group in ["processing_poll", "entities", "period_stats"]:
+                    for group in ["processing_poll", "entities", "period_stats", "load_more"]:
                         screen.workers.cancel_group(screen, group)
                     for _ in range(10):
                         await pilot.pause()
@@ -55,17 +70,20 @@ class HomeScreenTestApp(App):
 def mock_home_db():
     """Mock database operations for HomeScreen tests."""
     with patch("frontend.screens.home_screen.get_home_screen", new_callable=AsyncMock) as mock_get_home, \
+         patch("frontend.screens.home_screen.get_home_screen_paginated", new_callable=AsyncMock) as mock_get_home_paginated, \
          patch("frontend.screens.home_screen.ensure_database_ready", new_callable=AsyncMock) as mock_ensure, \
          patch("frontend.screens.home_screen.get_entry_entities", new_callable=AsyncMock) as mock_entry_entities, \
          patch("frontend.screens.home_screen.get_period_entities", new_callable=AsyncMock) as mock_period_entities, \
          patch("frontend.screens.home_screen.get_episode_status") as mock_episode_status:
         mock_get_home.return_value = []
+        mock_get_home_paginated.return_value = ([], False)
         mock_ensure.return_value = None
         mock_entry_entities.return_value = []
         mock_period_entities.return_value = {"entry_count": 0, "connection_count": 0, "top_entities": []}
         mock_episode_status.return_value = None
         yield {
             "get_home": mock_get_home,
+            "get_home_paginated": mock_get_home_paginated,
             "ensure": mock_ensure,
             "get_entry_entities": mock_entry_entities,
             "get_period_entities": mock_period_entities,
@@ -76,7 +94,7 @@ def mock_home_db():
 @pytest.mark.asyncio
 async def test_home_screen_shows_empty_state(mock_home_db):
     """Should display empty state when no episodes exist."""
-    mock_home_db["get_home"].return_value = []
+    mock_home_db["get_home_paginated"].return_value = ([], False)
 
     app = HomeScreenTestApp()
     async with home_test_context(app) as pilot:
@@ -120,7 +138,7 @@ async def test_home_screen_loads_episodes(mock_home_db):
             "valid_at": datetime(2025, 11, 19, 10, 0, 0)
         }
     ]
-    mock_home_db["get_home"].return_value = mock_episodes
+    mock_home_db["get_home_paginated"].return_value = (mock_episodes, False)
 
     app = HomeScreenTestApp()
     async with home_test_context(app) as pilot:
@@ -148,7 +166,7 @@ async def test_home_screen_displays_episode_list(mock_home_db):
             "valid_at": datetime(2025, 11, 18, 9, 0, 0)
         },
     ]
-    mock_home_db["get_home"].return_value = mock_episodes
+    mock_home_db["get_home_paginated"].return_value = (mock_episodes, False)
 
     app = HomeScreenTestApp()
     async with home_test_context(app) as pilot:
@@ -191,7 +209,7 @@ async def test_navigating_entries_updates_period_on_boundary_crossing(mock_home_
             "valid_at": last_week,
         },
     ]
-    mock_home_db["get_home"].return_value = mock_episodes
+    mock_home_db["get_home_paginated"].return_value = (mock_episodes, False)
 
     # Create a datetime wrapper that returns fixed_now for now() but works normally otherwise
     class FrozenDatetime(dt_module.datetime):
@@ -236,7 +254,7 @@ async def test_pane_titles_show_key_hints(mock_home_db):
             "valid_at": datetime(2025, 11, 27, 10, 0, 0),
         }
     ]
-    mock_home_db["get_home"].return_value = mock_episodes
+    mock_home_db["get_home_paginated"].return_value = (mock_episodes, False)
     mock_home_db["get_period_entities"].return_value = {
         "entry_count": 1,
         "connection_count": 0,
@@ -268,7 +286,7 @@ async def test_numerical_key_focuses_entries_list(mock_home_db):
             "valid_at": datetime(2025, 11, 27, 10, 0, 0),
         }
     ]
-    mock_home_db["get_home"].return_value = mock_episodes
+    mock_home_db["get_home_paginated"].return_value = (mock_episodes, False)
 
     app = HomeScreenTestApp()
     async with home_test_context(app) as pilot:
@@ -297,7 +315,7 @@ async def test_numerical_key_focuses_connections_list(mock_home_db):
             "valid_at": datetime(2025, 11, 27, 10, 0, 0),
         }
     ]
-    mock_home_db["get_home"].return_value = mock_episodes
+    mock_home_db["get_home_paginated"].return_value = (mock_episodes, False)
     mock_home_db["get_entry_entities"].return_value = [
         {"name": "Entity 1"},
         {"name": "Entity 2"},
@@ -330,7 +348,7 @@ async def test_numerical_key_focuses_temporal_list(mock_home_db):
             "valid_at": datetime(2025, 11, 27, 10, 0, 0),
         }
     ]
-    mock_home_db["get_home"].return_value = mock_episodes
+    mock_home_db["get_home_paginated"].return_value = (mock_episodes, False)
     mock_home_db["get_period_entities"].return_value = {
         "entry_count": 1,
         "connection_count": 2,
@@ -376,7 +394,7 @@ async def test_position_memory_preserved_on_focus_switch(mock_home_db):
             "valid_at": datetime(2025, 11, 25, 10, 0, 0),
         },
     ]
-    mock_home_db["get_home"].return_value = mock_episodes
+    mock_home_db["get_home_paginated"].return_value = (mock_episodes, False)
     mock_home_db["get_entry_entities"].return_value = [
         {"name": "Entity 1"},
         {"name": "Entity 2"},
@@ -418,7 +436,7 @@ async def test_entity_list_navigation_does_not_change_entry_selection(mock_home_
             "valid_at": datetime(2025, 11, 27, 10, 0, 0),
         },
     ]
-    mock_home_db["get_home"].return_value = mock_episodes
+    mock_home_db["get_home_paginated"].return_value = (mock_episodes, False)
     mock_home_db["get_entry_entities"].return_value = [
         {"name": "Entity 1"},
         {"name": "Entity 2"},
@@ -458,7 +476,7 @@ async def test_entity_list_selection_does_not_trigger_view(mock_home_db):
             "valid_at": datetime(2025, 11, 27, 10, 0, 0),
         },
     ]
-    mock_home_db["get_home"].return_value = mock_episodes
+    mock_home_db["get_home_paginated"].return_value = (mock_episodes, False)
     mock_home_db["get_entry_entities"].return_value = [
         {"name": "Entity 1"},
         {"name": "Entity 2"},
@@ -491,7 +509,7 @@ async def test_entry_formatting_uses_bold_date(mock_home_db):
             "valid_at": datetime(2025, 11, 27, 10, 0, 0),
         }
     ]
-    mock_home_db["get_home"].return_value = mock_episodes
+    mock_home_db["get_home_paginated"].return_value = (mock_episodes, False)
 
     app = HomeScreenTestApp()
     async with home_test_context(app) as pilot:
@@ -518,7 +536,7 @@ async def test_entry_formatting_no_dot_separator(mock_home_db):
             "valid_at": datetime(2025, 11, 27, 10, 0, 0),
         }
     ]
-    mock_home_db["get_home"].return_value = mock_episodes
+    mock_home_db["get_home_paginated"].return_value = (mock_episodes, False)
 
     app = HomeScreenTestApp()
     async with home_test_context(app) as pilot:
@@ -544,7 +562,7 @@ async def test_focus_on_empty_connections_list_does_nothing(mock_home_db):
             "valid_at": datetime(2025, 11, 27, 10, 0, 0),
         }
     ]
-    mock_home_db["get_home"].return_value = mock_episodes
+    mock_home_db["get_home_paginated"].return_value = (mock_episodes, False)
     mock_home_db["get_entry_entities"].return_value = []  # No entities
 
     app = HomeScreenTestApp()
@@ -582,7 +600,7 @@ async def test_index_bounds_validation_after_list_shrinks(mock_home_db):
             "valid_at": datetime(2025, 11, 26, 10, 0, 0),
         },
     ]
-    mock_home_db["get_home"].return_value = mock_episodes
+    mock_home_db["get_home_paginated"].return_value = (mock_episodes, False)
     # Start with many entities
     mock_home_db["get_entry_entities"].return_value = [
         {"name": f"Entity {i}"} for i in range(10)
@@ -636,7 +654,7 @@ async def test_connections_pane_shows_awaiting_processing_for_pending_entry(mock
             "valid_at": datetime(2025, 11, 27, 10, 0, 0),
         }
     ]
-    mock_home_db["get_home"].return_value = mock_episodes
+    mock_home_db["get_home_paginated"].return_value = (mock_episodes, False)
     mock_home_db["get_entry_entities"].return_value = []
     mock_home_db["get_episode_status"].return_value = "pending_nodes"
 
@@ -660,7 +678,7 @@ async def test_connections_pane_shows_no_connections_for_processed_entry(mock_ho
             "valid_at": datetime(2025, 11, 27, 10, 0, 0),
         }
     ]
-    mock_home_db["get_home"].return_value = mock_episodes
+    mock_home_db["get_home_paginated"].return_value = (mock_episodes, False)
     mock_home_db["get_entry_entities"].return_value = []
     mock_home_db["get_episode_status"].return_value = "done"
 
@@ -684,7 +702,7 @@ async def test_connections_pane_shows_loading_for_actively_processing_entry(mock
             "valid_at": datetime(2025, 11, 27, 10, 0, 0),
         }
     ]
-    mock_home_db["get_home"].return_value = mock_episodes
+    mock_home_db["get_home_paginated"].return_value = (mock_episodes, False)
     mock_home_db["get_entry_entities"].return_value = []
     mock_home_db["get_episode_status"].return_value = "pending_nodes"
 
@@ -732,7 +750,7 @@ async def test_home_screen_selects_episode_on_resume(mock_home_db):
             "valid_at": datetime(2025, 11, 25, 10, 0, 0),
         },
     ]
-    mock_home_db["get_home"].return_value = mock_episodes
+    mock_home_db["get_home_paginated"].return_value = (mock_episodes, False)
 
     app = HomeScreenTestApp()
     async with home_test_context(app) as pilot:
@@ -749,3 +767,195 @@ async def test_home_screen_selects_episode_on_resume(mock_home_db):
         assert home_screen.selected_entry_uuid == "third-entry"
         # UUID should be cleared after use
         assert home_screen._select_uuid_on_resume is None
+
+
+# Pagination Tests
+class TestHomeScreenPagination:
+    """Tests for home screen pagination behavior."""
+
+    @pytest.mark.asyncio
+    async def test_initial_load_uses_pagination(self, mock_home_db):
+        """Should call get_home_screen_paginated with limit=100, offset=0 on initial load."""
+        mock_home_db["get_home_paginated"].return_value = (make_test_episodes(10), False)
+
+        app = HomeScreenTestApp()
+        async with home_test_context(app) as pilot:
+            await pilot.pause()
+
+            mock_home_db["get_home_paginated"].assert_called()
+            call_kwargs = mock_home_db["get_home_paginated"].call_args
+            # Initial call should have offset=0 and limit=100
+            assert call_kwargs.kwargs.get("offset", 0) == 0
+
+    @pytest.mark.asyncio
+    async def test_initial_load_less_than_page_size(self, mock_home_db):
+        """Should handle fewer episodes than page size."""
+        mock_home_db["get_home_paginated"].return_value = (make_test_episodes(50), False)
+
+        app = HomeScreenTestApp()
+        async with home_test_context(app) as pilot:
+            await pilot.pause()
+
+            home_screen = app.screen
+            assert len(home_screen.episodes) == 50
+            assert home_screen._has_more is False
+
+    @pytest.mark.asyncio
+    async def test_has_more_true_allows_loading(self, mock_home_db):
+        """When has_more=True, pagination state should indicate more available."""
+        mock_home_db["get_home_paginated"].return_value = (make_test_episodes(100), True)
+
+        app = HomeScreenTestApp()
+        async with home_test_context(app) as pilot:
+            await pilot.pause()
+
+            home_screen = app.screen
+            assert home_screen._has_more is True
+
+    @pytest.mark.asyncio
+    async def test_has_more_false_stops_loading(self, mock_home_db):
+        """When has_more=False, no more loading should occur."""
+        mock_home_db["get_home_paginated"].return_value = (make_test_episodes(50), False)
+
+        app = HomeScreenTestApp()
+        async with home_test_context(app) as pilot:
+            await pilot.pause()
+
+            home_screen = app.screen
+            assert home_screen._has_more is False
+
+    @pytest.mark.asyncio
+    async def test_cursor_near_end_triggers_load_more(self, mock_home_db):
+        """Cursor within threshold of end should trigger load more."""
+        # Initial load: 100 episodes, more available
+        initial_episodes = make_test_episodes(100)
+        mock_home_db["get_home_paginated"].return_value = (initial_episodes, True)
+
+        app = HomeScreenTestApp()
+        async with home_test_context(app) as pilot:
+            await pilot.pause()
+
+            home_screen = app.screen
+            assert len(home_screen.episodes) == 100
+
+            # Setup for load more call
+            more_episodes = make_test_episodes(50, start_offset=100)
+            mock_home_db["get_home_paginated"].return_value = (more_episodes, False)
+
+            # Navigate near the end (within threshold of 20)
+            home_screen._check_load_more(85)
+            await pilot.pause()
+            await pilot.pause()
+
+            # Should have called get_home_paginated again
+            assert mock_home_db["get_home_paginated"].call_count >= 2
+
+    @pytest.mark.asyncio
+    async def test_cursor_away_from_end_no_load(self, mock_home_db):
+        """Cursor far from end should not trigger load more."""
+        initial_episodes = make_test_episodes(100)
+        mock_home_db["get_home_paginated"].return_value = (initial_episodes, True)
+
+        app = HomeScreenTestApp()
+        async with home_test_context(app) as pilot:
+            await pilot.pause()
+
+            home_screen = app.screen
+            initial_call_count = mock_home_db["get_home_paginated"].call_count
+
+            # Navigate to middle of list (far from end)
+            home_screen._check_load_more(50)
+            await pilot.pause()
+
+            # Should NOT have called get_home_paginated again
+            assert mock_home_db["get_home_paginated"].call_count == initial_call_count
+
+    @pytest.mark.asyncio
+    async def test_screen_resume_resets_pagination(self, mock_home_db):
+        """Screen resume should reset pagination state."""
+        mock_home_db["get_home_paginated"].return_value = (make_test_episodes(50), True)
+
+        app = HomeScreenTestApp()
+        async with home_test_context(app) as pilot:
+            await pilot.pause()
+
+            home_screen = app.screen
+            # Simulate some pagination state
+            home_screen._current_offset = 100
+            home_screen._has_more = False
+
+            # Simulate screen resume
+            await home_screen.on_screen_resume()
+            await pilot.pause()
+
+            # State should be reset
+            assert home_screen._current_offset == len(home_screen.episodes)
+            # has_more is set from the return value
+            assert home_screen._has_more is True
+
+    @pytest.mark.asyncio
+    async def test_load_more_blocked_while_loading(self, mock_home_db):
+        """Second load more should be blocked while first is in progress."""
+        initial_episodes = make_test_episodes(100)
+        mock_home_db["get_home_paginated"].return_value = (initial_episodes, True)
+
+        app = HomeScreenTestApp()
+        async with home_test_context(app) as pilot:
+            await pilot.pause()
+
+            home_screen = app.screen
+
+            # Track call count before setting the flag
+            calls_before = mock_home_db["get_home_paginated"].call_count
+
+            # Simulate loading in progress
+            home_screen._is_loading_more = True
+
+            # Try to trigger load more
+            home_screen._check_load_more(95)
+            await pilot.pause()
+
+            # Should not have triggered another load
+            assert mock_home_db["get_home_paginated"].call_count == calls_before
+
+    @pytest.mark.asyncio
+    async def test_empty_response_stops_loading(self, mock_home_db):
+        """Empty response from backend should stop further loading."""
+        initial_episodes = make_test_episodes(100)
+        mock_home_db["get_home_paginated"].return_value = (initial_episodes, True)
+
+        app = HomeScreenTestApp()
+        async with home_test_context(app) as pilot:
+            await pilot.pause()
+
+            home_screen = app.screen
+            assert home_screen._has_more is True
+
+            # Setup empty response for next call
+            mock_home_db["get_home_paginated"].return_value = ([], False)
+
+            # Trigger load more
+            home_screen._check_load_more(95)
+            await pilot.pause()
+            await pilot.pause()
+
+            # has_more should now be False
+            assert home_screen._has_more is False
+
+    @pytest.mark.asyncio
+    async def test_pagination_state_initialized(self, mock_home_db):
+        """HomeScreen should initialize pagination state variables."""
+        mock_home_db["get_home_paginated"].return_value = (make_test_episodes(10), False)
+
+        app = HomeScreenTestApp()
+        async with home_test_context(app) as pilot:
+            await pilot.pause()
+
+            home_screen = app.screen
+
+            # Check pagination state variables exist
+            assert hasattr(home_screen, "_has_more")
+            assert hasattr(home_screen, "_is_loading_more")
+            assert hasattr(home_screen, "_current_offset")
+            assert hasattr(home_screen, "_page_size")
+            assert hasattr(home_screen, "_pagination_generation")

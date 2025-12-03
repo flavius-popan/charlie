@@ -7,6 +7,7 @@ import pytest
 
 from backend import add_journal_entry
 from backend.database.queries import (
+    get_home_screen_paginated,
     delete_entity_mention,
     delete_entity_all_mentions,
     add_entry_suppressed_entity,
@@ -33,6 +34,18 @@ def clear_test_journal_suppression():
     with redis_ops() as r:
         suppression_key = "journal:test_journal:suppressed_entities"
         r.delete(suppression_key)
+
+
+async def seed_episodes_for_pagination(count: int, journal: str = DEFAULT_JOURNAL):
+    """Create count episodes with sequential dates for pagination tests."""
+    from datetime import timedelta
+    base_date = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+    for i in range(count):
+        await add_journal_entry(
+            content=f"Episode {i}",
+            reference_time=base_date - timedelta(days=i),
+            journal=journal,
+        )
 
 
 @pytest.mark.inference
@@ -1128,3 +1141,140 @@ async def test_extract_nodes_filters_both_suppression_tiers(isolated_graph):
         assert "Bob" not in entity_names, "Bob should be filtered (entry-level suppressed)"
         assert "CHARLIE" not in entity_names, "CHARLIE should be filtered (global suppressed)"
         assert "Charlie" not in entity_names, "Charlie should be filtered (case-insensitive)"
+
+
+class TestGetHomeScreenPaginated:
+    """Tests for get_home_screen_paginated query function."""
+
+    @pytest.mark.asyncio
+    async def test_returns_tuple(self, isolated_graph):
+        """Should return (list, bool) tuple."""
+        result = await get_home_screen_paginated()
+        assert isinstance(result, tuple)
+        assert len(result) == 2
+        episodes, has_more = result
+        assert isinstance(episodes, list)
+        assert isinstance(has_more, bool)
+
+    @pytest.mark.asyncio
+    async def test_respects_limit(self, isolated_graph):
+        """Should return at most limit episodes."""
+        await seed_episodes_for_pagination(15)
+
+        episodes, has_more = await get_home_screen_paginated(limit=10)
+
+        assert len(episodes) <= 10
+        assert has_more is True
+
+    @pytest.mark.asyncio
+    async def test_offset_skips(self, isolated_graph):
+        """Should skip offset episodes."""
+        await seed_episodes_for_pagination(20)
+
+        page1, _ = await get_home_screen_paginated(limit=5, offset=0)
+        page2, _ = await get_home_screen_paginated(limit=5, offset=5)
+
+        page1_uuids = {ep["uuid"] for ep in page1}
+        page2_uuids = {ep["uuid"] for ep in page2}
+
+        # No overlap between pages
+        assert len(page1_uuids & page2_uuids) == 0
+
+    @pytest.mark.asyncio
+    async def test_ordering_valid_at_desc(self, isolated_graph):
+        """Should order by valid_at DESC."""
+        await seed_episodes_for_pagination(5)
+
+        episodes, _ = await get_home_screen_paginated(limit=10)
+
+        # Most recent first (higher index = earlier date in seeding)
+        for i in range(len(episodes) - 1):
+            assert episodes[i]["valid_at"] >= episodes[i + 1]["valid_at"]
+
+    @pytest.mark.asyncio
+    async def test_returns_same_shape(self, isolated_graph):
+        """Should return same 4 fields as get_home_screen."""
+        await seed_episodes_for_pagination(1)
+
+        episodes, _ = await get_home_screen_paginated(limit=10)
+
+        assert len(episodes) == 1
+        ep = episodes[0]
+        assert "uuid" in ep
+        assert "name" in ep
+        assert "valid_at" in ep
+        assert "preview" in ep
+
+    @pytest.mark.asyncio
+    async def test_has_more_exact_boundary(self, isolated_graph):
+        """limit=10, 11 exist -> has_more=True."""
+        await seed_episodes_for_pagination(11)
+
+        episodes, has_more = await get_home_screen_paginated(limit=10, offset=0)
+
+        assert len(episodes) == 10
+        assert has_more is True
+
+    @pytest.mark.asyncio
+    async def test_has_more_exact_limit(self, isolated_graph):
+        """limit=10, 10 exist -> has_more=False."""
+        await seed_episodes_for_pagination(10)
+
+        episodes, has_more = await get_home_screen_paginated(limit=10, offset=0)
+
+        assert len(episodes) == 10
+        assert has_more is False
+
+    @pytest.mark.asyncio
+    async def test_empty_offset(self, isolated_graph):
+        """offset > count -> ([], False)."""
+        await seed_episodes_for_pagination(5)
+
+        episodes, has_more = await get_home_screen_paginated(limit=10, offset=100)
+
+        assert episodes == []
+        assert has_more is False
+
+    @pytest.mark.asyncio
+    async def test_identical_timestamps_deterministic(self, isolated_graph):
+        """Same valid_at orders by uuid DESC for deterministic results."""
+        from datetime import timedelta
+        base_date = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+
+        # Create 3 episodes with identical timestamps
+        for i in range(3):
+            await add_journal_entry(
+                content=f"Same time episode {i}",
+                reference_time=base_date,
+                journal=DEFAULT_JOURNAL,
+            )
+
+        page1, _ = await get_home_screen_paginated(limit=10)
+        page2, _ = await get_home_screen_paginated(limit=10)
+
+        # Order should be deterministic
+        assert [ep["uuid"] for ep in page1] == [ep["uuid"] for ep in page2]
+
+    @pytest.mark.asyncio
+    async def test_no_duplicates_across_pages(self, isolated_graph):
+        """Page 1 + Page 2 should have unique episodes."""
+        await seed_episodes_for_pagination(15)
+
+        page1, _ = await get_home_screen_paginated(limit=10, offset=0)
+        page2, _ = await get_home_screen_paginated(limit=10, offset=10)
+
+        all_uuids = [ep["uuid"] for ep in page1] + [ep["uuid"] for ep in page2]
+        assert len(all_uuids) == len(set(all_uuids))
+
+    @pytest.mark.asyncio
+    async def test_no_gaps_between_pages(self, isolated_graph):
+        """All episodes should be covered across pages."""
+        await seed_episodes_for_pagination(15)
+
+        page1, has_more1 = await get_home_screen_paginated(limit=10, offset=0)
+        page2, has_more2 = await get_home_screen_paginated(limit=10, offset=10)
+
+        assert len(page1) == 10
+        assert len(page2) == 5
+        assert has_more1 is True
+        assert has_more2 is False
