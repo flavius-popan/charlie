@@ -140,16 +140,19 @@ def test_start_huey_consumer_schedules_orchestrator_once(monkeypatch):
     """start_huey_consumer should kick off orchestrator scheduling without duplicate threads."""
     from backend.services import queue
 
-    # Fake Redis client with required attributes
+    # Fake Redis client with ping support
     class FakeClient:
-        connection_pool = object()
+        connection_pool = None
 
         def ping(self):
             return True
 
-        def zadd(self, key, mapping):
-            # Stub for PriorityRedisHuey support
-            return len(mapping)
+    # Fake storage with conn.ping() support
+    class FakeStorage:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        conn = FakeClient()
 
     class FakeDB:
         client = FakeClient()
@@ -158,6 +161,9 @@ def test_start_huey_consumer_schedules_orchestrator_once(monkeypatch):
     import backend.database.lifecycle as lifecycle
     monkeypatch.setattr(lifecycle, "_db", FakeDB())
     monkeypatch.setattr(lifecycle, "_ensure_graph", lambda journal: (None, None))
+
+    # Mock PriorityRedisStorage to avoid redis-py initialization
+    monkeypatch.setattr("huey.storage.PriorityRedisStorage", FakeStorage)
 
     # Avoid starting real consumer threads
     class DummyConsumer:

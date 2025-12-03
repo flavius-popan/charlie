@@ -108,9 +108,14 @@ def _start_huey_consumer_unlocked() -> None:
     if redis_client is None:
         raise RuntimeError("Redis client unavailable for Huey consumer startup")
 
-    # Ensure Huey uses the current connection pool (DB may be reinitialized in tests)
-    huey.storage.pool = getattr(redis_client, "connection_pool", None)
-    huey.storage.conn = redis_client
+    # Replace storage entirely to ensure Lua scripts use the socket connection.
+    # Patching pool/conn alone leaves scripts bound to the old TCP client.
+    from huey.storage import PriorityRedisStorage
+
+    huey.storage = PriorityRedisStorage(
+        name=huey.name,
+        connection_pool=redis_client.connection_pool,
+    )
 
     # Ensure embedded Redis is reachable before starting the consumer thread
     deadline = time.monotonic() + 5.0

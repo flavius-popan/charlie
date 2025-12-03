@@ -33,12 +33,16 @@ def clear_huey_queue(isolated_graph):
     # Stop any running consumer from previous tests to prevent tasks from being processed
     queue.stop_huey_consumer(timeout=1.0)
 
-    # Update Huey's connection pool to use the current test database
+    # Replace storage entirely to ensure Lua scripts use the socket connection.
     # (isolated_graph creates a new temp DB with a different socket path)
+    from huey.storage import PriorityRedisStorage
+
     redis_client = getattr(lifecycle._db, "client", None)
     if redis_client:
-        queue.huey.storage.pool = getattr(redis_client, "connection_pool", None)
-        queue.huey.storage.conn = redis_client
+        queue.huey.storage = PriorityRedisStorage(
+            name=queue.huey.name,
+            connection_pool=redis_client.connection_pool,
+        )
 
     with redis_ops() as r:
         # Clear all Huey-related keys
