@@ -82,7 +82,7 @@ async def app_test_context(app):
             # HomeScreen may be in the screen stack even if not the current screen
             for screen in app.screen_stack:
                 if isinstance(screen, HomeScreen):
-                    for group in ["processing_poll", "entities", "period_stats"]:
+                    for group in ["processing_poll", "entities", "period_stats", "load_more"]:
                         screen.workers.cancel_group(screen, group)
                     # Wait for workers to actually finish cancellation
                     for _ in range(10):
@@ -101,6 +101,7 @@ def mock_database():
 
     with ExitStack() as stack:
         mock_get_home = AsyncMock(return_value=[])
+        mock_get_home_paginated = AsyncMock(return_value=([], False))
         mock_get = AsyncMock()
         mock_add = AsyncMock()
         mock_update = AsyncMock()
@@ -120,6 +121,7 @@ def mock_database():
         stack.enter_context(patch('charlie.get_home_screen', mock_get_home))
         stack.enter_context(patch('backend.database.get_home_screen', mock_get_home))
         stack.enter_context(patch('frontend.screens.home_screen.get_home_screen', mock_get_home))
+        stack.enter_context(patch('frontend.screens.home_screen.get_home_screen_paginated', mock_get_home_paginated))
 
         stack.enter_context(patch('charlie.get_episode', mock_get))
         stack.enter_context(patch('backend.database.get_episode', mock_get))
@@ -227,6 +229,7 @@ def mock_database():
         yield {
             'ensure': mock_ensure,
             'get_home': mock_get_home,
+            'get_home_paginated': mock_get_home_paginated,
             'get': mock_get,
             'add': mock_add,
             'update': mock_update,
@@ -243,6 +246,7 @@ def mock_database():
             'backend_ensure': mock_ensure,
             'backend_shutdown': mock_shutdown,
             'home_get_home': mock_get_home,
+            'home_get_home_paginated': mock_get_home_paginated,
             'home_ensure': mock_ensure,
             'start_huey': mock_start_huey,
             'huey_running': mock_huey_running,
@@ -318,6 +322,7 @@ class TestHomeScreen:
     async def test_home_screen_shows_empty_state(self, mock_database):
         """Should display empty state when no episodes exist."""
         mock_database['get_home'].return_value = []
+        mock_database['get_home_paginated'].return_value = ([], False)
 
         app = CharlieApp()
         async with app_test_context(app) as pilot:
@@ -406,6 +411,7 @@ class TestHomeScreen:
             }
         ]
         mock_database['get_home'].return_value = mock_episodes
+        mock_database['get_home_paginated'].return_value = (mock_episodes, False)
 
         app = CharlieApp()
         async with app_test_context(app) as pilot:
@@ -419,6 +425,7 @@ class TestHomeScreen:
     def test_home_empty_state_snapshot(self, snap_compare, mock_database):
         """Visual regression test: empty home screen with no entries."""
         mock_database['get_home'].return_value = []
+        mock_database['get_home_paginated'].return_value = ([], False)
         assert snap_compare(CharlieApp())
 
     def test_css_includes_journal_content_styles(self):
@@ -440,6 +447,7 @@ class TestViewScreen:
             "valid_at": datetime(2025, 11, 19, 10, 0, 0)
         }
         mock_database['get_home'].return_value = [mock_episode]
+        mock_database['get_home_paginated'].return_value = ([mock_episode], False)
         mock_database['get'].return_value = mock_episode
 
         app = CharlieApp()
@@ -465,6 +473,7 @@ class TestViewScreen:
             "valid_at": datetime(2025, 11, 19, 10, 0, 0)
         }
         mock_database['get_home'].return_value = [mock_episode]
+        mock_database['get_home_paginated'].return_value = ([mock_episode], False)
         mock_database['get'].return_value = mock_episode
 
         app = CharlieApp()
@@ -487,6 +496,7 @@ class TestViewScreen:
             "valid_at": datetime(2025, 11, 19, 10, 0, 0)
         }
         mock_database['get_home'].return_value = [mock_episode]
+        mock_database['get_home_paginated'].return_value = ([mock_episode], False)
         mock_database['get'].return_value = mock_episode
 
         app = CharlieApp()
@@ -511,6 +521,7 @@ class TestViewScreen:
             "valid_at": datetime(2025, 11, 19, 10, 0, 0)
         }
         mock_database['get_home'].return_value = [mock_episode]
+        mock_database['get_home_paginated'].return_value = ([mock_episode], False)
         mock_database['get'].return_value = mock_episode
 
         app = CharlieApp()
@@ -794,6 +805,7 @@ class TestIntegration:
             "valid_at": datetime(2025, 11, 19, 10, 0, 0),
         }
         mock_database["get_home"].return_value = [mock_episode]
+        mock_database["get_home_paginated"].return_value = ([mock_episode], False)
         mock_database["get"].return_value = mock_episode
         mock_database["update"].return_value = True
         mock_database["get_inference_enabled"].return_value = False
@@ -836,6 +848,7 @@ class TestIntegration:
             "valid_at": datetime(2025, 11, 19, 10, 0, 0),
         }
         mock_database["get_home"].return_value = [mock_episode]
+        mock_database["get_home_paginated"].return_value = ([mock_episode], False)
         mock_database["get"].return_value = mock_episode
         mock_database["update"].return_value = True
         mock_database["get_inference_enabled"].return_value = True
@@ -1008,6 +1021,7 @@ async def test_edit_screen_enqueues_extraction_when_content_changes(mock_databas
         "valid_at": datetime(2025, 11, 19, 10, 0, 0)
     }
     mock_database['get_home'].return_value = [mock_episode]
+    mock_database['get_home_paginated'].return_value = ([mock_episode], False)
     mock_database['get'].return_value = mock_episode
     mock_database['update'].return_value = True  # Content changed
     mock_database['get_inference_enabled'].return_value = True
@@ -1052,6 +1066,7 @@ async def test_edit_screen_skips_extraction_when_content_unchanged(mock_database
         "valid_at": datetime(2025, 11, 19, 10, 0, 0)
     }
     mock_database['get_home'].return_value = [mock_episode]
+    mock_database['get_home_paginated'].return_value = ([mock_episode], False)
     mock_database['get'].return_value = mock_episode
     mock_database['update'].return_value = False  # Content NOT changed
     mock_database['get_inference_enabled'].return_value = True
@@ -1245,6 +1260,7 @@ class TestConnectionsPaneVisibility:
             "valid_at": datetime(2025, 11, 19, 10, 0, 0),
         }
         mock_database["get_home"].return_value = [mock_episode]
+        mock_database["get_home_paginated"].return_value = ([mock_episode], False)
         mock_database["get"].return_value = mock_episode
         mock_database["update"].return_value = False  # content unchanged
         mock_database["get_inference_enabled"].return_value = True
@@ -1326,6 +1342,7 @@ class TestConnectionsPaneVisibility:
             "valid_at": datetime(2025, 11, 19, 10, 0, 0),
         }
         mock_database["get_home"].return_value = [mock_episode]
+        mock_database["get_home_paginated"].return_value = ([mock_episode], False)
         mock_database["get"].return_value = mock_episode
 
         app = CharlieApp()
@@ -1367,6 +1384,7 @@ async def test_edit_entry_title_only_no_extraction_integration(mock_database):
         "valid_at": datetime(2025, 11, 19, 10, 0, 0)
     }
     mock_database['get_home'].return_value = [mock_episode]
+    mock_database['get_home_paginated'].return_value = ([mock_episode], False)
     mock_database['get'].return_value = mock_episode
     mock_database['update'].return_value = False  # Content unchanged
     mock_database['get_inference_enabled'].return_value = True

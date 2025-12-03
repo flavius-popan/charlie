@@ -36,7 +36,7 @@ async def home_test_context(app):
             # Cancel workers before cleanup
             for screen in app.screen_stack:
                 if isinstance(screen, HomeScreen):
-                    for group in ["processing_poll", "entities", "period_stats"]:
+                    for group in ["processing_poll", "entities", "period_stats", "load_more"]:
                         screen.workers.cancel_group(screen, group)
                     for _ in range(10):
                         await pilot.pause()
