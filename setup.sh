@@ -4,31 +4,9 @@ set -euo pipefail
 # Charlie Setup Script
 # Handles first-run setup: venv, dependencies, model download, and verification
 #
-# =============================================================================
-# Platform Support
-# =============================================================================
-#
-# macOS:
-#   - Apple Silicon (arm64): Requires macOS 15.0 (Sequoia) or later
-#   - Intel (x86_64): Not supported (falkordblite provides ARM64 binaries only)
-#
-# Linux (x86_64):
-#   - Requires glibc >= 2.39 (falkordblite wheels use manylinux_2_39)
-#   - Tested distros:
-#       * Arch Linux: Works (glibc 2.42+)
-#       * Debian 13 "Trixie": Works (glibc 2.41)
-#       * Ubuntu 24.04+: Expected to work (glibc 2.39)
-#   - Incompatible (glibc too old):
-#       * Debian 12 "Bookworm" (glibc 2.36)
-#       * Ubuntu 22.04 LTS (glibc 2.35)
-#       * RHEL 9 / Rocky 9 / AlmaLinux 9 (glibc 2.34)
-#
-# To check your glibc version: ldd --version
-#
-# Debian/Ubuntu build dependencies (if building from source):
-#   apt-get install python3-dev build-essential
-#
-# =============================================================================
+# Platform requirements (driven by falkordblite's pre-built binaries):
+#   - macOS: Apple Silicon with macOS 15+
+#   - Linux: glibc >= 2.39 (check with: ldd --version)
 
 step() { echo -e "\n==> $1"; }
 fail() { echo "ERROR: $1" >&2; exit 1; }
@@ -115,32 +93,20 @@ if [[ "$(uname -s)" == "Darwin" && "$(uname -m)" == "arm64" ]]; then
     fi
 fi
 
-# Check glibc version for Linux
-# The falkordblite package wheels are built with manylinux_2_39, requiring glibc >= 2.39
+# Check glibc version for Linux (falkordblite wheels require manylinux_2_39)
 if [[ "$(uname -s)" == "Linux" ]]; then
     if command -v ldd &> /dev/null; then
         glibc_version=$(ldd --version 2>&1 | head -1 | grep -oE '[0-9]+\.[0-9]+$' || echo "0.0")
         glibc_major=$(echo "$glibc_version" | cut -d. -f1)
         glibc_minor=$(echo "$glibc_version" | cut -d. -f2)
-        # Require glibc >= 2.39
         if [[ "$glibc_major" -lt 2 ]] || [[ "$glibc_major" -eq 2 && "$glibc_minor" -lt 39 ]]; then
             echo ""
-            echo "Your Linux system needs glibc 2.39 or later to run Charlie."
-            echo "Current version: glibc $glibc_version"
-            echo ""
-            echo "Compatible distributions include:"
-            echo "  - Arch Linux (glibc 2.42+)"
-            echo "  - Debian 13 'Trixie' (glibc 2.41)"
-            echo "  - Ubuntu 24.04+ (glibc 2.39)"
-            echo ""
-            echo "Incompatible distributions (glibc too old):"
-            echo "  - Debian 12 'Bookworm' (glibc 2.36)"
-            echo "  - Ubuntu 22.04 LTS (glibc 2.35)"
-            echo "  - RHEL/Rocky/AlmaLinux 9 (glibc 2.34)"
+            echo "Charlie requires glibc 2.39+ (you have $glibc_version)."
+            echo "Upgrade to a newer distro release or build falkordblite from source."
             echo ""
             fail "glibc 2.39+ required for falkordblite"
         fi
-        echo "glibc version: $glibc_version (>= 2.39 required)"
+        echo "glibc version: $glibc_version"
     fi
 fi
 
