@@ -3,6 +3,10 @@ set -euo pipefail
 
 # Charlie Setup Script
 # Handles first-run setup: venv, dependencies, model download, and verification
+#
+# Platform requirements (driven by falkordblite's pre-built binaries):
+#   - macOS: Apple Silicon with macOS 15+
+#   - Linux: glibc >= 2.39 (check with: ldd --version)
 
 step() { echo -e "\n==> $1"; }
 fail() { echo "ERROR: $1" >&2; exit 1; }
@@ -86,6 +90,23 @@ if [[ "$(uname -s)" == "Darwin" && "$(uname -m)" == "arm64" ]]; then
         echo "To upgrade: System Settings > General > Software Update"
         echo ""
         fail "macOS 15+ required for Apple Silicon"
+    fi
+fi
+
+# Check glibc version for Linux (falkordblite wheels require manylinux_2_39)
+if [[ "$(uname -s)" == "Linux" ]]; then
+    if command -v ldd &> /dev/null; then
+        glibc_version=$(ldd --version 2>&1 | head -1 | grep -oE '[0-9]+\.[0-9]+$' || echo "0.0")
+        glibc_major=$(echo "$glibc_version" | cut -d. -f1)
+        glibc_minor=$(echo "$glibc_version" | cut -d. -f2)
+        if [[ "$glibc_major" -lt 2 ]] || [[ "$glibc_major" -eq 2 && "$glibc_minor" -lt 39 ]]; then
+            echo ""
+            echo "Charlie requires glibc 2.39+ (you have $glibc_version)."
+            echo "Upgrade to a newer distro release or build falkordblite from source."
+            echo ""
+            fail "glibc 2.39+ required for falkordblite"
+        fi
+        echo "glibc version: $glibc_version"
     fi
 fi
 
