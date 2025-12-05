@@ -5,7 +5,7 @@ The most over-engineered journaling app in the world.
 ## Quick Start
 
 **System Requirements:**
-- Linux (x86_64)
+- Linux (x86_64, glibc 2.39+) — check with `ldd --version`
 - macOS 15+ (Sequoia) on Apple Silicon (M-series)
 
 ```bash
