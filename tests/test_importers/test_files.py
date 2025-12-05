@@ -13,6 +13,7 @@ from importers.files import (
     extract_content,
     get_file_date,
     parse_entries,
+    parse_filename_date,
     DEFAULT_EXTENSIONS,
 )
 
@@ -276,7 +277,7 @@ class TestParseEntries:
         """Should return list of (content, datetime, uuid) tuples."""
         (tmp_path / "test.txt").write_text("Hello world")
 
-        entries, errors = parse_entries(
+        entries, errors, warnings = parse_entries(
             tmp_path,
             extensions={"txt"},
             recursive=False,
@@ -297,7 +298,7 @@ class TestParseEntries:
         (tmp_path / "whitespace.txt").write_text("   \n\t  ")
         (tmp_path / "valid.txt").write_text("content")
 
-        entries, errors = parse_entries(
+        entries, errors, warnings = parse_entries(
             tmp_path,
             extensions={"txt"},
             recursive=False,
@@ -313,7 +314,7 @@ class TestParseEntries:
         (tmp_path / "valid.txt").write_text("valid")
         (tmp_path / "binary.txt").write_bytes(b"\x80\x81\x82")
 
-        entries, errors = parse_entries(
+        entries, errors, warnings = parse_entries(
             tmp_path,
             extensions={"txt"},
             recursive=False,
@@ -329,11 +330,11 @@ class TestParseEntries:
         """Same file should produce same UUID across runs."""
         (tmp_path / "test.txt").write_text("content")
 
-        entries1, _ = parse_entries(
+        entries1, _, _ = parse_entries(
             tmp_path, extensions={"txt"}, recursive=False,
             date_source="created", tz=ZoneInfo("UTC"),
         )
-        entries2, _ = parse_entries(
+        entries2, _, _ = parse_entries(
             tmp_path, extensions={"txt"}, recursive=False,
             date_source="created", tz=ZoneInfo("UTC"),
         )
@@ -345,7 +346,7 @@ class TestParseEntries:
         (tmp_path / "one.txt").write_text("one")
         (tmp_path / "two.txt").write_text("two")
 
-        entries, _ = parse_entries(
+        entries, _, _ = parse_entries(
             tmp_path, extensions={"txt"}, recursive=False,
             date_source="created", tz=ZoneInfo("UTC"),
         )
@@ -363,3 +364,194 @@ class TestDefaultExtensions:
         assert "rtf" in DEFAULT_EXTENSIONS
         assert "markdown" in DEFAULT_EXTENSIONS
         assert "text" in DEFAULT_EXTENSIONS
+
+
+class TestParseFilenameDate:
+    """Tests for parsing dates from filenames."""
+
+    def test_parses_date_only_format(self, tmp_path):
+        """Should parse YYYY-MM-DD format from filename."""
+        path = tmp_path / "2024-10-13.txt"
+        path.write_text("content")
+
+        result = parse_filename_date(path, "%Y-%m-%d", ZoneInfo("UTC"))
+
+        assert result is not None
+        assert result.year == 2024
+        assert result.month == 10
+        assert result.day == 13
+        assert result.hour == 0
+        assert result.minute == 0
+
+    def test_parses_datetime_format(self, tmp_path):
+        """Should parse YYYY-MM-DD-HHMM format from filename."""
+        path = tmp_path / "2024-10-13-2354.txt"
+        path.write_text("content")
+
+        result = parse_filename_date(path, "%Y-%m-%d-%H%M", ZoneInfo("UTC"))
+
+        assert result is not None
+        assert result.year == 2024
+        assert result.month == 10
+        assert result.day == 13
+        assert result.hour == 23
+        assert result.minute == 54
+
+    def test_returns_none_for_non_matching_filename(self, tmp_path):
+        """Should return None when filename doesn't match format."""
+        path = tmp_path / "random-notes.txt"
+        path.write_text("content")
+
+        result = parse_filename_date(path, "%Y-%m-%d", ZoneInfo("UTC"))
+
+        assert result is None
+
+    def test_returns_none_for_partial_match(self, tmp_path):
+        """Should return None when filename only partially matches."""
+        path = tmp_path / "2024-10.txt"
+        path.write_text("content")
+
+        result = parse_filename_date(path, "%Y-%m-%d", ZoneInfo("UTC"))
+
+        assert result is None
+
+    def test_applies_timezone(self, tmp_path):
+        """Should apply specified timezone to parsed date."""
+        path = tmp_path / "2024-10-13.txt"
+        path.write_text("content")
+
+        result = parse_filename_date(path, "%Y-%m-%d", ZoneInfo("America/New_York"))
+
+        assert result is not None
+        assert result.tzinfo == ZoneInfo("America/New_York")
+
+    def test_uses_stem_ignores_extension(self, tmp_path):
+        """Should parse from stem only, ignoring extension."""
+        path = tmp_path / "2024-10-13.md"
+        path.write_text("content")
+
+        result = parse_filename_date(path, "%Y-%m-%d", ZoneInfo("UTC"))
+
+        assert result is not None
+        assert result.year == 2024
+
+
+class TestParseEntriesWithFilenameDate:
+    """Tests for parse_entries with filename_date_format parameter."""
+
+    def test_uses_filename_date_when_format_matches(self, tmp_path):
+        """Should use parsed filename date instead of file metadata."""
+        path = tmp_path / "2020-01-15.txt"
+        path.write_text("Old entry")
+
+        entries, errors, warnings = parse_entries(
+            tmp_path,
+            extensions={"txt"},
+            recursive=False,
+            date_source="created",
+            tz=ZoneInfo("UTC"),
+            filename_date_format="%Y-%m-%d",
+        )
+
+        assert len(entries) == 1
+        assert entries[0][1].year == 2020
+        assert entries[0][1].month == 1
+        assert entries[0][1].day == 15
+        assert len(warnings) == 0
+
+    def test_falls_back_to_metadata_when_format_doesnt_match(self, tmp_path):
+        """Should fall back to file metadata when filename doesn't match format."""
+        path = tmp_path / "random-notes.txt"
+        path.write_text("Some notes")
+
+        entries, errors, warnings = parse_entries(
+            tmp_path,
+            extensions={"txt"},
+            recursive=False,
+            date_source="created",
+            tz=ZoneInfo("UTC"),
+            filename_date_format="%Y-%m-%d",
+        )
+
+        assert len(entries) == 1
+        # Date should be recent (from file metadata), not from filename
+        now = datetime.now(tz=timezone.utc)
+        assert (now - entries[0][1]).total_seconds() < 60
+        assert len(warnings) == 1
+        assert "random-notes.txt" in warnings[0]
+
+    def test_warns_for_non_matching_filenames(self, tmp_path):
+        """Should emit warning for filenames that don't match format."""
+        (tmp_path / "notes.txt").write_text("content")
+
+        entries, errors, warnings = parse_entries(
+            tmp_path,
+            extensions={"txt"},
+            recursive=False,
+            date_source="created",
+            tz=ZoneInfo("UTC"),
+            filename_date_format="%Y-%m-%d",
+        )
+
+        assert len(warnings) == 1
+        assert "doesn't match format" in warnings[0]
+
+    def test_mixed_matching_and_non_matching_files(self, tmp_path):
+        """Should handle mix of matching and non-matching filenames."""
+        (tmp_path / "2024-10-13.txt").write_text("Dated entry")
+        (tmp_path / "random.txt").write_text("Undated entry")
+
+        entries, errors, warnings = parse_entries(
+            tmp_path,
+            extensions={"txt"},
+            recursive=False,
+            date_source="created",
+            tz=ZoneInfo("UTC"),
+            filename_date_format="%Y-%m-%d",
+        )
+
+        assert len(entries) == 2
+        assert len(warnings) == 1
+        assert "random.txt" in warnings[0]
+
+        # Find the dated entry and verify its date
+        dated_entry = next(e for e in entries if "Dated" in e[0])
+        assert dated_entry[1].year == 2024
+        assert dated_entry[1].month == 10
+        assert dated_entry[1].day == 13
+
+    def test_datetime_format_with_time(self, tmp_path):
+        """Should parse datetime format including hours and minutes."""
+        (tmp_path / "2024-11-21-0316.txt").write_text("Late night entry")
+
+        entries, errors, warnings = parse_entries(
+            tmp_path,
+            extensions={"txt"},
+            recursive=False,
+            date_source="created",
+            tz=ZoneInfo("UTC"),
+            filename_date_format="%Y-%m-%d-%H%M",
+        )
+
+        assert len(entries) == 1
+        assert entries[0][1].year == 2024
+        assert entries[0][1].month == 11
+        assert entries[0][1].day == 21
+        assert entries[0][1].hour == 3
+        assert entries[0][1].minute == 16
+
+    def test_no_warnings_when_format_not_provided(self, tmp_path):
+        """Should not emit warnings when filename_date_format is None."""
+        (tmp_path / "notes.txt").write_text("content")
+
+        entries, errors, warnings = parse_entries(
+            tmp_path,
+            extensions={"txt"},
+            recursive=False,
+            date_source="created",
+            tz=ZoneInfo("UTC"),
+            filename_date_format=None,
+        )
+
+        assert len(entries) == 1
+        assert len(warnings) == 0
