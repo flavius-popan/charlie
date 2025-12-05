@@ -20,15 +20,20 @@ All importers support:
 
 ## Files Importer
 
-Imports from a directory of text files (`.txt`, `.md`, `.rtf`, etc.) using file metadata for dates.
+Imports from a directory of text files (`.txt`, `.md`, `.rtf`, etc.).
 
 ```bash
 python importers/files.py ~/old-journals/
 python importers/files.py ~/notes/ --extensions md --date-source modified
 python importers/files.py ~/Documents/journals/ --recursive --timezone America/New_York
+
+# Parse dates from filenames like 2024-10-13.txt or 2024-10-13-2354.txt
+python importers/files.py ~/journals/ --filename-date "%Y-%m-%d"
+python importers/files.py ~/journals/ --filename-date "%Y-%m-%d-%H%M"
 ```
 
 Options:
+- `--filename-date FORMAT` - Parse date from filename using strptime format (falls back to file metadata if parsing fails)
 - `--date-source created|modified` - Use file creation or modification time (default: `created`)
 - `--extensions txt,md,rtf` - Comma-separated extensions (default: `txt,md,rtf,markdown,text`)
 - `--recursive` - Recurse into subdirectories
@@ -38,7 +43,7 @@ Features:
 - Supports `.txt`, `.md`, `.rtf`, `.markdown`, `.text` files by default
 - RTF files are automatically stripped of formatting
 - Skips hidden files/directories and symlinks
-- Uses file creation time (macOS `birthtime`) or modification time for entry dates
+- Can parse dates from filenames (e.g., `2024-10-13.txt`) or use file metadata
 - Deterministic UUIDs based on file path (idempotent imports)
 
 **Note:** Moving or renaming files will cause duplicate imports since UUIDs include the file path.

@@ -99,6 +99,25 @@ def extract_content(path: Path) -> tuple[str | None, str | None]:
     return raw, None
 
 
+def parse_filename_date(path: Path, fmt: str, tz: ZoneInfo) -> datetime | None:
+    """Parse date from filename using strptime format.
+
+    Args:
+        path: Path to the file
+        fmt: strptime format string (e.g., "%Y-%m-%d" or "%Y-%m-%d-%H%M")
+        tz: Timezone to apply
+
+    Returns:
+        Timezone-aware datetime if parsing succeeds, None otherwise
+    """
+    stem = path.stem
+    try:
+        naive_dt = datetime.strptime(stem, fmt)
+        return naive_dt.replace(tzinfo=tz)
+    except ValueError:
+        return None
+
+
 def get_file_date(path: Path, source: str, tz: ZoneInfo) -> datetime:
     """Get file date from metadata.
 
@@ -132,24 +151,28 @@ def parse_entries(
     recursive: bool,
     date_source: str,
     tz: ZoneInfo,
-) -> tuple[list[tuple[str, datetime, str]], list[str]]:
+    filename_date_format: str | None = None,
+) -> tuple[list[tuple[str, datetime, str]], list[str], list[str]]:
     """Parse files from directory into import entries.
 
     Args:
         directory: Directory to scan
         extensions: File extensions to include
         recursive: Whether to recurse into subdirectories
-        date_source: "created" or "modified"
+        date_source: "created" or "modified" (fallback when filename parsing fails)
         tz: Timezone to apply to file dates
+        filename_date_format: Optional strptime format to parse dates from filenames
 
     Returns:
-        Tuple of (entries, errors) where:
+        Tuple of (entries, errors, warnings) where:
         - entries is list of (content, datetime, uuid) tuples
         - errors is list of error messages for files that couldn't be parsed
+        - warnings is list of warning messages (e.g., filename date parse failures)
     """
     files = collect_files(directory, extensions, recursive)
     entries = []
     errors = []
+    warnings = []
 
     for path in files:
         content, error = extract_content(path)
@@ -162,12 +185,20 @@ def parse_entries(
         if not content or not content.strip():
             continue
 
-        entry_time = get_file_date(path, date_source, tz)
-        uuid = generate_file_uuid("files", str(path))
+        # Try filename date first if format provided, fall back to file metadata
+        entry_time = None
+        if filename_date_format:
+            entry_time = parse_filename_date(path, filename_date_format, tz)
+            if entry_time is None:
+                warnings.append(f"{path.name}: filename doesn't match format, using file metadata")
 
+        if entry_time is None:
+            entry_time = get_file_date(path, date_source, tz)
+
+        uuid = generate_file_uuid("files", str(path))
         entries.append((content, entry_time, uuid))
 
-    return entries, errors
+    return entries, errors, warnings
 
 
 def get_local_timezone() -> tuple[ZoneInfo, str]:
@@ -203,6 +234,11 @@ def setup_argparse() -> ArgumentParser:
         choices=["created", "modified"],
         default="created",
         help="File metadata to use for date (default: created)",
+    )
+    parser.add_argument(
+        "--filename-date",
+        metavar="FORMAT",
+        help="Parse date from filename using strptime format (e.g., '%%Y-%%m-%%d' or '%%Y-%%m-%%d-%%H%%M')",
     )
     parser.add_argument(
         "--extensions",
@@ -244,6 +280,9 @@ async def main():
 
     console.print(f"[dim]Using timezone: {tz_name}[/dim]")
 
+    if args.filename_date:
+        console.print(f"[dim]Parsing dates from filenames: {args.filename_date}[/dim]")
+
     # Parse extensions
     if args.extensions:
         extensions = {ext.strip().lower() for ext in args.extensions.split(",")}
@@ -253,17 +292,20 @@ async def main():
     console.print(f"Scanning {input_path.name}...")
 
     # Parse entries
-    entries, errors = parse_entries(
+    entries, errors, warnings = parse_entries(
         input_path,
         extensions=extensions,
         recursive=args.recursive,
         date_source=args.date_source,
         tz=tz,
+        filename_date_format=args.filename_date,
     )
 
-    # Report errors
+    # Report errors and warnings
     for error in errors:
         console.print(f"[yellow]Warning: {error}[/yellow]")
+    for warning in warnings:
+        console.print(f"[yellow]Warning: {warning}[/yellow]")
 
     if not entries:
         console.print("[yellow]No entries found to import[/yellow]")
