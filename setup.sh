@@ -96,10 +96,12 @@ fi
 # Check glibc version for Linux (falkordblite wheels require manylinux_2_39)
 if [[ "$(uname -s)" == "Linux" ]]; then
     if command -v ldd &> /dev/null; then
-        glibc_version=$(ldd --version 2>&1 | head -1 | grep -oE '[0-9]+\.[0-9]+$' || echo "0.0")
-        glibc_major=$(echo "$glibc_version" | cut -d. -f1)
-        glibc_minor=$(echo "$glibc_version" | cut -d. -f2)
-        if [[ "$glibc_major" -lt 2 ]] || [[ "$glibc_major" -eq 2 && "$glibc_minor" -lt 39 ]]; then
+        glibc_version=$(ldd --version 2>&1 | head -1 | grep -oE '[0-9]+\.[0-9]+' | tail -1)
+        glibc_version="${glibc_version:-0.0}"
+        glibc_major="${glibc_version%%.*}"
+        glibc_minor="${glibc_version##*.}"
+        if [[ "$glibc_major" =~ ^[0-9]+$ && "$glibc_minor" =~ ^[0-9]+$ ]] \
+           && { [[ "$glibc_major" -lt 2 ]] || [[ "$glibc_major" -eq 2 && "$glibc_minor" -lt 39 ]]; }; then
             echo ""
             echo "Charlie requires glibc 2.39+ (you have $glibc_version)."
             echo "Upgrade to a newer distro release or build falkordblite from source."
