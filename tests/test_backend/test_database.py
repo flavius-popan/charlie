@@ -985,20 +985,29 @@ async def test_update_episode_no_fields_error_before_not_found(isolated_graph):
         await db.update_episode(nonexistent_uuid)  # No fields provided
 
 
-def test_entity_types_format():
-    """Test entity types formatting for LLM."""
-    from backend.graph.entities_edges import format_entity_types_for_llm, entity_types
-    import json
+def test_entity_types_and_ner_mapping():
+    """Test entity types and NER label mapping."""
+    from backend.graph.entities_edges import (
+        entity_types,
+        NER_LABEL_MAP,
+        TYPE_IDS,
+        get_type_name_from_ner_label,
+        get_type_name_from_id,
+    )
 
-    result = format_entity_types_for_llm(entity_types)
-    types_list = json.loads(result)
+    assert len(entity_types) == 4
+    assert "Person" in entity_types
+    assert "Location" in entity_types
+    assert "Organization" in entity_types
+    assert "Miscellaneous" in entity_types
 
-    assert len(types_list) == 4
-    assert types_list[0]["entity_type_name"] == "Person"
-    assert types_list[-1]["entity_type_name"] == "Activity"
+    assert get_type_name_from_ner_label("PER") == "Person"
+    assert get_type_name_from_ner_label("LOC") == "Location"
+    assert get_type_name_from_ner_label("ORG") == "Organization"
+    assert get_type_name_from_ner_label("MISC") == "Miscellaneous"
 
-    person_type = next(t for t in types_list if t["entity_type_name"] == "Person")
-    assert person_type["entity_type_id"] == 1
+    assert get_type_name_from_id(1) == "Person"
+    assert get_type_name_from_id(4) == "Miscellaneous"
 
 
 @pytest.mark.asyncio

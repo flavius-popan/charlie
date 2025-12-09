@@ -1074,9 +1074,9 @@ class TestGetNPlusOneNeighbors:
 async def test_extract_nodes_filters_both_suppression_tiers(isolated_graph):
     """Test extract_nodes filters entities suppressed at both entry and global level.
 
-    This is a unit test that mocks the LLM extraction to verify the suppression
-    filtering logic without requiring inference. Covers the gap where inference
-    tests verify end-to-end behavior but don't isolate the filtering logic.
+    This is a unit test that mocks the NER extraction to verify the suppression
+    filtering logic without relying on model output. Covers the gap where
+    integration tests verify end-to-end behavior but don't isolate the filtering logic.
 
     Verifies:
     - Entry-level suppression filters entities for that episode
@@ -1084,41 +1084,33 @@ async def test_extract_nodes_filters_both_suppression_tiers(isolated_graph):
     - Non-suppressed entities pass through
     - Case-insensitive matching works
     """
-    import dspy
-    from unittest.mock import patch, MagicMock
+    from unittest.mock import patch
     from backend.database.redis_ops import add_suppressed_entity
     from backend.settings import DEFAULT_JOURNAL
-    from backend.graph.extract_nodes import (
-        extract_nodes,
-        ExtractedEntity,
-        ExtractedEntities,
-    )
+    from backend.graph.extract_nodes import extract_nodes
 
     journal = DEFAULT_JOURNAL
 
     # Create an episode in the graph
-    episode_uuid = await add_journal_entry("Alice met Bob and Charlie at the park.", journal=journal)
+    episode_uuid = await add_journal_entry(
+        "Alice met Bob and Charlie at the park.", journal=journal
+    )
 
     # Set up suppression: Bob at entry level, Charlie at global level
     await add_entry_suppressed_entity(journal, episode_uuid, "Bob")
     await add_suppressed_entity(journal, "Charlie")
 
-    # Mock the EntityExtractor to return predictable entities
-    mock_extracted = ExtractedEntities(
-        extracted_entities=[
-            ExtractedEntity(name="Alice", entity_type_id=1),
-            ExtractedEntity(name="Bob", entity_type_id=1),  # Entry-level suppressed
-            ExtractedEntity(name="CHARLIE", entity_type_id=1),  # Global suppressed (case test)
-            ExtractedEntity(name="Diana", entity_type_id=1),
-        ]
-    )
+    # Mock NER predict_entities to return predictable entities
+    mock_ner_result = [
+        {"text": "Alice", "label": "PER", "confidence": 0.99},
+        {"text": "Bob", "label": "PER", "confidence": 0.99},  # Entry-level suppressed
+        {"text": "CHARLIE", "label": "PER", "confidence": 0.99},  # Global suppressed (case test)
+        {"text": "Diana", "label": "PER", "confidence": 0.99},
+    ]
 
-    mock_extractor_instance = MagicMock()
-    mock_extractor_instance.return_value = mock_extracted
-
-    # Use dspy.context() for temporary LM config (works in any async task)
-    with dspy.context(lm=MagicMock()), \
-         patch("backend.graph.extract_nodes.EntityExtractor", return_value=mock_extractor_instance):
+    with patch(
+        "backend.graph.extract_nodes.predict_entities", return_value=mock_ner_result
+    ):
         result = await extract_nodes(episode_uuid, journal)
 
     # Should have filtered out Bob (entry) and CHARLIE (global, case-insensitive)
@@ -1139,8 +1131,12 @@ async def test_extract_nodes_filters_both_suppression_tiers(isolated_graph):
         assert "Alice" in entity_names, "Alice should be extracted (not suppressed)"
         assert "Diana" in entity_names, "Diana should be extracted (not suppressed)"
         assert "Bob" not in entity_names, "Bob should be filtered (entry-level suppressed)"
-        assert "CHARLIE" not in entity_names, "CHARLIE should be filtered (global suppressed)"
-        assert "Charlie" not in entity_names, "Charlie should be filtered (case-insensitive)"
+        assert (
+            "CHARLIE" not in entity_names
+        ), "CHARLIE should be filtered (global suppressed)"
+        assert (
+            "Charlie" not in entity_names
+        ), "Charlie should be filtered (case-insensitive)"
 
 
 class TestGetHomeScreenPaginated:

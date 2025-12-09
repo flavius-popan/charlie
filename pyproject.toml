@@ -12,8 +12,10 @@ dependencies = [
     "textual>=6.8.0",
     "huey>=2.5.4",
     "python-statemachine>=2.5.0",
-    "huggingface_hub>=1.2.1",
+    "huggingface_hub>=0.34.0,<1.0",
     "striprtf>=0.0.29",
+    "onnxruntime>=1.23.2",
+    "transformers>=4.57.3",
 ]
 
 [project.optional-dependencies]

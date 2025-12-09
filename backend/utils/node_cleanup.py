@@ -1,7 +1,6 @@
 """Post-extraction entity name cleanup.
 
-Light-touch fixes for common extraction issues. Complex transformations
-are left to DSPy optimization.
+Light-touch fixes for common extraction issues.
 """
 
 import re
@@ -58,39 +57,3 @@ def cleanup_entity_name(name: str) -> str | None:
         logger.info("Cleaned entity: %r -> %r", original, name)
 
     return name
-
-
-def cleanup_extracted_entities(entities: list) -> list:
-    """Clean up a list of extracted entities.
-
-    Args:
-        entities: List of ExtractedEntity objects (with .name and .entity_type_id)
-
-    Returns:
-        Cleaned list with modified names, discarded invalid entries,
-        and duplicates merged (first occurrence wins)
-    """
-    from backend.graph.extract_nodes import ExtractedEntity
-
-    seen: dict[str, int] = {}  # lowercase name -> index in cleaned list
-    cleaned = []
-
-    for entity in entities:
-        cleaned_name = cleanup_entity_name(entity.name)
-        if cleaned_name is None:
-            continue
-
-        # Dedupe within batch (case-insensitive, first wins)
-        key = cleaned_name.lower()
-        if key in seen:
-            logger.info("Skipping duplicate: %r (have %r)",
-                        cleaned_name, cleaned[seen[key]].name)
-            continue
-
-        seen[key] = len(cleaned)
-        cleaned.append(ExtractedEntity(
-            name=cleaned_name,
-            entity_type_id=entity.entity_type_id,
-        ))
-
-    return cleaned

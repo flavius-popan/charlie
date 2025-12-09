@@ -1,89 +1,66 @@
-"""Entity type definitions for journal entry extraction."""
+"""Entity type definitions for NER-extracted entities."""
 
 from pydantic import BaseModel
 
 
 class Person(BaseModel):
-    """Person entity type."""
+    """Individual people mentioned by name (PER from NER)."""
 
     pass
 
 
-class Place(BaseModel):
-    """Location or venue entity type."""
+class Location(BaseModel):
+    """Specific named locations and venues (LOC from NER)."""
 
     pass
 
 
-class Group(BaseModel):
-    """Team, club, friend circle, or organization entity type."""
+class Organization(BaseModel):
+    """Named teams, clubs, companies, or organizations (ORG from NER)."""
 
     pass
 
 
-class Activity(BaseModel):
-    """Event, occasion, outing, or routine entity type."""
+class Miscellaneous(BaseModel):
+    """Named events, products, or other entities not fitting PER/LOC/ORG (MISC from NER)."""
 
     pass
 
 
 entity_types = {
     "Person": Person,
-    "Place": Place,
-    "Group": Group,
-    "Activity": Activity,
+    "Location": Location,
+    "Organization": Organization,
+    "Miscellaneous": Miscellaneous,
+}
+
+# NER label to entity type mapping
+NER_LABEL_MAP = {
+    "PER": "Person",
+    "LOC": "Location",
+    "ORG": "Organization",
+    "MISC": "Miscellaneous",
+}
+
+# Type ID mapping (for backwards compatibility with existing code)
+TYPE_IDS = {
+    "Person": 1,
+    "Location": 2,
+    "Organization": 3,
+    "Miscellaneous": 4,
 }
 
 
-def format_entity_types_for_llm(types: dict | None = None) -> str:
-    """Convert type definitions to JSON for LLM extraction.
-
-    Args:
-        types: Entity type dict (defaults to entity_types)
-
-    Returns:
-        JSON string containing entity type definitions
-    """
-    import json
-
-    if types is None:
-        types = entity_types
-
-    type_list = []
-
-    type_ids = {
-        "Person": 1,
-        "Place": 2,
-        "Group": 3,
-        "Activity": 4,
-    }
-
-    descriptions = {
-        "Person": "individual people mentioned by name",
-        "Place": "specific named locations and venues",
-        "Group": "named teams, clubs, friend circles, or organizations",
-        "Activity": "named events, occasions, outings, or recurring routines",
-    }
-
-    for name, _ in types.items():
-        type_list.append(
-            {
-                "entity_type_id": type_ids.get(name, 0),
-                "entity_type_name": name,
-                "entity_type_description": descriptions.get(
-                    name, f"{name} entity type"
-                ),
-            }
-        )
-
-    return json.dumps(type_list)
+def get_type_name_from_ner_label(ner_label: str) -> str:
+    """Map NER label (PER, LOC, ORG, MISC) to entity type name."""
+    return NER_LABEL_MAP.get(ner_label, "Miscellaneous")
 
 
 def get_type_name_from_id(type_id: int, types: dict | None = None) -> str:
     """Map entity_type_id back to type name.
 
     Args:
-        type_id: Entity type ID (1-4 for Person, Place, Group, Activity)
+        type_id: Entity type ID (1-4 for Person, Location, Organization, Miscellaneous)
         types: Entity type dict (defaults to entity_types)
 
     Returns:
@@ -106,10 +83,12 @@ def get_type_name_from_id(type_id: int, types: dict | None = None) -> str:
 
 __all__ = [
     "Person",
-    "Place",
-    "Group",
-    "Activity",
+    "Location",
+    "Organization",
+    "Miscellaneous",
     "entity_types",
-    "format_entity_types_for_llm",
+    "NER_LABEL_MAP",
+    "TYPE_IDS",
+    "get_type_name_from_ner_label",
     "get_type_name_from_id",
 ]

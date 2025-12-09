@@ -3,20 +3,19 @@
 import pytest
 
 
-def test_entity_extractor_pydantic_models():
-    """Test Pydantic models for DSPy."""
-    from backend.graph.extract_nodes import ExtractedEntity, ExtractedEntities
+def test_extracted_entity_dataclass():
+    """Test ExtractedEntity dataclass."""
+    from backend.graph.extract_nodes import ExtractedEntity
 
-    entity = ExtractedEntity(name="Sarah", entity_type_id=1)
+    entity = ExtractedEntity(name="Sarah", entity_type="Person")
     assert entity.name == "Sarah"
-
-    entities = ExtractedEntities.model_validate([{"name": "Sarah", "entity_type_id": 1}])
-    assert len(entities.extracted_entities) == 1
+    assert entity.entity_type == "Person"
 
 
 def test_extract_nodes_exported():
     """Test extract_nodes is importable from backend."""
     from backend import extract_nodes, ExtractNodesResult
+
     assert callable(extract_nodes)
     assert ExtractNodesResult is not None
 
@@ -33,24 +32,29 @@ def test_should_use_llm_dedupe_logic():
     from backend.graph.extract_nodes import should_use_llm_dedupe
 
     # Case 1: Queue has items -> use queue mode (batch pending)
-    with patch("backend.graph.extract_nodes.get_unresolved_entities_count", return_value=5):
+    with patch(
+        "backend.graph.extract_nodes.get_unresolved_entities_count", return_value=5
+    ):
         assert should_use_llm_dedupe("test_journal", existing_entity_count=10) is False
         assert should_use_llm_dedupe("test_journal", existing_entity_count=0) is False
 
     # Case 2: Queue empty + no entities -> use queue mode (new journal)
-    with patch("backend.graph.extract_nodes.get_unresolved_entities_count", return_value=0):
+    with patch(
+        "backend.graph.extract_nodes.get_unresolved_entities_count", return_value=0
+    ):
         assert should_use_llm_dedupe("test_journal", existing_entity_count=0) is False
 
     # Case 3: Queue empty + has entities -> use LLM per-episode mode
-    with patch("backend.graph.extract_nodes.get_unresolved_entities_count", return_value=0):
+    with patch(
+        "backend.graph.extract_nodes.get_unresolved_entities_count", return_value=0
+    ):
         assert should_use_llm_dedupe("test_journal", existing_entity_count=10) is True
         assert should_use_llm_dedupe("test_journal", existing_entity_count=1) is True
 
 
-@pytest.mark.inference
 @pytest.mark.asyncio
-async def test_extract_nodes_basic(isolated_graph, require_llm):
-    """Test end-to-end entity extraction."""
+async def test_extract_nodes_basic(isolated_graph):
+    """Test end-to-end entity extraction with NER."""
     from backend import add_journal_entry, extract_nodes
     from backend.settings import DEFAULT_JOURNAL
     from backend.database import get_driver
@@ -67,17 +71,12 @@ async def test_extract_nodes_basic(isolated_graph, require_llm):
     query = "MATCH (e:Entity) WHERE e.name <> 'I' RETURN count(e)"
     count_result = await driver.execute_query(query)
     count = count_result[0][0]["count(e)"]
-    assert count >= 2
+    assert count >= 1
 
 
-@pytest.mark.inference
 @pytest.mark.asyncio
-async def test_extract_nodes_deduplication(isolated_graph, require_llm):
-    """Test entity deduplication across multiple entries.
-
-    Note: Without DSPy optimization, the LLM may use generic Entity type.
-    This test focuses on deduplication logic, not type classification.
-    """
+async def test_extract_nodes_deduplication(isolated_graph):
+    """Test entity deduplication across multiple entries."""
     from backend import add_journal_entry, extract_nodes
     from backend.settings import DEFAULT_JOURNAL
     from backend.database import get_driver
@@ -99,20 +98,17 @@ async def test_extract_nodes_deduplication(isolated_graph, require_llm):
     assert count == 1, f"Should deduplicate Sarah across entries (found {count})"
 
 
-@pytest.mark.inference
 @pytest.mark.asyncio
-async def test_extract_nodes_entity_types(isolated_graph, require_llm):
+async def test_extract_nodes_entity_types(isolated_graph):
     """Test that entity extraction produces typed entities.
 
-    Note: Without DSPy optimization/few-shot examples, the LLM may conservatively
-    use generic Entity type. This test verifies entities ARE extracted, and that
-    the type system works (at least some entities get specific types).
+    NER extracts entities with types: Person, Location, Organization, Miscellaneous
     """
     from backend import add_journal_entry, extract_nodes
     from backend.settings import DEFAULT_JOURNAL
     from backend.database import get_driver
 
-    content = "I met Sarah at Starbucks for our weekly coffee meetup. We discussed joining the Book Club together."
+    content = "I met Sarah at Starbucks in New York."
     episode_uuid = await add_journal_entry(content)
 
     result = await extract_nodes(episode_uuid, DEFAULT_JOURNAL)
@@ -129,36 +125,14 @@ async def test_extract_nodes_entity_types(isolated_graph, require_llm):
 
     typed_entities = [e for e in all_entities if len(e["labels(e)"]) > 1]
 
-    assert len(typed_entities) > 0 or result.extracted_count > 0, (
-        "Entity extraction should work. With DSPy optimization, specific types "
-        f"(Person/Place/etc) would be used. Found {len(all_entities)} entities, "
-        f"{len(typed_entities)} with specific types."
+    assert len(typed_entities) > 0, (
+        f"NER should produce typed entities (Person/Location/Organization/Miscellaneous). "
+        f"Found {len(all_entities)} entities, {len(typed_entities)} with specific types."
     )
 
 
 @pytest.mark.asyncio
-async def test_extract_nodes_no_llm_configured(isolated_graph):
-    """Test that extract_nodes raises RuntimeError when LLM not configured."""
-    import dspy
-    from backend import add_journal_entry, extract_nodes
-    from backend.settings import DEFAULT_JOURNAL
-
-    content = "Today I met Sarah at Central Park."
-    episode_uuid = await add_journal_entry(content)
-
-    original_lm = dspy.settings.lm
-    try:
-        dspy.settings.configure(lm=None)
-
-        with pytest.raises(RuntimeError, match="No LLM configured"):
-            await extract_nodes(episode_uuid, DEFAULT_JOURNAL)
-    finally:
-        dspy.settings.configure(lm=original_lm)
-
-
-@pytest.mark.inference
-@pytest.mark.asyncio
-async def test_extract_nodes_invalid_episode(isolated_graph, require_llm):
+async def test_extract_nodes_invalid_episode(isolated_graph):
     """Test that extract_nodes handles invalid episode_uuid gracefully."""
     from backend import extract_nodes
     from backend.settings import DEFAULT_JOURNAL
@@ -167,9 +141,8 @@ async def test_extract_nodes_invalid_episode(isolated_graph, require_llm):
         await extract_nodes("nonexistent-uuid", DEFAULT_JOURNAL)
 
 
-@pytest.mark.inference
 @pytest.mark.asyncio
-async def test_extract_nodes_minimal_content(isolated_graph, require_llm):
+async def test_extract_nodes_minimal_content(isolated_graph):
     """Test extraction with minimal journal content."""
     from backend import add_journal_entry, extract_nodes
     from backend.settings import DEFAULT_JOURNAL
@@ -183,9 +156,8 @@ async def test_extract_nodes_minimal_content(isolated_graph, require_llm):
     assert result.resolved_count >= 0
 
 
-@pytest.mark.inference
 @pytest.mark.asyncio
-async def test_extract_nodes_no_entities(isolated_graph, require_llm):
+async def test_extract_nodes_no_entities(isolated_graph):
     """Test extraction with content containing no extractable entities."""
     from backend import add_journal_entry, extract_nodes
     from backend.settings import DEFAULT_JOURNAL
@@ -200,9 +172,8 @@ async def test_extract_nodes_no_entities(isolated_graph, require_llm):
     assert result.resolved_count >= 0
 
 
-@pytest.mark.inference
 @pytest.mark.asyncio
-async def test_extract_nodes_dedupe_disabled(isolated_graph, require_llm):
+async def test_extract_nodes_dedupe_disabled(isolated_graph):
     """Test that dedupe_enabled=False skips deduplication."""
     from backend import add_journal_entry, extract_nodes
     from backend.settings import DEFAULT_JOURNAL
@@ -225,9 +196,8 @@ async def test_extract_nodes_dedupe_disabled(isolated_graph, require_llm):
     assert count >= 2, "With dedupe disabled, should create multiple Sarah entities"
 
 
-@pytest.mark.inference
 @pytest.mark.asyncio
-async def test_extract_nodes_mentions_edges_created(isolated_graph, require_llm):
+async def test_extract_nodes_mentions_edges_created(isolated_graph):
     """Test that MENTIONS edges are created from episode to entities."""
     from backend import add_journal_entry, extract_nodes
     from backend.settings import DEFAULT_JOURNAL
@@ -256,9 +226,8 @@ async def test_extract_nodes_mentions_edges_created(isolated_graph, require_llm)
     )
 
 
-@pytest.mark.inference
 @pytest.mark.asyncio
-async def test_extract_nodes_result_metadata_accuracy(isolated_graph, require_llm):
+async def test_extract_nodes_result_metadata_accuracy(isolated_graph):
     """Test that ExtractNodesResult metadata is accurate."""
     from backend import add_journal_entry, extract_nodes
     from backend.settings import DEFAULT_JOURNAL
@@ -300,9 +269,8 @@ async def test_extract_nodes_result_metadata_accuracy(isolated_graph, require_ll
         assert len(entity_result[0]) > 0, f"Entity {uuid} should exist in database"
 
 
-@pytest.mark.inference
 @pytest.mark.asyncio
-async def test_extract_nodes_case_insensitive_dedup(isolated_graph, require_llm):
+async def test_extract_nodes_case_insensitive_dedup(isolated_graph):
     """Test deduplication handles case variations."""
     from backend import add_journal_entry, extract_nodes
     from backend.settings import DEFAULT_JOURNAL
@@ -326,9 +294,8 @@ async def test_extract_nodes_case_insensitive_dedup(isolated_graph, require_llm)
     assert count == 1, f"Should deduplicate Sarah/SARAH into one entity (found {count})"
 
 
-@pytest.mark.inference
 @pytest.mark.asyncio
-async def test_extract_nodes_whitespace_variations(isolated_graph, require_llm):
+async def test_extract_nodes_whitespace_variations(isolated_graph):
     """Test deduplication handles whitespace variations."""
     from backend import add_journal_entry, extract_nodes
     from backend.settings import DEFAULT_JOURNAL
@@ -348,9 +315,8 @@ async def test_extract_nodes_whitespace_variations(isolated_graph, require_llm):
     assert count <= 2, "Should handle whitespace variations in entity names"
 
 
-@pytest.mark.inference
 @pytest.mark.asyncio
-async def test_extract_nodes_uuid_map_correctness(isolated_graph, require_llm):
+async def test_extract_nodes_uuid_map_correctness(isolated_graph):
     """Test that uuid_map correctly maps provisional to canonical UUIDs."""
     from backend import add_journal_entry, extract_nodes
     from backend.settings import DEFAULT_JOURNAL
@@ -369,17 +335,19 @@ async def test_extract_nodes_uuid_map_correctness(isolated_graph, require_llm):
     result2 = await extract_nodes(uuid2, DEFAULT_JOURNAL)
 
     sarah_mappings = [
-        (prov, canon) for prov, canon in result2.uuid_map.items()
+        (prov, canon)
+        for prov, canon in result2.uuid_map.items()
         if any(uuid in result1.entity_uuids for uuid in [canon])
     ]
 
     if result2.exact_matches > 0 or result2.fuzzy_matches > 0:
-        assert len(sarah_mappings) > 0, "uuid_map should map to existing entities when dedupe occurs"
+        assert (
+            len(sarah_mappings) > 0
+        ), "uuid_map should map to existing entities when dedupe occurs"
 
 
-@pytest.mark.inference
 @pytest.mark.asyncio
-async def test_extract_nodes_writes_to_redis_cache(isolated_graph, require_llm):
+async def test_extract_nodes_writes_to_redis_cache(isolated_graph):
     """Test that extract_nodes writes entity data to Redis after DB write."""
     from backend import add_journal_entry, extract_nodes
     from backend.settings import DEFAULT_JOURNAL
@@ -397,7 +365,9 @@ async def test_extract_nodes_writes_to_redis_cache(isolated_graph, require_llm):
         assert nodes_json is not None, "Should write nodes to Redis cache"
 
         nodes = json.loads(nodes_json.decode())
-        assert len(nodes) >= 2, f"Should have at least Sarah and Starbucks (found {len(nodes)})"
+        assert (
+            len(nodes) >= 2
+        ), f"Should have at least Sarah and Starbucks (found {len(nodes)})"
 
         entity_names = [n["name"] for n in nodes]
         assert "Sarah" in entity_names

@@ -1,11 +1,14 @@
-"""Entity extraction using DistilBERT NER."""
+"""Entity extraction DSPy module and orchestrator."""
 
 import asyncio
 import json
 import logging
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 
+import dspy
+from pydantic import BaseModel, model_validator
 from graphiti_core.nodes import EntityNode, EpisodicNode
 from graphiti_core.edges import EpisodicEdge
 from graphiti_core.utils.datetime_utils import utc_now
@@ -26,8 +29,6 @@ from backend.database.redis_ops import (
     get_unresolved_entities_count,
 )
 from backend.database.queries import get_entry_suppressed_entities
-from backend.ner import predict_entities
-from backend.graph.entities_edges import get_type_name_from_ner_label
 
 logger = logging.getLogger(__name__)
 
@@ -58,12 +59,82 @@ def should_use_llm_dedupe(journal: str, existing_entity_count: int) -> bool:
     return queue_empty and has_entities
 
 
-@dataclass
-class ExtractedEntity:
-    """Entity extracted by NER with type classification."""
+class ExtractedEntity(BaseModel):
+    """Named entity with type classification."""
 
     name: str
-    entity_type: str  # Person, Location, Organization, Miscellaneous
+    entity_type_id: int
+
+
+class ExtractedEntities(BaseModel):
+    """Collection of extracted entities."""
+
+    extracted_entities: list[ExtractedEntity]
+
+    @model_validator(mode="before")
+    @classmethod
+    def coerce_list(cls, data):
+        """Allow direct list input for DSPy compatibility."""
+        if isinstance(data, list):
+            return {"extracted_entities": data}
+        return data
+
+
+class EntityExtractionSignature(dspy.Signature):
+    """Extract meaningful entities from a personal journal entry."""
+
+    episode_content: str = dspy.InputField(desc="personal journal entry text")
+    entity_types: str = dspy.InputField(
+        desc="available entity type definitions with IDs"
+    )
+    extracted_entities: ExtractedEntities = dspy.OutputField(
+        desc="entities found in the journal entry, each with name and most specific type ID"
+    )
+
+
+class EntityExtractor(dspy.Module):
+    """LLM-based entity extraction module.
+
+    Configured via dspy.context(lm=...) by caller.
+    Optimizable with DSPy teleprompters.
+    """
+
+    _prompts_loaded: bool = False
+
+    def __init__(self, load_prompts: bool = True):
+        super().__init__()
+        self.extractor = dspy.ChainOfThought(EntityExtractionSignature)
+        if load_prompts:
+            self._load_optimized_prompts()
+
+    def _load_optimized_prompts(self):
+        """Load optimized prompts if available (once per process)."""
+        if EntityExtractor._prompts_loaded:
+            return
+
+        prompt_path = Path(__file__).parent.parent / "prompts" / "extract_nodes.json"
+        if prompt_path.exists():
+            try:
+                self.load(str(prompt_path))
+                logger.info("Loaded optimized prompts from %s", prompt_path)
+                EntityExtractor._prompts_loaded = True
+            except Exception as e:
+                logger.warning("Failed to load prompts: %s", e)
+
+    def forward(self, episode_content: str, entity_types: str) -> ExtractedEntities:
+        """Extract entities from text.
+
+        Args:
+            episode_content: Journal entry text
+            entity_types: JSON string of entity type definitions
+
+        Returns:
+            ExtractedEntities containing extracted entities
+        """
+        result = self.extractor(
+            episode_content=episode_content, entity_types=entity_types
+        )
+        return result.extracted_entities
 
 
 @dataclass
@@ -78,30 +149,6 @@ class ExtractNodesResult:
     fuzzy_matches: int
     entity_uuids: list[str]
     uuid_map: dict[str, str]
-
-
-def _extract_entities_with_ner(content: str) -> list[ExtractedEntity]:
-    """Extract entities from text using DistilBERT NER.
-
-    Args:
-        content: Journal entry text
-
-    Returns:
-        List of ExtractedEntity with name and type
-    """
-    raw_entities = predict_entities(content)
-
-    entities = []
-    for entity in raw_entities:
-        entity_type = get_type_name_from_ner_label(entity["label"])
-        entities.append(
-            ExtractedEntity(
-                name=entity["text"],
-                entity_type=entity_type,
-            )
-        )
-
-    return entities
 
 
 async def _fetch_existing_entities(driver, group_id: str) -> dict[str, EntityNode]:
@@ -316,19 +363,18 @@ async def extract_nodes(
     entity_types: dict | None = None,
     dedupe_enabled: bool = True,
 ) -> ExtractNodesResult:
-    """Extract and resolve entities from an episode using NER.
+    """Extract and resolve entities from an episode.
 
     Pipeline:
     1. Fetch episode from database
-    2. Extract entities via DistilBERT NER (fast, synchronous)
+    2. Extract entities via EntityExtractor (DSPy LLM)
     3. Filter out suppressed entities (two-tier check)
-    4. Clean up entity names
-    5. Fetch existing entities for deduplication
-    6. Resolve duplicates (MinHash LSH + exact matching)
-    7. Queue unresolved entities for batch LLM dedupe
-    8. Create MENTIONS edges (episode -> entities)
-    9. Persist entities and edges
-    10. Return metadata
+    4. Fetch existing entities for deduplication
+    5. Resolve duplicates (MinHash LSH + exact matching)
+    6. Queue unresolved entities for batch LLM dedupe (or call LLM inline)
+    7. Create MENTIONS edges (episode -> entities)
+    8. Persist entities and edges
+    9. Return metadata
 
     Suppression Filtering
     ---------------------
@@ -347,34 +393,67 @@ async def extract_nodes(
        - Exact name matching (case-insensitive)
        - High-confidence matches resolved immediately
 
-    2. UNRESOLVED HANDLING:
-       - Entities that MinHash can't match are queued to Redis
+    2. UNRESOLVED HANDLING (depends on should_use_llm_dedupe()):
+       - Queue mode: Entities that MinHash can't match are queued to Redis
          (dedup:unresolved:{journal}) for future batch LLM deduplication.
+         Used during bulk imports for speed.
+
+       - LLM mode: When queue is empty and graph has entities, will call
+         LLM dedupe inline for unresolved entities (NOT YET IMPLEMENTED).
+         Used after batch job completes for incremental entries.
+
+    The same DSPy LLM dedupe module will be used by both:
+    - Per-episode: Called inline after MinHash fails
+    - Batch job: Called on entities fetched from graph via queued UUIDs
+
+    Batch Job Contract (see redis_ops.pop_unresolved_entities):
+    1. Pop UUIDs from Redis queue
+    2. Fetch entity data from graph (handle missing gracefully)
+    3. Sort by name for LLM context efficiency
+    4. Run DSPy LLM dedupe to identify duplicate groups
+    5. Merge duplicates in graph (redirect edges, delete duplicate nodes)
 
     Args:
         episode_uuid: Episode UUID string
         journal: Journal name
-        entity_types: Entity type dict (ignored, NER types are fixed)
+        entity_types: Entity type dict (defaults to backend.graph.entities_edges.entity_types)
         dedupe_enabled: Whether to enable deduplication (default True)
 
     Returns:
         ExtractNodesResult with extraction metadata
 
     Raises:
-        RuntimeError: If episode not found
+        RuntimeError: If LLM is not configured or episode not found
     """
     from backend.database.driver import get_driver
     from backend.database.persistence import persist_entities_and_edges
-    from backend.utils.node_cleanup import cleanup_entity_name
+    from backend.graph.entities_edges import (
+        entity_types as default_entity_types,
+        format_entity_types_for_llm,
+        get_type_name_from_id,
+    )
+
+    if entity_types is None:
+        entity_types = default_entity_types
+
+    if dspy.settings.lm is None:
+        raise RuntimeError(
+            "No LLM configured. Set dspy.settings.lm before calling extract_nodes()"
+        )
 
     driver = get_driver(journal)
 
     episode = await EpisodicNode.get_by_uuid(driver, episode_uuid)
 
-    # NER extraction (fast, synchronous)
-    extracted = _extract_entities_with_ner(episode.content)
+    entity_types_json = format_entity_types_for_llm(entity_types)
 
-    logger.info("NER extracted %d entities", len(extracted))
+    extractor = EntityExtractor()
+    extracted = extractor(
+        episode_content=episode.content,
+        entity_types=entity_types_json,
+    )
+
+    logger.info("Extracted %d provisional entities", len(extracted.extracted_entities))
 
     # Check both global (journal-level) and entry-level suppression
     global_suppressed = get_suppressed_entities(journal)
@@ -387,11 +466,11 @@ async def extract_nodes(
         entry_suppressed = set()
     suppressed = global_suppressed | entry_suppressed
 
-    filtered_entities = extracted
+    filtered_entities = extracted.extracted_entities
     if suppressed:
-        original_count = len(extracted)
+        original_count = len(extracted.extracted_entities)
         filtered_entities = [
-            e for e in extracted if e.name.lower() not in suppressed
+            e for e in extracted.extracted_entities if e.name.lower() not in suppressed
         ]
         filtered_count = original_count - len(filtered_entities)
         if filtered_count > 0:
@@ -401,30 +480,17 @@ async def extract_nodes(
                 episode_uuid,
             )
 
-    # Clean up entity names and dedupe within batch
-    cleaned_entities = []
-    seen_names: set[str] = set()
-    for entity in filtered_entities:
-        cleaned_name = cleanup_entity_name(entity.name)
-        if cleaned_name is None:
-            continue
-        key = cleaned_name.lower()
-        if key in seen_names:
-            continue
-        seen_names.add(key)
-        cleaned_entities.append(
-            ExtractedEntity(
-                name=cleaned_name,
-                entity_type=entity.entity_type,
-            )
-        )
-    filtered_entities = cleaned_entities
+    # Clean up entity names (strip verb prefixes, time modifiers, etc.)
+    from backend.utils.node_cleanup import cleanup_extracted_entities
+
+    filtered_entities = cleanup_extracted_entities(filtered_entities)
 
     provisional_nodes = []
     for entity in filtered_entities:
+        type_name = get_type_name_from_id(entity.entity_type_id, entity_types)
         labels = ["Entity"]
-        if entity.entity_type != "Entity":
-            labels.append(entity.entity_type)
+        if type_name != "Entity":
+            labels.append(type_name)
 
         node = EntityNode(
             name=entity.name,
@@ -462,11 +528,11 @@ async def extract_nodes(
         if canonical_uuid == prov_node.uuid and canonical_uuid not in existing_uuid_set:
             unresolved_uuids.append(prov_node.uuid)
 
-    # Queue unresolved entities for batch processing
+    # Handle unresolved entities based on automatic mode detection
     if unresolved_uuids:
         use_llm = should_use_llm_dedupe(journal, len(existing_nodes))
         if use_llm:
-            # Future: Call LLM dedupe inline
+            # TODO: Call LLM dedupe inline (future implementation)
             # For now, still queue - LLM dedupe module not yet built
             append_unresolved_entities(journal, unresolved_uuids)
             logger.info(
@@ -577,6 +643,9 @@ async def extract_nodes(
 
 __all__ = [
     "ExtractedEntity",
+    "ExtractedEntities",
+    "EntityExtractionSignature",
+    "EntityExtractor",
     "ExtractNodesResult",
     "extract_nodes",
 ]

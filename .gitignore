@@ -23,6 +23,7 @@ pipeline/prompts/gepa/
 pipeline/prompts/.dspy_cache/
 importers/custom/*
 !importers/custom/.gitkeep
+*.onnx
 
 # Database files (FalkorDB/Redis)
 data/*.db
