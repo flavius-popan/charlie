@@ -370,13 +370,10 @@ async def extract_nodes(
     driver = get_driver(journal)
 
     episode = await EpisodicNode.get_by_uuid(driver, episode_uuid)
-
-    # NER extraction (fast, synchronous)
     extracted = _extract_entities_with_ner(episode.content)
 
     logger.info("NER extracted %d entities", len(extracted))
 
-    # Check both global (journal-level) and entry-level suppression
     global_suppressed = get_suppressed_entities(journal)
     try:
         entry_suppressed = await get_entry_suppressed_entities(journal, episode_uuid)
@@ -401,7 +398,6 @@ async def extract_nodes(
                 episode_uuid,
             )
 
-    # Clean up entity names and dedupe within batch
     cleaned_entities = []
     seen_names: set[str] = set()
     for entity in filtered_entities:
@@ -454,15 +450,12 @@ async def extract_nodes(
         dedupe_enabled,
     )
 
-    # Identify unresolved entities (MinHash couldn't match to existing ones)
     unresolved_uuids = []
     for prov_node in provisional_nodes:
         canonical_uuid = uuid_map.get(prov_node.uuid, prov_node.uuid)
-        # If it mapped to itself AND wasn't in existing entities, it's truly new
         if canonical_uuid == prov_node.uuid and canonical_uuid not in existing_uuid_set:
             unresolved_uuids.append(prov_node.uuid)
 
-    # Queue unresolved entities for batch processing
     if unresolved_uuids:
         use_llm = should_use_llm_dedupe(journal, len(existing_nodes))
         if use_llm:

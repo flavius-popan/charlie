@@ -186,30 +186,20 @@ class EntityExtractor:
             offset_mapping: Optional list of (start_char, end_char) tuples for each token
             original_text: Original input text (used to detect sentence boundaries)
         """
-        # Group tokens into words and aggregate labels
         words = self._group_tokens_into_words(
             tokens, labels, attention_mask, probabilities, label_ids
         )
-
-        # Aggregate words into entities
         entities = self._aggregate_words_into_entities(words)
-
-        # Merge fragmented entities (e.g., "G.I. Joe" split into ["G", ".", "I. Joe"])
         entities = self._merge_fragmented_entities(
             entities, tokens, original_text, offset_mapping
         )
 
-        # Add character offsets if available
         if offset_mapping:
             for entity in entities:
                 start_token = entity["start_token"]
                 end_token = entity["end_token"]
-
-                # Get character offsets from first and last tokens
-                # Skip special tokens (which have offset (0, 0))
                 start_char = offset_mapping[start_token][0]
                 end_char = offset_mapping[end_token][1]
-
                 entity["start_char"] = start_char
                 entity["end_char"] = end_char
 
@@ -228,18 +218,15 @@ class EntityExtractor:
         current_word = None
 
         for idx, (token, label, mask) in enumerate(zip(tokens, labels, attention_mask)):
-            # Skip padding and special tokens
             if mask == 0 or token in ["[CLS]", "[SEP]", "[PAD]"]:
                 if current_word:
                     words.append(current_word)
                     current_word = None
                 continue
 
-            # Check if this is a subword token
             is_subword = token.startswith("##")
 
             if is_subword and current_word:
-                # Continue the current word
                 current_word["tokens"].append(token)
                 current_word["labels"].append(label)
                 current_word["end_token"] = idx
@@ -248,7 +235,6 @@ class EntityExtractor:
                         probabilities[idx, label_ids[idx]]
                     )
             else:
-                # Start a new word
                 if current_word:
                     words.append(current_word)
                 word_data = {
@@ -261,7 +247,6 @@ class EntityExtractor:
                     word_data["confidences"] = [probabilities[idx, label_ids[idx]]]
                 current_word = word_data
 
-        # Don't forget last word
         if current_word:
             words.append(current_word)
 
@@ -273,13 +258,10 @@ class EntityExtractor:
         current_entity = None
 
         for word in words:
-            # Use 'first' strategy: take the label of the first token
             first_label = word["labels"][0]
 
             if first_label == "O":
-                # Not an entity - save previous entity if exists
                 if current_entity:
-                    # Calculate mean confidence before saving
                     if "confidences" in current_entity:
                         current_entity["confidence"] = float(
                             np.mean(current_entity["confidences"])
@@ -289,15 +271,11 @@ class EntityExtractor:
                     current_entity = None
                 continue
 
-            # Extract entity type (remove B-/I- prefix)
             entity_type = (
                 first_label[2:] if first_label.startswith(("B-", "I-")) else first_label
             )
 
-            # Check if we should merge with previous entity
-            # According to BIO scheme:
-            # - B- prefix = Beginning of NEW entity (do NOT merge)
-            # - I- prefix = Inside/continuation of entity (merge with previous)
+            # BIO scheme: B- = new entity, I- = continuation
             should_merge = (
                 current_entity
                 and current_entity["label"] == entity_type
@@ -305,20 +283,17 @@ class EntityExtractor:
             )
 
             if should_merge:
-                # Extend current entity
                 current_entity["end_token"] = word["end_token"]
                 current_entity["tokens"].extend(word["tokens"])
                 if "confidences" in word:
                     current_entity["confidences"].extend(word["confidences"])
             else:
-                # Save previous entity and start new one
                 if current_entity:
-                    # Calculate mean confidence before saving
                     if "confidences" in current_entity:
                         current_entity["confidence"] = float(
                             np.mean(current_entity["confidences"])
                         )
-                        del current_entity["confidences"]  # Remove intermediate list
+                        del current_entity["confidences"]
                     entities.append(current_entity)
 
                 entity_data = {
@@ -331,14 +306,12 @@ class EntityExtractor:
                     entity_data["confidences"] = word["confidences"][:]
                 current_entity = entity_data
 
-        # Don't forget last entity
         if current_entity:
-            # Calculate mean confidence for the final entity
             if "confidences" in current_entity:
                 current_entity["confidence"] = float(
                     np.mean(current_entity["confidences"])
                 )
-                del current_entity["confidences"]  # Remove intermediate list
+                del current_entity["confidences"]
             entities.append(current_entity)
 
         return entities
@@ -382,30 +355,19 @@ class EntityExtractor:
 
         while i < len(entities):
             current = entities[i]
-
-            # Look ahead to find consecutive entities that should be merged
             j = i + 1
+
             while j < len(entities):
                 next_entity = entities[j]
-
-                # Check if entities are adjacent or very close (within 2 tokens)
                 gap = next_entity["start_token"] - current["end_token"]
                 if gap > 2:
                     break
 
-                # Check if this looks like fragmentation that should be merged
                 should_merge = False
-
-                # Strategy 1: Check if current entity contains periods (abbreviation marker)
-                # Examples: "G.I." should merge with "Joe" even if different types
                 current_has_periods = "." in "".join(current["tokens"])
 
-                # If current entity has periods and entities are close, merge regardless of type
-                # This fixes "G.I. [ORG]" + "Joe [MISC]" -> "G.I. Joe"
                 if current_has_periods and gap <= 1:
                     should_merge = True
-
-                # Strategy 2: Only merge same-type entities if current has short fragments
                 elif current["label"] == next_entity["label"]:
                     current_has_short_tokens = any(
                         len(token.strip("##")) <= 2 for token in current["tokens"]
@@ -413,33 +375,24 @@ class EntityExtractor:
                     if current_has_short_tokens:
                         should_merge = True
 
-                # Strategy 2: Check if gap between entities contains periods/dots
-                # BUT exclude sentence boundaries (detected by newlines in original text)
                 if gap > 0:
                     gap_start = current["end_token"] + 1
                     gap_end = next_entity["start_token"]
-                    gap_tokens = tokens[gap_start:gap_end]
-                    # Remove special tokens
                     gap_tokens = [
-                        t for t in gap_tokens if t not in ["[CLS]", "[SEP]", "[PAD]"]
+                        t
+                        for t in tokens[gap_start:gap_end]
+                        if t not in ["[CLS]", "[SEP]", "[PAD]"]
                     ]
 
                     if gap_tokens:
-                        # Check if all gap tokens are periods/dots (abbreviation markers)
                         has_period_gap = all(
                             token.strip("##") == "." for token in gap_tokens
                         )
 
                         if has_period_gap:
-                            # Check if gap contains sentence boundary markers:
-                            # 1. Newlines: "Riley.\n\nXANDER"
-                            # 2. Period + capital letter: "Riley. Joe" (sentence start)
-                            # This prevents sentence boundaries from merging
-                            # while allowing abbreviations like "G.I. Joe" to merge
                             has_sentence_boundary = False
 
                             if original_text and offset_mapping:
-                                # Use offset_mapping to find character positions
                                 current_end_char = offset_mapping[current["end_token"]][
                                     1
                                 ]
@@ -450,12 +403,9 @@ class EntityExtractor:
                                     current_end_char:next_start_char
                                 ]
 
-                                # Check for sentence boundary markers
                                 if "\n" in gap_text:
                                     has_sentence_boundary = True
                                 elif next_start_char < len(original_text):
-                                    # Check if next entity starts with capital letter after period
-                                    # This catches "Riley. Joe" but not "G.I. Joe" (no space before capital)
                                     next_char = original_text[next_start_char]
                                     if next_char.isupper() and ". " in gap_text:
                                         has_sentence_boundary = True
@@ -466,31 +416,24 @@ class EntityExtractor:
                 if not should_merge:
                     break
 
-                # Merge current with next_entity
                 current["end_token"] = next_entity["end_token"]
                 current["tokens"].extend(next_entity["tokens"])
 
-                # When merging across types, prefer non-MISC labels
+                # Prefer non-MISC labels when merging across types
                 if current["label"] != next_entity["label"]:
                     if current["label"] == "MISC":
                         current["label"] = next_entity["label"]
-                    # If current is not MISC, keep it (it's more specific)
 
-                # Merge confidence (average)
                 if "confidence" in current and "confidence" in next_entity:
                     current["confidence"] = (
                         current["confidence"] + next_entity["confidence"]
                     ) / 2
 
-                # Move to next entity to potentially merge
                 j += 1
 
-            # Skip all the entities we merged
             i = j
             merged.append(current)
 
-        # Reconstruct text for merged entities using tokenizer
-        # This will be done by the caller
         return merged
 
 
@@ -553,14 +496,13 @@ def predict_entities(
         truncation=True,
         stride=stride,
         return_overflowing_tokens=True,
-        return_offsets_mapping=True,  # Get character offsets for each token
+        return_offsets_mapping=True,
         return_tensors="np",
     )
 
     all_entities = []
-
-    # Process each chunk
     num_chunks = len(encoded["input_ids"])
+
     for chunk_idx in range(num_chunks):
         input_ids = encoded["input_ids"][chunk_idx : chunk_idx + 1].astype(np.int64)
         attention_mask = encoded["attention_mask"][chunk_idx : chunk_idx + 1].astype(
@@ -568,27 +510,20 @@ def predict_entities(
         )
         offset_mapping = encoded["offset_mapping"][chunk_idx].tolist()
 
-        # Run ONNX inference
         outputs = session.run(
-            None,  # Get all outputs
+            None,
             {
                 "input_ids": input_ids,
                 "attention_mask": attention_mask,
             },
         )
 
-        # Extract logits and convert to label predictions
-        logits = outputs[0]  # Shape: (1, max_length, num_labels)
-        label_ids = np.argmax(logits[0], axis=-1)  # Shape: (max_length,)
-
-        # Convert logits to probabilities
-        probabilities = softmax(logits[0], axis=-1)  # Shape: (max_length, num_labels)
-
-        # Decode tokens and labels
+        logits = outputs[0]
+        label_ids = np.argmax(logits[0], axis=-1)
+        probabilities = softmax(logits[0], axis=-1)
         tokens = tokenizer.convert_ids_to_tokens(input_ids[0])
         labels = [ID2LABEL[label_id] for label_id in label_ids]
 
-        # Extract entities from BIO tags with confidence scores and character offsets
         chunk_entities = extractor.extract(
             tokens,
             labels,
@@ -599,36 +534,26 @@ def predict_entities(
             text,
         )
 
-        # Extract entity text from original input using character offsets
         for entity in chunk_entities:
             if "start_char" in entity and "end_char" in entity:
-                # Use original text to preserve capitalization
                 entity["text"] = text[entity["start_char"] : entity["end_char"]]
             else:
-                # Fallback to tokenizer reconstruction (shouldn't happen)
                 entity["text"] = tokenizer.convert_tokens_to_string(entity["tokens"])
             entity["chunk_idx"] = chunk_idx
 
         all_entities.extend(chunk_entities)
 
-    # Deduplicate entities across chunk boundaries
     if num_chunks > 1:
         all_entities = _deduplicate_chunk_entities(all_entities)
 
-    # Remove chunk metadata
     for entity in all_entities:
         entity.pop("chunk_idx", None)
 
-    # Filter out invalid entities (do this AFTER deduplication/merging)
-    # - Single character entities (noise)
-    # - Entities starting with period (fragments like ".A." or ".I. Joe")
     filtered = []
     for e in all_entities:
         text = e["text"].strip()
-        # Skip if too short
         if len(text) <= 1:
             continue
-        # Skip if starts with period (fragment from abbreviation split)
         if text.startswith("."):
             continue
         filtered.append(e)
@@ -649,24 +574,19 @@ def _deduplicate_chunk_entities(entities: list[dict]) -> list[dict]:
     Returns:
         Deduplicated list with highest-confidence version of each entity
     """
-    # Group entities by normalized text and label
-    entity_groups = {}
+    entity_groups: dict[tuple[str, str], list[dict]] = {}
 
     for entity in entities:
-        # Create key based on normalized text and label
         key = (entity["text"].strip().lower(), entity["label"])
-
         if key not in entity_groups:
             entity_groups[key] = []
         entity_groups[key].append(entity)
 
-    # For each group, keep the entity with highest confidence
     deduplicated = []
     for group in entity_groups.values():
         if len(group) == 1:
             deduplicated.append(group[0])
         else:
-            # Multiple instances - keep the one with highest confidence
             best_entity = max(group, key=lambda e: e.get("confidence", 0.0))
             deduplicated.append(best_entity)
 
@@ -684,29 +604,21 @@ def _deduplicate_entities(entities: list[dict]) -> list[dict]:
         Deduplicated list where duplicate entities (same text + label, case-insensitive)
         have their confidence scores averaged.
     """
-    # Group entities by (lowercase_text, label) key
-    entity_groups = {}
+    entity_groups: dict[tuple[str, str], list[dict]] = {}
 
     for entity in entities:
-        # Create case-insensitive key
         key = (entity["text"].lower(), entity["label"])
-
         if key not in entity_groups:
             entity_groups[key] = []
         entity_groups[key].append(entity)
 
-    # Merge duplicates by averaging confidence
     deduplicated = []
     for group in entity_groups.values():
-        # Take first occurrence for base data
         merged = group[0].copy()
-
-        # Average confidence scores if present
         if "confidence" in group[0]:
             confidences = [e["confidence"] for e in group if "confidence" in e]
             if confidences:
                 merged["confidence"] = float(np.mean(confidences))
-
         deduplicated.append(merged)
 
     return deduplicated
@@ -734,7 +646,6 @@ def format_entities(
         - With labels: "Microsoft [ORG]", "iPhone 15 [MISC]"
         - With labels+confidence: "Microsoft [ORG:99%]", "iPhone 15 [MISC:85%]"
     """
-    # Deduplicate if requested
     if deduplicate:
         entities = _deduplicate_entities(entities)
 
@@ -743,7 +654,6 @@ def format_entities(
         text = entity["text"]
         label = entity["label"]
 
-        # Add metadata if requested (applies to all entity types including MISC)
         if include_labels:
             if include_confidence and "confidence" in entity:
                 confidence_pct = int(entity["confidence"] * 100)

@@ -35,20 +35,16 @@ def cleanup_entity_name(name: str) -> str | None:
     """
     original = name
 
-    # Check discard patterns
     if _should_discard(name):
         logger.info("Discarding entity: %r", original)
         return None
 
-    # Strip lowercase "the " (case-sensitive)
     name = re.sub(LOWERCASE_THE_PATTERN, "", name).strip()
 
-    # Check discard again after cleanup
     if _should_discard(name):
         logger.info("Discarding entity after cleanup: %r -> %r", original, name)
         return None
 
-    # Discard if empty or too short
     if len(name) < 2:
         logger.info("Discarding short entity: %r", original)
         return None
