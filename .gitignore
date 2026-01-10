@@ -17,6 +17,7 @@ wheels/
 .claude
 .worktrees/
 .dspy_cache
+.obsidian/
 backend/prompts/gepa/
 backend/prompts/.dspy_cache/
 pipeline/prompts/gepa/
