@@ -13,7 +13,7 @@ Use the Connection Browser to discover related concepts as you journey through s
 
 Can this help you discover conspiracy theories at work or process childhood trauma? That's the dream :)
 
-![Pepe Silvia meme](pepe_silvia.png)
+![Pepe Silvia meme](/docs/media/screenshots/pepe_silvia.png)
 
 This ain't another RAG project; it's way more convoluted and less effective *BUT* it has potential. 
 
