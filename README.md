@@ -1,7 +1,5 @@
 # Charlie 🧶
 
-The most over-engineered journaling app in the world.
-
 ![Welcome to Charlie](/docs/media/gifs/extraction.gif)
 Charlie is an experimental, local-first journaling app that synthesizes a knowledge graph of your memories. Write naturally about your life, and a local LLM finds and connects people, places, groups, and activities so you can explore your memories by browsing connections between entries. It automatically turns your journal entries into Wikipedia-like pages full of links to click on and dig deeper.
 
