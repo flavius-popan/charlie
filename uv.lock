@@ -774,10 +774,9 @@ wheels = [
 
 [[package]]
 name = "graphiti-core"
-version = "0.24.1"
+version = "0.28.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "diskcache" },
     { name = "neo4j" },
     { name = "numpy" },
     { name = "openai" },
@@ -786,9 +785,9 @@ dependencies = [
     { name = "python-dotenv" },
     { name = "tenacity" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/95/3b/275ba9be13322e052df048a8c56cbd035af645aa4540389b27694fcfc49c/graphiti_core-0.24.1.tar.gz", hash = "sha256:80c36944d99417182c2e2c56c7e135cc100f8449b44cb86b85ff41b06d21a4af", size = 6622744, upload-time = "2025-11-18T22:17:30.494Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a5/37/16fbfe70ac27be1eaffc024d4ff6cde93fd69937129aac058e02d530dad4/graphiti_core-0.28.1.tar.gz", hash = "sha256:8ce03b9d4d6f513e816dda8df84212e3a7d8cbfee215b0d19ed1604215d4c8a3", size = 6829248, upload-time = "2026-02-19T15:10:29.283Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/3b/1d/da2f9ed63f67f1579019ce077cceef036fc6d634f013f75d77fd6ebc58ae/graphiti_core-0.24.1-py3-none-any.whl", hash = "sha256:b6d19bd09ee4ca8d43c15d7e7c4212d5b51f4777db3b01e604609952ec27e8a8", size = 176829, upload-time = "2025-11-18T22:17:28.702Z" },
+    { url = "https://files.pythonhosted.org/packages/03/38/30ee63b4b07691f500e392929224368e0df78fa9ec3f5e743bde48461ce2/graphiti_core-0.28.1-py3-none-any.whl", hash = "sha256:c437362e092dc34933070d54c69232892b72bba6fea9a02c964bd769d9281ea4", size = 311602, upload-time = "2026-02-19T15:10:27.304Z" },
 ]
 
 [[package]]
