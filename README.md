@@ -1,9 +1,11 @@
+
+
 # Charlie 🧶
 
 ![Welcome to Charlie](/docs/media/gifs/extraction.gif)
 Charlie is an experimental, local-first journaling app that synthesizes a knowledge graph of your memories. Write naturally about your life, and a local LLM finds and connects people, places, groups, and activities so you can explore your memories by browsing connections between entries. It automatically turns your journal entries into Wikipedia-like pages full of links to click on and dig deeper.
 
-![Entity Reader View](docs/media/screenshots/reader.png)
+![Entity Reader View](docs/media/screenshots/mediia/screenshots/reader.png)
 
 Use the Connection Browser to discover related concepts as you journey through space and time.
 
@@ -24,7 +26,7 @@ Here's how it currently works:
 3. Selecting a connection shows direct quotes, related connections, dates mentioned, and a few other tidbits of information to give you a higher-level overview.
    
 ![Welcome to Charlie](/docs/media/gifs/new_entry.gif)
-3. That's basically all it can do, for now.
+4. That's basically all it can do, for now.
 
 The extraction isn't perfect and it's sloooowwww (all recordings have been sped up), but the foundations work reliably!
 
